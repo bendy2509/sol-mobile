@@ -1,56 +1,147 @@
 import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { StatusBar } from 'expo-status-bar';
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 
-import { useColorScheme } from '@/components/useColorScheme';
+import { initDatabase } from '@/db/sqlite';
+import { syncEngine } from '@/db/syncEngine';
+import { AuthProvider } from '@/context/AuthContext';
+import { SyncProvider } from '@/context/SyncContext';
+import { SOL_COLORS } from '@/constants/Colors';
 
 export {
-  // Catch any errors thrown by the Layout component.
   ErrorBoundary,
 } from 'expo-router';
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
   initialRouteName: '(tabs)',
 };
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
-
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
+  const [databaseReady, setDatabaseReady] = useState(false);
+  const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
 
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
-    if (error) throw error;
-  }, [error]);
+    // Hide native splash screen as soon as component mounts
+    SplashScreen.hideAsync().catch(() => {});
 
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
+    async function prepare() {
+      try {
+        await initDatabase();
+        syncEngine.startAutoSync(30000);
+      } catch (err) {
+        console.warn('Database initialization error:', err);
+      } finally {
+        setDatabaseReady(true);
+      }
     }
-  }, [loaded]);
+    prepare();
 
-  if (!loaded) {
-    return null;
-  }
+    return () => {
+      syncEngine.stopAutoSync();
+    };
+  }, []);
 
-  return <RootLayoutNav />;
-}
-
-function RootLayoutNav() {
-  const colorScheme = useColorScheme();
+  useEffect(() => {
+    if (fontError) console.warn('Font loading notice:', fontError);
+  }, [fontError]);
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <SyncProvider>
+          <StatusBar style="dark" backgroundColor="#FFFFFF" />
+          {!databaseReady ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={SOL_COLORS.primary} />
+              <Text style={styles.loadingText}>Chargement de SOL...</Text>
+            </View>
+          ) : (
+            <Stack
+              screenOptions={{
+                headerStyle: {
+                  backgroundColor: '#FFFFFF',
+                },
+                headerTintColor: SOL_COLORS.textPrimary,
+                headerTitleStyle: {
+                  fontWeight: '800',
+                  fontSize: 18,
+                },
+                contentStyle: {
+                  backgroundColor: '#F8FAFC',
+                },
+              }}
+            >
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="login"
+                options={{
+                  headerShown: false,
+                  gestureEnabled: false,
+                }}
+              />
+              <Stack.Screen
+                name="setup-business"
+                options={{
+                  title: "Configuration de l'Activité",
+                  headerBackTitle: 'Retour',
+                }}
+              />
+              <Stack.Screen
+                name="scan"
+                options={{
+                  title: 'Scanner le Code QR',
+                  presentation: 'modal',
+                  headerStyle: { backgroundColor: '#0F172A' },
+                  headerTintColor: '#FFFFFF',
+                }}
+              />
+              <Stack.Screen
+                name="client/[id]"
+                options={{
+                  title: 'Dossier Adhérent',
+                  headerBackTitle: 'Retour',
+                }}
+              />
+              <Stack.Screen
+                name="client/new"
+                options={{
+                  title: 'Nouvel Adhérent ("Enfant")',
+                  headerBackTitle: 'Retour',
+                }}
+              />
+              <Stack.Screen
+                name="modal"
+                options={{
+                  presentation: 'modal',
+                  title: 'Diagnostic & Synchronisation',
+                }}
+              />
+            </Stack>
+          )}
+        </SyncProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  loadingText: {
+    marginTop: 14,
+    fontSize: 15,
+    fontWeight: '700',
+    color: SOL_COLORS.textPrimary,
+  },
+});

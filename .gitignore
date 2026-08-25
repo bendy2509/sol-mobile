@@ -39,3 +39,11 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+/app/generated/prisma
+/.env
+/.idea/.gitignore
+/.agents
+/.claude
+/.windsurf
+/.idea

@@ -1,70 +1,99 @@
-import { SymbolView } from 'expo-symbols';
-import { Link, Tabs } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
-
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import React from 'react';
+import { Tabs } from 'expo-router';
+import { View, StyleSheet } from 'react-native';
+import { Icon } from '@/components/Icon';
+import { SOL_COLORS } from '@/constants/Colors';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
-      }}>
+        tabBarActiveTintColor: SOL_COLORS.primary,
+        tabBarInactiveTintColor: '#94A3B8',
+        tabBarStyle: {
+          backgroundColor: '#FFFFFF',
+          borderTopWidth: 1.5,
+          borderTopColor: '#E2E8F0',
+          height: 64,
+          paddingBottom: 8,
+          paddingTop: 8,
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '800',
+          letterSpacing: 0.2,
+        },
+        headerShown: false,
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Tab One',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
+          title: 'Tableau de bord',
+          tabBarIcon: ({ color, focused }) => (
+            <Icon
+              name="dashboard"
+              size={20}
+              color={color}
+              style={focused ? styles.iconActive : undefined}
             />
           ),
-          headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable style={{ marginRight: 15 }}>
-                {({ pressed }) => (
-                  <SymbolView
-                    name={{ ios: 'info.circle', android: 'info', web: 'info' }}
-                    size={25}
-                    tintColor={Colors[colorScheme].text}
-                    style={{ opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
+        }}
+      />
+      <Tabs.Screen
+        name="collect"
+        options={{
+          title: 'Collecte',
+          tabBarIcon: ({ color, focused }) => (
+            <Icon
+              name="collect"
+              size={20}
+              color={color}
+              style={focused ? styles.iconActive : undefined}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="sol"
+        options={{
+          title: 'Sol (ROSCA)',
+          tabBarIcon: ({ color, focused }) => (
+            <Icon
+              name="sol"
+              size={20}
+              color={color}
+              style={focused ? styles.iconActive : undefined}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="history"
+        options={{
+          title: 'Historique',
+          tabBarIcon: ({ color, focused }) => (
+            <Icon
+              name="history"
+              size={20}
+              color={color}
+              style={focused ? styles.iconActive : undefined}
+            />
           ),
         }}
       />
       <Tabs.Screen
         name="two"
         options={{
-          title: 'Tab Two',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
+          href: null,
         }}
       />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  iconActive: {
+    transform: [{ scale: 1.1 }],
+  },
+});

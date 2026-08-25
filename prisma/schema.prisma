@@ -1,0 +1,124 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ClientType {
+  SABOTAY
+  SOL
+  HYBRID
+}
+
+enum TransactionType {
+  SABOTAY_DEPOSIT
+  SOL_CONTRIBUTION
+  SOL_PAYOUT
+  WITHDRAWAL
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+}
+
+model Collector {
+  id           String        @id @default(uuid()) @db.Uuid
+  fullName     String        @map("full_name")
+  phoneNumber  String        @unique @map("phone_number")
+  pinHash      String        @map("pin_hash")
+  status       String        @default("ACTIVE")
+  zone         String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+  clients      Client[]
+  transactions Transaction[]
+  closures     CashClosure[]
+
+  @@map("collectors")
+}
+
+model Client {
+  id             String           @id @default(uuid()) @db.Uuid
+  collectorId    String           @map("collector_id") @db.Uuid
+  collector      Collector        @relation(fields: [collectorId], references: [id], onDelete: Cascade)
+  fullName       String           @map("full_name")
+  phoneNumber    String           @map("phone_number")
+  type           ClientType       @default(SABOTAY)
+  dailyAmount    Decimal          @default(0) @map("daily_amount") @db.Decimal(10, 2)
+  currentBalance Decimal          @default(0) @map("current_balance") @db.Decimal(10, 2)
+  qrCodeToken    String           @unique @map("qr_code_token")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  transactions   Transaction[]
+  solMemberships SolGroupMember[]
+
+  @@index([phoneNumber])
+  @@index([collectorId])
+  @@map("clients")
+}
+
+model SolGroup {
+  id                 String           @id @default(uuid()) @db.Uuid
+  name               String
+  contributionAmount Decimal          @map("contribution_amount") @db.Decimal(10, 2)
+  frequency          String           // "8J", "15J", "MOIS"
+  totalRounds        Int              @map("total_rounds")
+  currentRound       Int              @default(1) @map("current_round")
+  status             String           @default("ACTIVE")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  members            SolGroupMember[]
+  transactions       Transaction[]
+
+  @@map("sol_groups")
+}
+
+model SolGroupMember {
+  id         String   @id @default(uuid()) @db.Uuid
+  solGroupId String   @map("sol_group_id") @db.Uuid
+  solGroup   SolGroup @relation(fields: [solGroupId], references: [id], onDelete: Cascade)
+  clientId   String   @map("client_id") @db.Uuid
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  payoutRank Int      @map("payout_rank")
+  hasPaid    Boolean  @default(false) @map("has_paid")
+
+  @@unique([solGroupId, payoutRank])
+  @@unique([solGroupId, clientId])
+  @@map("sol_group_members")
+}
+
+model Transaction {
+  id             String          @id @db.Uuid
+  clientId       String          @map("client_id") @db.Uuid
+  client         Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  collectorId    String          @map("collector_id") @db.Uuid
+  collector      Collector       @relation(fields: [collectorId], references: [id], onDelete: Restrict)
+  solGroupId     String?         @map("sol_group_id") @db.Uuid
+  solGroup       SolGroup?       @relation(fields: [solGroupId], references: [id], onDelete: SetNull)
+  amount         Decimal         @db.Decimal(10, 2)
+  type           TransactionType
+  paymentMethod  String          @default("CASH") @map("payment_method")
+  createdAtLocal DateTime        @map("created_at_local")
+  syncedAt       DateTime        @default(now()) @map("synced_at")
+  syncStatus     SyncStatus      @default(SYNCED) @map("sync_status")
+
+  @@index([clientId])
+  @@index([collectorId])
+  @@index([createdAtLocal])
+  @@map("transactions")
+}
+
+model CashClosure {
+  id                    String    @id @default(uuid()) @db.Uuid
+  collectorId           String    @map("collector_id") @db.Uuid
+  collector             Collector @relation(fields: [collectorId], references: [id], onDelete: Cascade)
+  closureDate           DateTime  @map("closure_date") @db.Date
+  totalCashDeclared     Decimal   @map("total_cash_declared") @db.Decimal(10, 2)
+  totalSystemCalculated Decimal   @map("total_system_calculated") @db.Decimal(10, 2)
+  discrepancyReason     String?   @map("discrepancy_reason")
+  status                String    @default("SUBMITTED")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  @@map("cash_closures")
+}
