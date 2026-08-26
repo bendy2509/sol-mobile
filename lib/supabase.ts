@@ -2,6 +2,8 @@ import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 
+const isServer = typeof window === 'undefined';
+
 // Supabase project URL derived from project abeilkegrspsavfavxkh
 const defaultUrl = 'https://abeilkegrspsavfavxkh.supabase.co';
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || defaultUrl;
@@ -13,9 +15,9 @@ export const isSupabaseConfigured = Boolean(
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey || 'placeholder-anon-key', {
   auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
+    storage: !isServer ? AsyncStorage : undefined,
+    autoRefreshToken: !isServer,
+    persistSession: !isServer,
     detectSessionInUrl: false,
   },
 });

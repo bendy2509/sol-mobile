@@ -5,6 +5,9 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -17,35 +20,64 @@ import { SOL_COLORS } from '@/constants/Colors';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { activeCollector, loginWithPin } = useAuth();
+  const { loginWithPin } = useAuth();
 
-  const [phone, setPhone] = useState(activeCollector?.phoneNumber || '+50937123456');
-  const [pin, setPin] = useState<string>('');
+  const [phone, setPhone] = useState('+509');
+  const [pin, setPin] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleDigit = async (digit: string) => {
+  const executeLogin = async (currentPin: string) => {
+    if (!phone.trim() || phone.trim().length < 4) {
+      triggerErrorFeedback();
+      setErrorMessage('Veuillez saisir votre numéro de téléphone.');
+      return;
+    }
+
+    if (currentPin.length !== 4) {
+      triggerErrorFeedback();
+      setErrorMessage('Veuillez saisir les 4 chiffres de votre code PIN.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage(null);
+
+    const res = await loginWithPin(phone, currentPin);
+    setIsSubmitting(false);
+
+    if (res.success) {
+      triggerSuccessFeedback();
+      if (res.role === 'ADMIN') {
+        router.replace('/admin' as any);
+      } else if (res.status === 'SUSPENDED') {
+        router.replace('/suspended' as any);
+      } else if (res.status === 'PENDING_APPROVAL') {
+        router.replace('/pending-approval' as any);
+      } else {
+        const business = await getActiveBusinessConfig();
+        if (!business) {
+          router.replace('/setup-business' as any);
+        } else {
+          router.replace('/(tabs)' as any);
+        }
+      }
+    } else {
+      triggerErrorFeedback();
+      setErrorMessage(res.error || 'Identifiants invalides.');
+      setPin('');
+    }
+  };
+
+  const handleDigit = (digit: string) => {
     triggerLightImpact();
-
-    if (pin.length < 6) {
+    if (pin.length < 4) {
       const newPin = pin + digit;
       setPin(newPin);
       setErrorMessage(null);
 
-      if (newPin.length === 6) {
-        const success = await loginWithPin(newPin);
-        if (success) {
-          triggerSuccessFeedback();
-          const business = await getActiveBusinessConfig();
-          if (!business) {
-            router.replace('/setup-business' as any);
-          } else {
-            router.replace('/(tabs)' as any);
-          }
-        } else {
-          triggerErrorFeedback();
-          setErrorMessage('Code PIN incorrect. Veuillez réessayer (PIN test : 123456).');
-          setPin('');
-        }
+      if (newPin.length === 4) {
+        executeLogin(newPin);
       }
     }
   };
@@ -73,91 +105,110 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Brand Header */}
-      <View style={styles.header}>
-        <View style={styles.logoCircle}>
-          <Icon name="shield" size={28} color="#FFFFFF" />
-        </View>
-        <Text style={styles.appName}>SOL</Text>
-        <Text style={styles.appTagline}>Plateforme d'Épargne & Collecte Mobile</Text>
-      </View>
-
-      {/* Collector Profile Card */}
-      <View style={styles.collectorCard}>
-        <View style={styles.collectorHeader}>
-          <Icon name="user" size={14} color="#64748B" />
-          <Text style={styles.collectorLabel}>AGENT COLLECTEUR</Text>
-        </View>
-        <Text style={styles.collectorName}>
-          {activeCollector ? activeCollector.fullName : 'Jean-Baptiste Pierre'}
-        </Text>
-        <Text style={styles.collectorZone}>
-          {activeCollector?.zone || 'Marché Salomon (Port-au-Prince)'}
-        </Text>
-      </View>
-
-      {/* Phone Number Input Confirmation */}
-      <View style={styles.phoneInputContainer}>
-        <Icon name="phone" size={16} color="#64748B" style={{ marginRight: 8 }} />
-        <TextInput
-          style={styles.phoneInput}
-          value={phone}
-          onChangeText={setPhone}
-          placeholder="+509 XX XX XXXX"
-          placeholderTextColor="#94A3B8"
-          keyboardType="phone-pad"
-        />
-      </View>
-
-      {/* PIN Dots Display */}
-      <View style={styles.pinSection}>
-        <Text style={styles.pinPrompt}>Entrez votre code PIN de sécurité (6 chiffres)</Text>
-
-        <View style={styles.pinDotsRow}>
-          {[0, 1, 2, 3, 4, 5].map((index) => {
-            const isFilled = index < pin.length;
-            return (
-              <View
-                key={index}
-                style={[
-                  styles.pinDot,
-                  isFilled && styles.pinDotFilled,
-                  errorMessage ? styles.pinDotError : null,
-                ]}
-              />
-            );
-          })}
-        </View>
-
-        {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
-      </View>
-
-      {/* Tactile Keypad */}
-      <View style={styles.keypadGrid}>
-        {numpadKeys.map((row, rowIndex) => (
-          <View key={`row-${rowIndex}`} style={styles.keypadRow}>
-            {row.map((k) => {
-              const isAction = k === 'C' || k === '⌫';
-              return (
-                <TouchableOpacity
-                  key={k}
-                  activeOpacity={0.6}
-                  onPress={() => {
-                    if (k === 'C') handleClear();
-                    else if (k === '⌫') handleBackspace();
-                    else handleDigit(k);
-                  }}
-                  style={[styles.keyButton, isAction && styles.actionKeyButton]}
-                >
-                  <Text style={[styles.keyText, isAction && styles.actionKeyText]}>
-                    {k}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Brand Header */}
+          <View style={styles.header}>
+            <View style={styles.logoCircle}>
+              <Icon name="shield" size={32} color="#FFFFFF" />
+            </View>
+            <Text style={styles.appName}>SOL</Text>
+            <Text style={styles.appTagline}>Plateforme d'Épargne & Collecte Mobile</Text>
           </View>
-        ))}
-      </View>
+
+          {/* Unified Phone Input Card */}
+          <View style={styles.loginCard}>
+            <Text style={styles.fieldLabel}>NUMÉRO DE TÉLÉPHONE</Text>
+            <View style={styles.phoneInputContainer}>
+              <Icon name="phone" size={18} color="#64748B" style={{ marginRight: 8 }} />
+              <TextInput
+                style={styles.phoneInput}
+                value={phone}
+                onChangeText={(text) => {
+                  setPhone(text);
+                  setErrorMessage(null);
+                }}
+                placeholder="+509 XX XX XXXX"
+                placeholderTextColor="#94A3B8"
+                keyboardType="phone-pad"
+                autoCapitalize="none"
+              />
+            </View>
+
+            {/* PIN Code Section */}
+            <View style={styles.pinSection}>
+              <Text style={styles.pinLabel}>CODE PIN DE SÉCURITÉ (4 CHIFFRES)</Text>
+
+              <View style={styles.pinDotsRow}>
+                {[0, 1, 2, 3].map((index) => {
+                  const isFilled = index < pin.length;
+                  return (
+                    <View
+                      key={index}
+                      style={[
+                        styles.pinDot,
+                        isFilled && styles.pinDotFilled,
+                        errorMessage ? styles.pinDotError : null,
+                      ]}
+                    />
+                  );
+                })}
+              </View>
+
+              {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
+            </View>
+          </View>
+
+          {/* Tactile Keypad */}
+          <View style={styles.keypadGrid}>
+            {numpadKeys.map((row, rowIndex) => (
+              <View key={`row-${rowIndex}`} style={styles.keypadRow}>
+                {row.map((k) => {
+                  const isAction = k === 'C' || k === '⌫';
+                  return (
+                    <TouchableOpacity
+                      key={k}
+                      activeOpacity={0.6}
+                      disabled={isSubmitting}
+                      onPress={() => {
+                        if (k === 'C') handleClear();
+                        else if (k === '⌫') handleBackspace();
+                        else handleDigit(k);
+                      }}
+                      style={[styles.keyButton, isAction && styles.actionKeyButton]}
+                    >
+                      <Text style={[styles.keyText, isAction && styles.actionKeyText]}>
+                        {k}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+
+          {/* Registration Footer */}
+          <View style={styles.footer}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => router.push('/register' as any)}
+              style={styles.registerLink}
+            >
+              <Text style={styles.registerLinkText}>
+                Nouveau responsable ?{' '}
+                <Text style={styles.registerLinkHighlight}>Créer un carnet SOL</Text>
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -166,13 +217,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F8FAFC',
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingVertical: 12,
   },
   header: {
     alignItems: 'center',
     marginTop: 4,
+    marginBottom: 10,
   },
   logoCircle: {
     width: 56,
@@ -196,71 +251,51 @@ const styles = StyleSheet.create({
   },
   appTagline: {
     fontSize: 12,
-    color: SOL_COLORS.textSecondary,
+    color: '#64748B',
     marginTop: 2,
     fontWeight: '600',
   },
-  collectorCard: {
+  loginCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 14,
-    alignItems: 'center',
+    borderRadius: 18,
+    padding: 16,
     borderWidth: 1.5,
     borderColor: '#CBD5E1',
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    marginBottom: 10,
   },
-  collectorHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 2,
-  },
-  collectorLabel: {
+  fieldLabel: {
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#64748B',
     letterSpacing: 0.5,
-  },
-  collectorName: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  collectorZone: {
-    fontSize: 12,
-    color: SOL_COLORS.primary,
-    marginTop: 2,
-    fontWeight: '700',
+    marginBottom: 6,
   },
   phoneInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     height: 48,
     borderWidth: 1.5,
     borderColor: '#CBD5E1',
+    marginBottom: 14,
   },
   phoneInput: {
     flex: 1,
     color: SOL_COLORS.textPrimary,
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '800',
   },
   pinSection: {
     alignItems: 'center',
-    marginVertical: 4,
   },
-  pinPrompt: {
-    fontSize: 13,
-    color: '#475569',
-    fontWeight: '700',
-    marginBottom: 10,
+  pinLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#64748B',
+    letterSpacing: 0.5,
+    marginBottom: 8,
   },
   pinDotsRow: {
     flexDirection: 'row',
@@ -281,27 +316,28 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.2 }],
   },
   pinDotError: {
-    borderColor: '#EF4444',
+    borderColor: '#DC2626',
+    backgroundColor: '#FEF2F2',
   },
   errorText: {
     color: '#DC2626',
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 6,
+    fontSize: 11,
+    fontWeight: '800',
+    marginTop: 4,
     textAlign: 'center',
   },
   keypadGrid: {
     width: '100%',
-    marginBottom: 4,
+    marginVertical: 4,
   },
   keypadRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   keyButton: {
     flex: 1,
-    height: 58,
+    height: 52,
     marginHorizontal: 4,
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -310,22 +346,35 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#CBD5E1',
     elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 1,
   },
   actionKeyButton: {
     backgroundColor: '#F1F5F9',
     borderColor: '#94A3B8',
   },
   keyText: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '900',
     color: SOL_COLORS.textPrimary,
   },
   actionKeyText: {
-    fontSize: 18,
+    fontSize: 16,
     color: '#64748B',
+  },
+  footer: {
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  registerLink: {
+    paddingVertical: 8,
+  },
+  registerLinkText: {
+    fontSize: 13,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  registerLinkHighlight: {
+    color: SOL_COLORS.primary,
+    fontWeight: '800',
   },
 });

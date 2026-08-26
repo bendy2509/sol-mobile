@@ -2,10 +2,11 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { BusinessConfig, DashboardMetrics, Member, PaymentFrequency } from '@/types';
 import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusinessId } from './sqlite';
-import { calculateDaysRemaining } from '@/lib/dateCalculations';
+import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalculations';
 
-export async function getActiveBusinessConfig(): Promise<BusinessConfig | null> {
+export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
   const activeId = await getActiveBusinessId();
 
   let row = null;
@@ -22,10 +23,10 @@ export async function getActiveBusinessConfig(): Promise<BusinessConfig | null> 
       end_date: string;
       status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
       created_at: string;
-    }>(`SELECT * FROM business_configs WHERE id = ?`, [activeId]);
+    }>(`SELECT * FROM business_configs WHERE id = ? AND collector_id = ?`, [activeId, collectorId]);
   }
 
-  // Fallback to first active business config if activeId was not found
+  // Fallback to active collector's business config if activeId was not found or mismatched
   if (!row) {
     row = await db.getFirstAsync<{
       id: string;
@@ -39,7 +40,7 @@ export async function getActiveBusinessConfig(): Promise<BusinessConfig | null> 
       end_date: string;
       status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
       created_at: string;
-    }>(`SELECT * FROM business_configs ORDER BY created_at DESC LIMIT 1`);
+    }>(`SELECT * FROM business_configs WHERE collector_id = ? ORDER BY created_at DESC LIMIT 1`, [collectorId]);
 
     if (row) {
       await setActiveBusinessId(row.id);
@@ -114,64 +115,79 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const startOfDayIso = startOfDay.toISOString();
+  const todayStr = startOfDayIso.split('T')[0];
 
   if (!business) {
     return {
-      handsCollected: 0,
-      handsRemaining: 0,
+      unitAmount: 0,
+      totalPotAmount: 0,
+      handsCollectedToday: 0,
+      handsCollectedTotal: 0,
       totalHandsExpected: 0,
       daysRemaining: 0,
-      totalCashToday: 0,
       overdueMembersCount: 0,
       overdueHandsCount: 0,
       paidTodayCount: 0,
       unpaidTodayCount: 0,
       totalMembersCount: 0,
+      handsTouchedCount: 0,
+      businessName: 'Aucun carnet configuré',
+      businessType: 'SABOTAY',
+      frequency: 'DAILY',
+      startDate: todayStr,
+      endDate: todayStr,
+      handsCollected: 0,
+      handsRemaining: 0,
+      totalCashToday: 0,
+      contributionAmount: 0,
       currentRound: 1,
       totalRounds: 1,
-      businessName: 'Aucune activité active',
-      businessType: 'SABOTAY',
-      contributionAmount: 0,
-      frequency: 'DAILY',
-      startDate: startOfDayIso.split('T')[0],
-      endDate: startOfDayIso.split('T')[0],
     };
   }
 
-  // 1. Total hands / contributions collected in this business
-  const handsCollectedRow = await db.getFirstAsync<{ count: number; total: number }>(
+  const unitAmount = business.contributionAmount;
+  const totalSlots = business.totalSlots;
+
+  // 1. Hands collected today (count of transactions)
+  const todayTxRow = await db.getFirstAsync<{ count: number; total: number }>(
     `SELECT count(*) as count, COALESCE(SUM(amount), 0) as total FROM transactions 
-     WHERE (business_id = ? OR collector_id = ?) AND type IN ('SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION')`,
-    [business.id, collectorId]
+     WHERE collector_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
+    [collectorId, startOfDayIso]
   );
-  const handsCollected = handsCollectedRow?.count || 0;
-  const totalHandsExpected = business.totalSlots;
-  const handsRemaining = Math.max(0, totalHandsExpected - handsCollected);
+  const handsCollectedToday = todayTxRow?.count || 0;
 
-  // 2. Days remaining until cycle end date
-  const daysRemaining = calculateDaysRemaining(business.endDate);
-
-  // 3. Cash collected today in drawer
+  // 2. Cash in drawer today (In minus Payouts)
   const cashTodayRow = await db.getFirstAsync<{ total_in: number; total_out: number }>(
     `SELECT 
-       COALESCE(SUM(CASE WHEN type IN ('SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') THEN amount ELSE 0 END), 0) as total_in,
-       COALESCE(SUM(CASE WHEN type IN ('WITHDRAWAL', 'SOL_PAYOUT') THEN amount ELSE 0 END), 0) as total_out
+       COALESCE(SUM(CASE WHEN type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') THEN amount ELSE 0 END), 0) as total_in,
+       COALESCE(SUM(CASE WHEN type IN ('HAND_PAYOUT', 'SOL_PAYOUT', 'WITHDRAWAL') THEN amount ELSE 0 END), 0) as total_out
      FROM transactions 
      WHERE collector_id = ? AND created_at_local >= ?`,
     [collectorId, startOfDayIso]
   );
   const totalCashToday = Math.max(0, (cashTodayRow?.total_in || 0) - (cashTodayRow?.total_out || 0));
 
-  // 4. Members list & today's payment status
+  // 4. Fetch all members for this collector
   const members = await db.getAllAsync<{
     id: string;
     full_name: string;
     phone_number: string;
+    type: string;
+    daily_amount: number;
     current_balance: number;
     payout_rank: number | null;
-    has_received_payout: number;
+    has_received_hand: number | null;
+    has_received_payout: number | null;
+    hand_received_date: string | null;
+    total_paid_amount: number | null;
+    paid_hands_count: number | null;
+    paid_until_date: string | null;
+    qr_code_token: string;
+    created_at: string;
   }>(
-    `SELECT id, full_name, phone_number, current_balance, payout_rank, has_received_payout 
+    `SELECT id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, 
+            has_received_hand, has_received_payout, hand_received_date, total_paid_amount, 
+            paid_hands_count, paid_until_date, qr_code_token, created_at
      FROM clients 
      WHERE collector_id = ?
      ORDER BY payout_rank ASC, full_name ASC`,
@@ -181,33 +197,40 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   let paidTodayCount = 0;
   let overdueMembersCount = 0;
   let overdueHandsCount = 0;
+  let handsTouchedCount = 0;
+  let handsCollectedTotal = 0;
   let currentPayoutBeneficiary: Member | null = null;
 
   for (const m of members) {
-    // Check if member paid today
-    const paidTodayRow = await db.getFirstAsync<{ count: number }>(
-      `SELECT count(*) as count FROM transactions 
-       WHERE client_id = ? AND type IN ('SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
-      [m.id, startOfDayIso]
-    );
-    const hasPaidToday = (paidTodayRow?.count || 0) > 0;
-
-    if (hasPaidToday) {
-      paidTodayCount++;
-    } else {
-      // If current balance is 0 or less than expected contribution, consider late/overdue
-      if (m.current_balance < business.contributionAmount) {
-        overdueMembersCount++;
-        const missingRounds = Math.max(
-          1,
-          Math.ceil((business.contributionAmount - m.current_balance) / (business.contributionAmount || 1))
-        );
-        overdueHandsCount += missingRounds;
-      }
+    const hasTouched = Boolean(m.has_received_hand || m.has_received_payout);
+    if (hasTouched) {
+      handsTouchedCount++;
     }
 
-    // Determine current payout beneficiary (first member in rank who hasn't received payout)
-    if (!currentPayoutBeneficiary && !m.has_received_payout && m.payout_rank) {
+    handsCollectedTotal += Number(m.paid_hands_count || 0);
+
+    // Check if member paid today
+    const paidTodayTx = await db.getFirstAsync<{ count: number }>(
+      `SELECT count(*) as count FROM transactions 
+       WHERE client_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
+      [m.id, startOfDayIso]
+    );
+    const hasPaidToday = (paidTodayTx?.count || 0) > 0;
+    const isCoveredInAdvance = m.paid_until_date && m.paid_until_date >= todayStr;
+
+    if (hasPaidToday || isCoveredInAdvance) {
+      paidTodayCount++;
+    } else {
+      overdueMembersCount++;
+      const missingHands = Math.max(
+        1,
+        Math.ceil((unitAmount - (m.current_balance || 0)) / (unitAmount || 1))
+      );
+      overdueHandsCount += missingHands;
+    }
+
+    // Determine current payout beneficiary (next rank who hasn't received hand)
+    if (!currentPayoutBeneficiary && !hasTouched && m.payout_rank) {
       currentPayoutBeneficiary = {
         id: m.id,
         businessId: business.id,
@@ -215,46 +238,61 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
         fullName: m.full_name,
         phoneNumber: m.phone_number,
         type: business.type,
-        dailyAmount: business.contributionAmount,
-        currentBalance: Number(m.current_balance),
+        dailyAmount: unitAmount,
+        currentBalance: Number(m.current_balance || 0),
         payoutRank: m.payout_rank,
+        rankOrder: m.payout_rank,
+        hasReceivedHand: false,
         hasReceivedPayout: false,
-        qrCodeToken: '',
-        createdAt: '',
+        handReceivedDate: undefined,
+        totalPaidAmount: Number(m.total_paid_amount || m.current_balance || 0),
+        paidHandsCount: Number(m.paid_hands_count || 0),
+        paidUntilDate: m.paid_until_date || todayStr,
+        qrCodeToken: m.qr_code_token,
+        createdAt: m.created_at,
         syncStatus: 'SYNCED',
-        paymentStatusToday: hasPaidToday ? 'PAID_TODAY' : 'UNPAID_TODAY',
+        paymentStatusToday: (hasPaidToday || isCoveredInAdvance) ? 'PAID_TODAY' : 'UNPAID_TODAY',
         overdueRoundsCount: 0,
-        totalPaidInCycle: Number(m.current_balance),
+        totalPaidInCycle: Number(m.total_paid_amount || m.current_balance || 0),
+        handsCoveredAhead: 0,
       };
     }
   }
 
   const totalMembersCount = members.length;
+  const effectiveChildrenCount = totalMembersCount > 0 ? totalMembersCount : totalSlots;
   const unpaidTodayCount = Math.max(0, totalMembersCount - paidTodayCount);
-  const currentRound = Math.min(
-    business.totalSlots,
-    Math.max(1, members.filter((m) => m.has_received_payout).length + 1)
-  );
+  const handsRemaining = Math.max(0, effectiveChildrenCount - handsCollectedTotal);
+  const totalPotAmount = unitAmount * effectiveChildrenCount;
+
+  // Dynamic End Date based on: startDate + (effectiveChildrenCount * frequencyInterval)
+  const dynamicEndDate = calculateCycleEndDate(business.startDate, effectiveChildrenCount, business.frequency);
+  const daysRemaining = calculateDaysRemaining(dynamicEndDate);
 
   return {
-    handsCollected,
-    handsRemaining,
-    totalHandsExpected,
+    unitAmount,
+    totalPotAmount,
+    handsCollectedToday,
+    handsCollectedTotal,
+    totalHandsExpected: effectiveChildrenCount,
     daysRemaining,
-    totalCashToday,
     overdueMembersCount,
     overdueHandsCount,
     paidTodayCount,
     unpaidTodayCount,
     totalMembersCount,
+    handsTouchedCount,
     currentPayoutBeneficiary,
-    currentRound,
-    totalRounds: business.totalSlots,
     businessName: business.name,
     businessType: business.type,
-    contributionAmount: business.contributionAmount,
     frequency: business.frequency,
     startDate: business.startDate,
-    endDate: business.endDate,
+    endDate: dynamicEndDate,
+    handsCollected: handsCollectedTotal,
+    handsRemaining,
+    totalCashToday,
+    contributionAmount: unitAmount,
+    currentRound: Math.min(effectiveChildrenCount, handsTouchedCount + 1),
+    totalRounds: effectiveChildrenCount,
   };
 }

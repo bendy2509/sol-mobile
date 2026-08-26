@@ -1,10 +1,29 @@
 import React from 'react';
-import { Tabs } from 'expo-router';
-import { View, StyleSheet } from 'react-native';
+import { Tabs, Redirect } from 'expo-router';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { useAuth } from '@/context/AuthContext';
 import { Icon } from '@/components/Icon';
 import { SOL_COLORS } from '@/constants/Colors';
 
 export default function TabLayout() {
+  const { isAuthenticated, isPendingApproval, isLoading, userRole } = useAuth();
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={SOL_COLORS.primary} />
+      </View>
+    );
+  }
+
+  if (isPendingApproval) {
+    return <Redirect href="/pending-approval" />;
+  }
+
+  if (!isAuthenticated) {
+    return <Redirect href="/login" />;
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -93,6 +112,12 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   iconActive: {
     transform: [{ scale: 1.1 }],
   },

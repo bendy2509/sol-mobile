@@ -8,6 +8,7 @@ import {
   StyleSheet,
   RefreshControl,
   Alert,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -15,8 +16,11 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Header } from '@/components/Header';
 import { MemberCard } from '@/components/MemberCard';
 import { Icon } from '@/components/Icon';
-import { getDashboardMetrics } from '@/db/businessRepository';
+import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { getDashboardMetrics, getActiveBusinessConfig } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
+import { getActiveCollector } from '@/db/sqlite';
+import { generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfService';
 import { useSync } from '@/context/SyncContext';
 import { DashboardMetrics, FilterStatus, Member, SortOption } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
@@ -28,24 +32,29 @@ export default function DashboardScreen() {
   const { triggerSync } = useSync();
 
   const [metrics, setMetrics] = useState<DashboardMetrics>({
-    handsCollected: 0,
-    handsRemaining: 0,
-    totalHandsExpected: 0,
+    unitAmount: 250,
+    totalPotAmount: 2500,
+    handsCollectedToday: 0,
+    handsCollectedTotal: 0,
+    totalHandsExpected: 10,
     daysRemaining: 0,
-    totalCashToday: 0,
     overdueMembersCount: 0,
     overdueHandsCount: 0,
     paidTodayCount: 0,
     unpaidTodayCount: 0,
     totalMembersCount: 0,
-    currentRound: 1,
-    totalRounds: 1,
+    handsTouchedCount: 0,
     businessName: 'Chargement...',
     businessType: 'SABOTAY',
-    contributionAmount: 0,
     frequency: 'DAILY',
     startDate: '',
     endDate: '',
+    handsCollected: 0,
+    handsRemaining: 10,
+    totalCashToday: 0,
+    contributionAmount: 250,
+    currentRound: 1,
+    totalRounds: 10,
   });
 
   const [members, setMembers] = useState<Member[]>([]);
@@ -53,6 +62,12 @@ export default function DashboardScreen() {
   const [sort, setSort] = useState<SortOption>('PAYOUT_RANK');
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+
+  // Payout Flow State
+  const [payoutTargetMember, setPayoutTargetMember] = useState<Member | null>(null);
+  const [payoutNote, setPayoutNote] = useState('');
+  const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
+  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -97,43 +112,108 @@ export default function DashboardScreen() {
     setSort(newSort);
   };
 
-  const handlePayoutHand = async (member: Member) => {
+  const handleInitiatePayout = (member: Member) => {
     triggerMediumImpact();
-    const potAmount = metrics.contributionAmount * metrics.totalHandsExpected;
-
-    Alert.alert(
-      'Décaisser la Main (Remettre la Cagnotte)',
-      `Confirmez-vous le versement de la main pour ${member.fullName} d'un montant de ${formatCurrency(potAmount)} ?`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Confirmer le Décaissement',
-          style: 'default',
-          onPress: async () => {
-            try {
-              await payoutMemberHand(member.id, potAmount);
-              triggerSuccessFeedback();
-              Alert.alert('Succès', `La main a été remise avec succès à ${member.fullName}.`);
-              loadData();
-            } catch (err: any) {
-              Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
-            }
-          },
-        },
-      ]
-    );
+    setPayoutTargetMember(member);
+    setPayoutNote(`Remise de la main #${member.rankOrder || 1} - ${member.fullName}`);
+    setIsPayoutModalOpen(true);
   };
 
-  const progressPct =
+  const handleConfirmPayoutDetails = () => {
+    if (!payoutNote.trim()) {
+      Alert.alert('Justification requise', 'Veuillez saisir une note ou motif pour le déblocage de la main.');
+      return;
+    }
+    setIsPayoutModalOpen(false);
+    setIsPinModalOpen(true);
+  };
+
+  const handlePinSuccessPayout = async () => {
+    setIsPinModalOpen(false);
+    if (!payoutTargetMember) return;
+
+    try {
+      await payoutMemberHand(
+        payoutTargetMember.id,
+        metrics.totalPotAmount,
+        payoutNote.trim()
+      );
+      triggerSuccessFeedback();
+      Alert.alert(
+        'Main Remise avec Succès !',
+        `La cagnotte complète de ${formatCurrency(metrics.totalPotAmount)} a été décaissée pour ${payoutTargetMember.fullName}.\n\nRappel : Cet enfant reste actif et doit continuer ses cotisations restantes jusqu'à la fin du cycle.`
+      );
+      loadData();
+    } catch (err: any) {
+      Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
+    } finally {
+      setPayoutTargetMember(null);
+    }
+  };
+
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+  const handleGenerateBusinessReport = async () => {
+    triggerMediumImpact();
+    setIsGeneratingReport(true);
+    try {
+      const activeCollector = await getActiveCollector();
+      const currentMembers = await getMembersWithPaymentStatus({ filter: 'ALL', sort: 'PAYOUT_RANK' });
+
+      const totalCashCollected = currentMembers.reduce((sum, m) => sum + (m.totalPaidInCycle || m.currentBalance || 0), 0);
+      const totalDistributed = currentMembers.filter(m => m.hasReceivedPayout).length * metrics.totalPotAmount;
+      const netReserveBalance = totalCashCollected - totalDistributed;
+      const completionRate = metrics.totalHandsExpected > 0 ? Math.round((metrics.handsCollectedTotal / metrics.totalHandsExpected) * 100) : 0;
+
+      const pdfUri = await generateManagerBusinessReportPdf({
+        businessName: metrics.businessName,
+        collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
+        collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+        collectorZone: activeCollector?.zone,
+        unitAmount: metrics.unitAmount,
+        totalSlots: metrics.totalHandsExpected,
+        registeredChildrenCount: metrics.totalMembersCount,
+        totalPotAmount: metrics.totalPotAmount,
+        cycleStartDate: metrics.startDate || new Date().toISOString(),
+        cycleEndDate: metrics.endDate || new Date().toISOString(),
+        handsCollectedTotal: metrics.handsCollectedTotal,
+        totalCashCollected,
+        totalDistributed,
+        netReserveBalance,
+        completionRate,
+        members: currentMembers.map((m) => {
+          const hands = metrics.unitAmount > 0 ? Math.floor((m.totalPaidInCycle || m.currentBalance || 0) / metrics.unitAmount) : 1;
+          return {
+            rank: m.payoutRank || 1,
+            fullName: m.fullName,
+            phoneNumber: m.phoneNumber,
+            totalPaid: m.totalPaidInCycle || m.currentBalance || 0,
+            handsCovered: hands,
+            coverageStatus: m.paymentStatusToday,
+            hasReceivedPayout: m.hasReceivedPayout,
+          };
+        }),
+        generatedAt: new Date().toISOString(),
+      });
+
+      await sharePdfFile(pdfUri, `Rapport_Evolution_${metrics.businessName.replace(/\s+/g, '_')}.pdf`);
+    } catch (err: any) {
+      Alert.alert('Erreur', 'Impossible de générer le rapport d\'évolution.');
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
+
+  const cycleProgressPct =
     metrics.totalHandsExpected > 0
-      ? Math.min(100, Math.round((metrics.handsCollected / metrics.totalHandsExpected) * 100))
+      ? Math.min(100, Math.round((metrics.handsTouchedCount / metrics.totalHandsExpected) * 100))
       : 0;
 
   return (
     <SafeAreaView style={styles.container}>
       <Header
         title={metrics.businessName || 'SOL'}
-        subtitle={`Cotisation: ${formatCurrency(metrics.contributionAmount)} • Fin: ${formatDateShort(metrics.endDate)}`}
+        subtitle={`${formatCurrency(metrics.unitAmount)}/main • ${metrics.totalMembersCount} enfants • Fin: ${formatDateShort(metrics.endDate)}`}
         onRefresh={handleRefresh}
       />
 
@@ -144,7 +224,7 @@ export default function DashboardScreen() {
           <MemberCard
             member={item}
             isPayoutTurn={metrics.currentPayoutBeneficiary?.id === item.id}
-            onPayoutHand={handlePayoutHand}
+            onPayoutHand={handleInitiatePayout}
           />
         )}
         contentContainerStyle={styles.listContent}
@@ -159,28 +239,41 @@ export default function DashboardScreen() {
           <View style={styles.dashboardHeader}>
             {/* 4 Metrics Synthesis Cards Grid */}
             <View style={styles.metricsGrid}>
-              {/* 1. Mains Collectées & Restantes */}
+              {/* 1. Main Unitaire vs Cagnotte Totale */}
               <View style={[styles.metricCard, styles.metricCardPrimary]}>
                 <View style={styles.metricCardTop}>
-                  <Text style={styles.metricLabel}>MAINS DU CYCLE</Text>
+                  <Text style={styles.metricLabel}>VALEUR MAIN / CAGNOTTE</Text>
                   <Icon name="target" size={16} color="#FFFFFF" />
                 </View>
                 <View style={styles.metricValueRow}>
                   <Text style={styles.metricValueLight}>
-                    {metrics.handsCollected}
-                    <Text style={styles.metricValueLightSub}> / {metrics.totalHandsExpected}</Text>
+                    {formatCurrency(metrics.unitAmount)}
+                    <Text style={styles.metricValueLightSub}> / main</Text>
                   </Text>
                 </View>
-                {/* Progress bar */}
                 <View style={styles.progressBarBg}>
-                  <View style={[styles.progressBarFill, { width: `${progressPct}%` }]} />
+                  <View style={[styles.progressBarFill, { width: `${cycleProgressPct}%` }]} />
                 </View>
                 <Text style={styles.metricSubLight}>
-                  {metrics.handsRemaining} mains restantes ({progressPct}%)
+                  Cagnotte : {formatCurrency(metrics.totalPotAmount)} ({metrics.handsTouchedCount}/{metrics.totalHandsExpected} touchées)
                 </Text>
               </View>
 
-              {/* 2. Jours Restants */}
+              {/* 2. Mains Collectées Aujourd'hui */}
+              <View style={styles.metricCard}>
+                <View style={styles.metricCardTop}>
+                  <Text style={styles.metricLabelDark}>COLLECTES AUJOURD'HUI</Text>
+                  <Icon name="cash" size={16} color="#059669" />
+                </View>
+                <Text style={[styles.metricValueDark, { color: '#059669' }]}>
+                  {metrics.handsCollectedToday} mains
+                </Text>
+                <Text style={styles.metricSubDark}>
+                  {metrics.paidTodayCount} enfants à jour
+                </Text>
+              </View>
+
+              {/* 3. Jours Restants */}
               <View style={styles.metricCard}>
                 <View style={styles.metricCardTop}>
                   <Text style={styles.metricLabelDark}>JOURS RESTANTS</Text>
@@ -192,21 +285,7 @@ export default function DashboardScreen() {
                 </Text>
               </View>
 
-              {/* 3. Total Disponible en Caisse */}
-              <View style={styles.metricCard}>
-                <View style={styles.metricCardTop}>
-                  <Text style={styles.metricLabelDark}>EN CAISSE AUJOURD'HUI</Text>
-                  <Icon name="cash" size={16} color="#059669" />
-                </View>
-                <Text style={[styles.metricValueDark, { color: '#059669' }]}>
-                  {formatCurrency(metrics.totalCashToday)}
-                </Text>
-                <Text style={styles.metricSubDark}>
-                  {metrics.paidTodayCount} versements reçus
-                </Text>
-              </View>
-
-              {/* 4. Mains en Retard */}
+              {/* 4. Retards de Cotisation */}
               <View
                 style={[
                   styles.metricCard,
@@ -220,7 +299,7 @@ export default function DashboardScreen() {
                       metrics.overdueMembersCount > 0 && { color: '#B91C1C' },
                     ]}
                   >
-                    MAINS EN RETARD
+                    ENFANTS EN RETARD
                   </Text>
                   <Icon
                     name="alert"
@@ -242,17 +321,86 @@ export default function DashboardScreen() {
                     metrics.overdueMembersCount > 0 && { color: '#B91C1C' },
                   ]}
                 >
-                  {metrics.overdueHandsCount} cotisations impayées
+                  {metrics.overdueHandsCount} main{metrics.overdueHandsCount > 1 ? 's' : ''} impayée{metrics.overdueHandsCount > 1 ? 's' : ''}
                 </Text>
               </View>
             </View>
 
-            {/* Sol Turn Hero Banner (if a member is designated for payout) */}
+            {/* Quick Actions Row */}
+            <View style={styles.quickActionsRow}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => router.push('/collect' as any)}
+                style={styles.quickActionBtn}
+              >
+                <View style={[styles.quickActionIconCircle, { backgroundColor: '#ECFDF5' }]}>
+                  <Icon name="cash" size={16} color="#059669" />
+                </View>
+                <Text style={styles.quickActionLabel}>Encaisser</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => router.push('/client/new' as any)}
+                style={styles.quickActionBtn}
+              >
+                <View style={[styles.quickActionIconCircle, { backgroundColor: '#EFF6FF' }]}>
+                  <Icon name="user" size={16} color="#2563EB" />
+                </View>
+                <Text style={styles.quickActionLabel}>+ Enfant</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => router.push('/sol' as any)}
+                style={styles.quickActionBtn}
+              >
+                <View style={[styles.quickActionIconCircle, { backgroundColor: '#FEF3C7' }]}>
+                  <Icon name="crown" size={16} color="#D97706" />
+                </View>
+                <Text style={styles.quickActionLabel}>Matrice Sol</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => router.push('/closure' as any)}
+                style={styles.quickActionBtn}
+              >
+                <View style={[styles.quickActionIconCircle, { backgroundColor: '#F3E8FF' }]}>
+                  <Icon name="shield" size={16} color="#7C3AED" />
+                </View>
+                <Text style={styles.quickActionLabel}>Clôture</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Business Evolution & Performance Report Banner */}
+            <View style={styles.reportBanner}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.reportBannerTitle}>Rapport d'Évolution du Carnet</Text>
+                <Text style={styles.reportBannerSub}>
+                  Générez et imprimez l'état complet du cycle et de vos adhérents en PDF.
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleGenerateBusinessReport}
+                disabled={isGeneratingReport}
+                style={styles.reportBannerBtn}
+              >
+                <Icon name="print" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.reportBannerBtnText}>
+                  {isGeneratingReport ? 'Génération...' : 'Imprimer PDF'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Sol Turn Hero Banner (Next Beneficiary in Order) */}
             {metrics.currentPayoutBeneficiary && (
               <View style={styles.heroPayoutBanner}>
                 <View style={styles.heroPayoutHeader}>
                   <Icon name="crown" size={18} color="#1D4ED8" />
-                  <Text style={styles.heroPayoutTitle}>TOUR DU JOUR (BÉNÉFICIAIRE)</Text>
+                  <Text style={styles.heroPayoutTitle}>PROCHAINE MAIN À DÉCAISSER (BÉNÉFICIAIRE)</Text>
                 </View>
                 <View style={styles.heroPayoutBody}>
                   <View style={{ flex: 1 }}>
@@ -260,18 +408,16 @@ export default function DashboardScreen() {
                       {metrics.currentPayoutBeneficiary.fullName}
                     </Text>
                     <Text style={styles.heroBeneficiarySub}>
-                      Main #{metrics.currentPayoutBeneficiary.payoutRank} • Cagnotte :{' '}
-                      {formatCurrency(
-                        metrics.contributionAmount * metrics.totalHandsExpected
-                      )}
+                      Main #{metrics.currentPayoutBeneficiary.rankOrder || 1} • Cagnotte :{' '}
+                      {formatCurrency(metrics.totalPotAmount)}
                     </Text>
                   </View>
                   <TouchableOpacity
                     activeOpacity={0.8}
-                    onPress={() => handlePayoutHand(metrics.currentPayoutBeneficiary!)}
+                    onPress={() => handleInitiatePayout(metrics.currentPayoutBeneficiary!)}
                     style={styles.heroPayoutBtn}
                   >
-                    <Text style={styles.heroPayoutBtnText}>Décaisser</Text>
+                    <Text style={styles.heroPayoutBtnText}>Donner la Main</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -286,7 +432,6 @@ export default function DashboardScreen() {
                 placeholderTextColor="#94A3B8"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                clearButtonMode="while-editing"
               />
               {searchQuery.length > 0 && (
                 <TouchableOpacity onPress={() => setSearchQuery('')}>
@@ -295,18 +440,13 @@ export default function DashboardScreen() {
               )}
             </View>
 
-            {/* Filter Horizontal Tabs */}
+            {/* Filter Horizontal Chips */}
             <View style={styles.filterScroll}>
               <TouchableOpacity
                 onPress={() => handleFilterChange('ALL')}
                 style={[styles.filterChip, filter === 'ALL' && styles.filterChipActive]}
               >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    filter === 'ALL' && styles.filterChipTextActive,
-                  ]}
-                >
+                <Text style={[styles.filterChipText, filter === 'ALL' && styles.filterChipTextActive]}>
                   Tous ({metrics.totalMembersCount})
                 </Text>
               </TouchableOpacity>
@@ -315,13 +455,8 @@ export default function DashboardScreen() {
                 onPress={() => handleFilterChange('PAID_TODAY')}
                 style={[styles.filterChip, filter === 'PAID_TODAY' && styles.filterChipActive]}
               >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    filter === 'PAID_TODAY' && styles.filterChipTextActive,
-                  ]}
-                >
-                  Payé ({metrics.paidTodayCount})
+                <Text style={[styles.filterChipText, filter === 'PAID_TODAY' && styles.filterChipTextActive]}>
+                  À jour ({metrics.paidTodayCount})
                 </Text>
               </TouchableOpacity>
 
@@ -329,12 +464,7 @@ export default function DashboardScreen() {
                 onPress={() => handleFilterChange('UNPAID_TODAY')}
                 style={[styles.filterChip, filter === 'UNPAID_TODAY' && styles.filterChipActive]}
               >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    filter === 'UNPAID_TODAY' && styles.filterChipTextActive,
-                  ]}
-                >
+                <Text style={[styles.filterChipText, filter === 'UNPAID_TODAY' && styles.filterChipTextActive]}>
                   Non payé ({metrics.unpaidTodayCount})
                 </Text>
               </TouchableOpacity>
@@ -343,38 +473,34 @@ export default function DashboardScreen() {
                 onPress={() => handleFilterChange('OVERDUE')}
                 style={[styles.filterChip, filter === 'OVERDUE' && styles.filterChipAlertActive]}
               >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    filter === 'OVERDUE' && styles.filterChipTextAlertActive,
-                  ]}
-                >
+                <Text style={[styles.filterChipText, filter === 'OVERDUE' && styles.filterChipTextAlertActive]}>
                   En retard ({metrics.overdueMembersCount})
                 </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => handleFilterChange('UPCOMING_PAYOUT')}
-                style={[
-                  styles.filterChip,
-                  filter === 'UPCOMING_PAYOUT' && styles.filterChipActive,
-                ]}
+                onPress={() => handleFilterChange('HAND_RECEIVED')}
+                style={[styles.filterChip, filter === 'HAND_RECEIVED' && styles.filterChipActive]}
               >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    filter === 'UPCOMING_PAYOUT' && styles.filterChipTextActive,
-                  ]}
-                >
-                  Mains à toucher
+                <Text style={[styles.filterChipText, filter === 'HAND_RECEIVED' && styles.filterChipTextActive]}>
+                  Main touchée ({metrics.handsTouchedCount})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => handleFilterChange('HAND_PENDING')}
+                style={[styles.filterChip, filter === 'HAND_PENDING' && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, filter === 'HAND_PENDING' && styles.filterChipTextActive]}>
+                  Main en attente ({Math.max(0, metrics.totalMembersCount - metrics.handsTouchedCount)})
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {/* Members Section Title + Count */}
+            {/* Section Title & Sorting Toggle */}
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>
-                ADHÉRENTS ("ENFANTS") • {members.length}
+                LISTE DES ENFANTS ({members.length})
               </Text>
               <TouchableOpacity
                 onPress={() => {
@@ -391,7 +517,7 @@ export default function DashboardScreen() {
               >
                 <Icon name="filter" size={12} color="#64748B" style={{ marginRight: 4 }} />
                 <Text style={styles.sortToggleText}>
-                  Tri: {sort === 'PAYOUT_RANK' ? 'Rang' : sort === 'NAME' ? 'Nom' : sort === 'BALANCE' ? 'Solde' : 'Retards'}
+                  Tri: {sort === 'PAYOUT_RANK' ? 'Rang' : sort === 'NAME' ? 'Nom' : sort === 'BALANCE' ? 'Cotisé' : 'Retards'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -404,13 +530,13 @@ export default function DashboardScreen() {
             <Text style={styles.emptySubtitle}>
               {searchQuery
                 ? 'Aucun résultat ne correspond à votre recherche.'
-                : 'Ajoutez votre premier adhérent pour commencer la collecte.'}
+                : 'Ajoutez des enfants pour démarrer le carnet SOL.'}
             </Text>
           </View>
         }
       />
 
-      {/* Floating Action Button (+ Nouvel Adhérent) */}
+      {/* Floating Action Button (+ Nouvel Enfant) */}
       <TouchableOpacity
         activeOpacity={0.85}
         onPress={() => {
@@ -418,11 +544,82 @@ export default function DashboardScreen() {
           router.push('/client/new' as any);
         }}
         style={styles.fab}
-        accessibilityLabel="Ajouter un adhérent"
       >
         <Icon name="plus" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-        <Text style={styles.fabText}>Nouvel Adhérent</Text>
+        <Text style={styles.fabText}>Nouvel Enfant</Text>
       </TouchableOpacity>
+
+      {/* Payout Justification Modal */}
+      <Modal
+        visible={isPayoutModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsPayoutModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.iconCircleCrown}>
+                <Icon name="crown" size={24} color="#1D4ED8" />
+              </View>
+              <Text style={styles.modalTitle}>Remise de la Main (Payout)</Text>
+            </View>
+
+            <Text style={styles.modalSub}>
+              Vous allez débloquer la cagnotte complète de{' '}
+              <Text style={styles.modalSubBold}>{formatCurrency(metrics.totalPotAmount)}</Text> pour{' '}
+              <Text style={styles.modalSubBold}>{payoutTargetMember?.fullName}</Text> (Main #{payoutTargetMember?.rankOrder || 1}).
+            </Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>NOTE / JUSTIFICATION DU DÉCAISSEMENT (OBLIGATOIRE)</Text>
+              <TextInput
+                style={styles.textArea}
+                multiline
+                numberOfLines={3}
+                placeholder="Ex: Remise de main effectuée en mains propres au marché."
+                placeholderTextColor="#94A3B8"
+                value={payoutNote}
+                onChangeText={setPayoutNote}
+              />
+            </View>
+
+            <View style={styles.modalWarningBox}>
+              <Icon name="shield" size={14} color="#0284C7" style={{ marginRight: 6 }} />
+              <Text style={styles.modalWarningText}>
+                L'adhérent restera sur le tableau de bord et continuera d'être exigible pour les cotisations restantes.
+              </Text>
+            </View>
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setIsPayoutModalOpen(false)}
+                style={styles.modalCancelBtn}
+              >
+                <Text style={styles.modalCancelBtnText}>Annuler</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleConfirmPayoutDetails}
+                style={styles.modalConfirmBtn}
+              >
+                <Text style={styles.modalConfirmBtnText}>Valider (Code PIN)</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 4-Digit PIN Security Modal */}
+      <PinVerificationModal
+        visible={isPinModalOpen}
+        title="Validation Sécurisée de la Main"
+        subtitle={`Saisissez votre code PIN gestionnaire pour autoriser le décaissement de ${formatCurrency(metrics.totalPotAmount)}.`}
+        onSuccess={handlePinSuccessPayout}
+        onCancel={() => setIsPinModalOpen(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -434,7 +631,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
-    paddingBottom: 80,
+    paddingBottom: 85,
   },
   dashboardHeader: {
     marginBottom: 8,
@@ -443,7 +640,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+    marginBottom: 10,
+  },
+  quickActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
     marginBottom: 14,
+  },
+  quickActionBtn: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+  },
+  quickActionIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  quickActionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
   },
   metricCard: {
     width: '48%',
@@ -468,28 +693,28 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   metricLabel: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 9,
+    fontWeight: '900',
     color: '#94A3B8',
     letterSpacing: 0.5,
   },
   metricLabelDark: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 9,
+    fontWeight: '900',
     color: '#64748B',
     letterSpacing: 0.5,
   },
   metricValueLight: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '900',
     color: '#FFFFFF',
   },
   metricValueLightSub: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#94A3B8',
   },
   metricValueDark: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '900',
     color: SOL_COLORS.textPrimary,
   },
@@ -534,8 +759,8 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   heroPayoutTitle: {
-    fontSize: 11,
-    fontWeight: '800',
+    fontSize: 10,
+    fontWeight: '900',
     color: '#1D4ED8',
     letterSpacing: 0.5,
   },
@@ -557,13 +782,13 @@ const styles = StyleSheet.create({
   },
   heroPayoutBtn: {
     backgroundColor: '#2563EB',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
   },
   heroPayoutBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
   },
   searchBar: {
@@ -572,7 +797,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     paddingHorizontal: 14,
-    height: 48,
+    height: 46,
     borderWidth: 1.5,
     borderColor: '#CBD5E1',
     marginBottom: 10,
@@ -591,8 +816,8 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: '#CBD5E1',
@@ -606,7 +831,7 @@ const styles = StyleSheet.create({
     borderColor: '#B91C1C',
   },
   filterChipText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#475569',
   },
@@ -626,7 +851,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#64748B',
     letterSpacing: 0.5,
   },
@@ -665,7 +890,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: SOL_COLORS.primary,
     paddingVertical: 14,
-    paddingHorizontal: 20,
+    paddingHorizontal: 18,
     borderRadius: 28,
     elevation: 5,
     shadowColor: '#000',
@@ -677,5 +902,154 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    elevation: 6,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  iconCircleCrown: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: SOL_COLORS.textPrimary,
+  },
+  modalSub: {
+    fontSize: 13,
+    color: '#475569',
+    textAlign: 'center',
+    marginVertical: 8,
+    lineHeight: 18,
+  },
+  modalSubBold: {
+    fontWeight: '900',
+    color: '#1D4ED8',
+  },
+  inputGroup: {
+    marginVertical: 10,
+  },
+  inputLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  textArea: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    padding: 12,
+    fontSize: 13,
+    fontWeight: '600',
+    color: SOL_COLORS.textPrimary,
+    textAlignVertical: 'top',
+    minHeight: 70,
+  },
+  modalWarningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    marginBottom: 14,
+  },
+  modalWarningText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#0369A1',
+    fontWeight: '600',
+    lineHeight: 15,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+  },
+  modalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  modalConfirmBtn: {
+    flex: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#2563EB',
+  },
+  modalConfirmBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  reportBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0F172A',
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  reportBannerTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  reportBannerSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontWeight: '600',
+    marginTop: 2,
+    lineHeight: 14,
+    paddingRight: 6,
+  },
+  reportBannerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1D4ED8',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  reportBannerBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });

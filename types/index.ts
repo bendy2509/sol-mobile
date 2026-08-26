@@ -1,21 +1,34 @@
-export type ClientType = 'SABOTAY' | 'SOL' | 'HYBRID';
+export type UserRole = 'ADMIN' | 'MANAGER' | 'COLLECTOR';
+
+export type UserStatus = 'PENDING_APPROVAL' | 'ACTIVE' | 'SUSPENDED';
 
 export type BusinessType = 'SABOTAY' | 'SOL';
 
+export type ClientType = 'SABOTAY' | 'SOL' | 'HYBRID';
+
+export type Frequency = 'DAILY' | '8_DAYS' | '15_DAYS' | 'MONTHLY';
+
+// Backward compatibility alias
 export type PaymentFrequency =
   | 'DAILY'
   | 'WED_SAT'
   | 'WEEKLY_WED'
   | 'WEEKLY_SAT'
+  | '8_DAYS'
+  | '15_DAYS'
   | '8J'
   | '15J'
   | 'MONTHLY';
 
 export type TransactionType =
+  | 'CONTRIBUTION'
+  | 'HAND_PAYOUT'
   | 'SABOTAY_DEPOSIT'
   | 'SOL_CONTRIBUTION'
   | 'SOL_PAYOUT'
-  | 'WITHDRAWAL';
+  | 'WITHDRAWAL'
+  | 'REVERSAL'
+  | 'CORRECTION';
 
 export type SyncStatus = 'PENDING' | 'SYNCED' | 'FAILED';
 
@@ -23,13 +36,16 @@ export type MemberPaymentStatus =
   | 'PAID_TODAY'
   | 'UNPAID_TODAY'
   | 'OVERDUE'
-  | 'UPCOMING_PAYOUT';
+  | 'UPCOMING_PAYOUT'
+  | 'PAID_IN_ADVANCE';
 
 export type FilterStatus =
   | 'ALL'
   | 'PAID_TODAY'
   | 'UNPAID_TODAY'
   | 'OVERDUE'
+  | 'HAND_RECEIVED'
+  | 'HAND_PENDING'
   | 'UPCOMING_PAYOUT';
 
 export type SortOption =
@@ -39,12 +55,31 @@ export type SortOption =
   | 'BALANCE'
   | 'OVERDUE';
 
+export interface UserSession {
+  id: string; // UUID
+  fullName: string;
+  phoneNumber: string;
+  pinHash: string; // 4-digit PIN
+  status: UserStatus;
+  role: UserRole;
+  zone?: string;
+  businessId?: string;
+  businessName: string;
+  businessType: BusinessType;
+  unitAmount: number;
+  frequency: Frequency;
+  totalSlots: number;
+  startDate: string;
+  endDate: string;
+}
+
 export interface Collector {
   id: string; // UUIDv4
   fullName: string;
   phoneNumber: string;
-  pinHash: string;
-  status: 'ACTIVE' | 'INACTIVE';
+  pinHash: string; // 4 digits
+  status: UserStatus;
+  role?: UserRole;
   zone?: string;
   createdAt: string;
 }
@@ -54,36 +89,46 @@ export interface BusinessConfig {
   collectorId: string;
   name: string;
   type: BusinessType;
-  contributionAmount: number;
+  contributionAmount: number; // Montant unitaire d'une main
   frequency: PaymentFrequency;
-  totalSlots: number; // Total number of members / "enfants"
+  totalSlots: number; // Nombre total d'enfants / slots prévus
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
   status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
   createdAt: string;
 }
 
-export interface Member {
-  id: string; // UUIDv4
+export interface MemberChild {
+  id: string; // UUID
   businessId?: string;
   collectorId: string;
   fullName: string;
   phoneNumber: string;
-  type: ClientType;
-  dailyAmount: number;
-  currentBalance: number;
-  payoutRank?: number | null; // e.g. Main #3 / 12
-  hasReceivedPayout: boolean;
+  rankOrder?: number; // Position/Rang de passage
+  hasReceivedHand: boolean; // Main déjà touchée (Oui/Non)
+  handReceivedDate?: string; // Date de remise de la main
+  totalPaidAmount: number; // Total cotisé en HTG
+  paidHandsCount: number; // Nombre total de mains payées
+  paidUntilDate: string; // Date jusqu'à laquelle les cotisations sont couvertes (YYYY-MM-DD)
   qrCodeToken: string;
   createdAt: string;
   syncStatus: SyncStatus;
+}
+
+// Unified Member interface (aliased to MemberChild with computed display metrics)
+export interface Member extends MemberChild {
+  type: BusinessType;
+  dailyAmount: number;
+  currentBalance: number;
+  payoutRank?: number | null;
+  hasReceivedPayout: boolean;
   paymentStatusToday: MemberPaymentStatus;
   overdueRoundsCount: number;
   lastPaymentDate?: string | null;
   totalPaidInCycle: number;
+  handsCoveredAhead: number; // Nombre de jours/mains d'avance
 }
 
-// Alias Client to Member for backward compatibility
 export type Client = Member;
 
 export interface SolGroup {
@@ -107,21 +152,29 @@ export interface SolGroupMember {
   client?: Member;
 }
 
-export interface Transaction {
+export interface LocalTransaction {
   id: string; // UUIDv4
-  clientId: string;
+  memberId: string;
   collectorId: string;
-  solGroupId?: string | null;
   businessId?: string | null;
+  solGroupId?: string | null;
   amount: number;
-  type: TransactionType;
-  paymentMethod: string;
+  handsCovered: number; // Ex: 750 HTG / 250 HTG = 3 mains
+  type: 'CONTRIBUTION' | 'HAND_PAYOUT' | TransactionType;
+  paymentMethod?: string;
+  note?: string; // Justification obligatoire lors de la remise de la main
   createdAtLocal: string;
   syncedAt?: string | null;
   syncStatus: SyncStatus;
+  memberName?: string;
+  memberPhone?: string;
+}
+
+export type Transaction = LocalTransaction & {
+  clientId?: string;
   clientName?: string;
   clientPhone?: string;
-}
+};
 
 export interface CashClosure {
   id: string;
@@ -135,28 +188,33 @@ export interface CashClosure {
 }
 
 export interface DashboardMetrics {
-  handsCollected: number; // Total hands / contributions collected in this cycle
-  handsRemaining: number; // Total hands remaining in the cycle
-  totalHandsExpected: number; // Total expected hands (totalSlots)
-  daysRemaining: number; // Days remaining before cycle end date
-  totalCashToday: number; // Cash available in drawer today (HTG)
-  overdueMembersCount: number; // Count of members with overdue payments
-  overdueHandsCount: number; // Total overdue hands
-  paidTodayCount: number;
-  unpaidTodayCount: number;
-  totalMembersCount: number;
-  currentPayoutBeneficiary?: Member | null;
-  currentRound: number;
-  totalRounds: number;
+  unitAmount: number; // Montant unitaire d'une main (ex: 250 HTG)
+  totalPotAmount: number; // Cagnotte complète (unitAmount * totalSlots, ex: 2 500 HTG)
+  handsCollectedToday: number; // Nombre total de mains collectées aujourd'hui
+  handsCollectedTotal: number; // Total cumulé des mains du cycle
+  totalHandsExpected: number; // Total attendu sur le cycle (totalSlots)
+  daysRemaining: number; // Nombre de jours restants avant la clôture
+  overdueMembersCount: number; // Compteur global des enfants en retard
+  overdueHandsCount: number; // Nombre total de cotisations en retard
+  paidTodayCount: number; // Nombre d'enfants ayant payé aujourd'hui / couverts
+  unpaidTodayCount: number; // Nombre d'enfants non payés aujourd'hui
+  totalMembersCount: number; // Nombre total d'adhérents inscrits
+  handsTouchedCount: number; // Nombre d'enfants ayant déjà touché leur main
+  currentPayoutBeneficiary?: Member | null; // Prochain bénéficiaire selon le rang
   businessName: string;
   businessType: BusinessType;
-  contributionAmount: number;
-  frequency: PaymentFrequency;
+  frequency: Frequency | PaymentFrequency;
   startDate: string;
   endDate: string;
+  // Legacy aliases for backward compatibility
+  handsCollected: number;
+  handsRemaining: number;
+  totalCashToday: number;
+  contributionAmount: number;
+  currentRound: number;
+  totalRounds: number;
 }
 
-// Retain DashboardStats alias for legacy queries
 export type DashboardStats = {
   totalCollectedToday: number;
   sabotayDepositsToday: number;

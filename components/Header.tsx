@@ -53,6 +53,18 @@ export const Header: React.FC<HeaderProps> = ({
             <Icon name="scan" size={18} color={SOL_COLORS.textPrimary} />
           </TouchableOpacity>
         )}
+
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => {
+            triggerLightImpact();
+            router.push('/profile' as any);
+          }}
+          style={styles.scanButton}
+          accessibilityLabel="Mon Profil"
+        >
+          <Icon name="user" size={18} color={SOL_COLORS.textPrimary} />
+        </TouchableOpacity>
       </View>
     </View>
   );

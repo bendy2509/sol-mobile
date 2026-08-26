@@ -100,30 +100,42 @@ export async function getSolGroupMembers(solGroupId: string): Promise<SolGroupMe
     [solGroupId]
   );
 
-  return rows.map((m) => ({
-    id: m.id,
-    solGroupId: m.sol_group_id,
-    clientId: m.client_id,
-    payoutRank: m.payout_rank,
-    hasPaid: Boolean(m.has_paid),
-    client: {
-      id: m.client_id,
-      collectorId: '',
-      fullName: m.full_name,
-      phoneNumber: m.phone_number,
-      type: 'SOL',
-      dailyAmount: Number(m.daily_amount),
-      currentBalance: Number(m.current_balance),
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  return rows.map((m) => {
+    const balance = Number(m.current_balance || 0);
+    return {
+      id: m.id,
+      solGroupId: m.sol_group_id,
+      clientId: m.client_id,
       payoutRank: m.payout_rank,
-      hasReceivedPayout: false,
-      qrCodeToken: m.qr_code_token,
-      createdAt: m.created_at,
-      syncStatus: 'SYNCED',
-      paymentStatusToday: m.has_paid ? 'PAID_TODAY' : 'UNPAID_TODAY',
-      overdueRoundsCount: 0,
-      totalPaidInCycle: Number(m.current_balance),
-    },
-  }));
+      hasPaid: Boolean(m.has_paid),
+      client: {
+        id: m.client_id,
+        collectorId: '',
+        fullName: m.full_name,
+        phoneNumber: m.phone_number,
+        type: 'SOL',
+        dailyAmount: Number(m.daily_amount || 250),
+        currentBalance: balance,
+        payoutRank: m.payout_rank,
+        rankOrder: m.payout_rank,
+        hasReceivedHand: false,
+        hasReceivedPayout: false,
+        handReceivedDate: undefined,
+        totalPaidAmount: balance,
+        paidHandsCount: Math.floor(balance / (Number(m.daily_amount) || 1)),
+        paidUntilDate: todayStr,
+        qrCodeToken: m.qr_code_token,
+        createdAt: m.created_at,
+        syncStatus: 'SYNCED',
+        paymentStatusToday: m.has_paid ? 'PAID_TODAY' : 'UNPAID_TODAY',
+        overdueRoundsCount: 0,
+        totalPaidInCycle: balance,
+        handsCoveredAhead: 0,
+      },
+    };
+  });
 }
 
 export async function createSolGroup(data: {
@@ -149,7 +161,7 @@ export async function createSolGroup(data: {
       const memberId = uuidv4();
       await db.runAsync(
         `INSERT INTO sol_group_members (id, sol_group_id, client_id, payout_rank, has_paid)
-         VALUES (?, ?, ?, ?, 0)`,
+          VALUES (?, ?, ?, ?, 0)`,
         [memberId, id, clientId, rank]
       );
       rank++;

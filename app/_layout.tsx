@@ -13,9 +13,7 @@ import { AuthProvider } from '@/context/AuthContext';
 import { SyncProvider } from '@/context/SyncContext';
 import { SOL_COLORS } from '@/constants/Colors';
 
-export {
-  ErrorBoundary,
-} from 'expo-router';
+export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -28,7 +26,6 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    // Hide native splash screen as soon as component mounts
     SplashScreen.hideAsync().catch(() => {});
 
     async function prepare() {
@@ -84,6 +81,41 @@ export default function RootLayout() {
                 options={{
                   headerShown: false,
                   gestureEnabled: false,
+                }}
+              />
+              <Stack.Screen
+                name="register"
+                options={{
+                  title: 'Nouveau Carnet SOL',
+                  headerBackTitle: 'Connexion',
+                }}
+              />
+              <Stack.Screen
+                name="pending-approval"
+                options={{
+                  headerShown: false,
+                  gestureEnabled: false,
+                }}
+              />
+              <Stack.Screen
+                name="admin"
+                options={{
+                  headerShown: false,
+                  gestureEnabled: false,
+                }}
+              />
+              <Stack.Screen
+                name="profile"
+                options={{
+                  title: 'Mon Profil',
+                  headerBackTitle: 'Retour',
+                }}
+              />
+              <Stack.Screen
+                name="closure"
+                options={{
+                  title: 'Clôture Journalière de Caisse',
+                  headerBackTitle: 'Retour',
                 }}
               />
               <Stack.Screen

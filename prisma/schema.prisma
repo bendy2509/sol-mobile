@@ -26,36 +26,58 @@ enum SyncStatus {
 }
 
 model Collector {
-  id           String        @id @default(uuid()) @db.Uuid
-  fullName     String        @map("full_name")
-  phoneNumber  String        @unique @map("phone_number")
-  pinHash      String        @map("pin_hash")
-  status       String        @default("ACTIVE")
-  zone         String?
-  createdAt    DateTime      @default(now()) @map("created_at")
-  clients      Client[]
-  transactions Transaction[]
-  closures     CashClosure[]
+  id              String           @id @default(uuid()) @db.Uuid
+  fullName        String           @map("full_name")
+  phoneNumber     String           @unique @map("phone_number")
+  pinHash         String           @map("pin_hash")
+  status          String           @default("ACTIVE")
+  zone            String?
+  createdAt       DateTime         @default(now()) @map("created_at")
+  clients         Client[]
+  transactions    Transaction[]
+  closures        CashClosure[]
+  businessConfigs BusinessConfig[]
 
   @@map("collectors")
 }
 
+model BusinessConfig {
+  id                 String    @id @default(uuid()) @db.Uuid
+  collectorId        String    @map("collector_id") @db.Uuid
+  collector          Collector @relation(fields: [collectorId], references: [id], onDelete: Cascade)
+  name               String
+  type               String
+  contributionAmount Decimal   @map("contribution_amount") @db.Decimal(10, 2)
+  frequency          String
+  totalSlots         Int       @map("total_slots")
+  startDate          DateTime  @map("start_date") @db.Date
+  endDate            DateTime  @map("end_date") @db.Date
+  status             String    @default("ACTIVE")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  @@map("business_configs")
+}
+
 model Client {
-  id             String           @id @default(uuid()) @db.Uuid
-  collectorId    String           @map("collector_id") @db.Uuid
-  collector      Collector        @relation(fields: [collectorId], references: [id], onDelete: Cascade)
-  fullName       String           @map("full_name")
-  phoneNumber    String           @map("phone_number")
-  type           ClientType       @default(SABOTAY)
-  dailyAmount    Decimal          @default(0) @map("daily_amount") @db.Decimal(10, 2)
-  currentBalance Decimal          @default(0) @map("current_balance") @db.Decimal(10, 2)
-  qrCodeToken    String           @unique @map("qr_code_token")
-  createdAt      DateTime         @default(now()) @map("created_at")
-  transactions   Transaction[]
-  solMemberships SolGroupMember[]
+  id                String           @id @default(uuid()) @db.Uuid
+  collectorId       String           @map("collector_id") @db.Uuid
+  collector         Collector        @relation(fields: [collectorId], references: [id], onDelete: Cascade)
+  businessId        String?          @map("business_id") @db.Uuid
+  fullName          String           @map("full_name")
+  phoneNumber       String           @map("phone_number")
+  type              ClientType       @default(SABOTAY)
+  dailyAmount       Decimal          @default(0) @map("daily_amount") @db.Decimal(10, 2)
+  currentBalance    Decimal          @default(0) @map("current_balance") @db.Decimal(10, 2)
+  payoutRank        Int?             @map("payout_rank")
+  hasReceivedPayout Boolean          @default(false) @map("has_received_payout")
+  qrCodeToken       String           @unique @map("qr_code_token")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  transactions      Transaction[]
+  solMemberships    SolGroupMember[]
 
   @@index([phoneNumber])
   @@index([collectorId])
+  @@index([businessId])
   @@map("clients")
 }
 
@@ -96,6 +118,7 @@ model Transaction {
   collector      Collector       @relation(fields: [collectorId], references: [id], onDelete: Restrict)
   solGroupId     String?         @map("sol_group_id") @db.Uuid
   solGroup       SolGroup?       @relation(fields: [solGroupId], references: [id], onDelete: SetNull)
+  businessId     String?         @map("business_id") @db.Uuid
   amount         Decimal         @db.Decimal(10, 2)
   type           TransactionType
   paymentMethod  String          @default("CASH") @map("payment_method")
@@ -105,6 +128,7 @@ model Transaction {
 
   @@index([clientId])
   @@index([collectorId])
+  @@index([businessId])
   @@index([createdAtLocal])
   @@map("transactions")
 }

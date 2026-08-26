@@ -15,7 +15,7 @@ import { useRouter } from 'expo-router';
 
 import { saveBusinessConfig } from '@/db/businessRepository';
 import { BusinessType, PaymentFrequency } from '@/types';
-import { calculateCycleEndDate, getFrequencyLabel } from '@/lib/dateCalculations';
+import { calculateCycleEndDate, getFrequencyLabel, calculateCycleTotalDays, getFrequencyIntervalDays } from '@/lib/dateCalculations';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { Icon } from '@/components/Icon';
@@ -288,20 +288,22 @@ export default function SetupBusinessScreen() {
               />
             </View>
 
-            {/* Computed End Date Banner */}
+            {/* Computed End Date & Cycle Duration Banner */}
             <View style={styles.computedBanner}>
               <View style={styles.computedBannerHeader}>
                 <Icon name="calendar" size={16} color="#1D4ED8" />
                 <Text style={styles.computedBannerTitle}>
-                  DATE DE FIN CALCULÉE AUTOMATIQUEMENT
+                  DURÉE DU CYCLE & DATE DE FIN
                 </Text>
               </View>
               <Text style={styles.computedEndDateValue}>
-                {formatDateShort(endDate)} ({endDate})
+                {calculateCycleTotalDays(parseInt(totalSlots, 10) || 1, frequency)} jours de cycle
               </Text>
               <Text style={styles.computedExplanation}>
-                Basée sur {totalSlots} participants avec la fréquence "
-                {getFrequencyLabel(frequency)}".
+                Formule : {totalSlots} enfants × {getFrequencyIntervalDays(frequency)} jour(s) = {calculateCycleTotalDays(parseInt(totalSlots, 10) || 1, frequency)} jours.
+              </Text>
+              <Text style={[styles.computedExplanation, { marginTop: 4, fontWeight: '700', color: '#1D4ED8' }]}>
+                Date de fin calculée : {formatDateShort(endDate)} ({endDate})
               </Text>
             </View>
 

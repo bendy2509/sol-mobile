@@ -1,6 +1,3 @@
-import React from 'react';
-import { View } from 'react-native';
+import CashClosureScreen from '@/app/closure';
 
-export default function TabTwoScreen() {
-  return <View style={{ flex: 1, backgroundColor: '#F8FAFC' }} />;
-}
+export default CashClosureScreen;

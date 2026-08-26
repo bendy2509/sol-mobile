@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { Member } from '@/types';
 import { Badge } from './Badge';
 import { Icon } from './Icon';
-import { formatCurrency, getInitials } from '@/lib/formatters';
+import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
 
@@ -47,18 +47,20 @@ export const MemberCard: React.FC<MemberCardProps> = ({
     }
   };
 
+  const isCovered = member.paymentStatusToday === 'PAID_TODAY' || member.paymentStatusToday === 'PAID_IN_ADVANCE';
+
   return (
     <TouchableOpacity
-      activeOpacity={0.8}
+      activeOpacity={0.85}
       onPress={handleCardPress}
       style={[
         styles.card,
-        isPayoutTurn && !member.hasReceivedPayout && styles.cardHighlightTurn,
+        isPayoutTurn && !member.hasReceivedHand && styles.cardHighlightTurn,
       ]}
     >
-      {/* Top Header: Avatar + Name + Status */}
+      {/* Top Row: Avatar + Name + Hand Rank */}
       <View style={styles.topRow}>
-        <View style={styles.avatar}>
+        <View style={[styles.avatar, member.hasReceivedHand && styles.avatarHandReceived]}>
           <Text style={styles.avatarText}>{getInitials(member.fullName)}</Text>
         </View>
 
@@ -67,9 +69,9 @@ export const MemberCard: React.FC<MemberCardProps> = ({
             <Text style={styles.fullName} numberOfLines={1}>
               {member.fullName}
             </Text>
-            {member.payoutRank && (
+            {member.rankOrder && (
               <View style={styles.rankPill}>
-                <Text style={styles.rankPillText}>Main #{member.payoutRank}</Text>
+                <Text style={styles.rankPillText}>Main #{member.rankOrder}</Text>
               </View>
             )}
           </View>
@@ -77,58 +79,95 @@ export const MemberCard: React.FC<MemberCardProps> = ({
         </View>
       </View>
 
-      {/* Middle: Badges & Financial Info */}
+      {/* Hand Status Indicator Banner */}
+      <View style={styles.handStatusRow}>
+        {member.hasReceivedHand ? (
+          <View style={styles.handReceivedBadge}>
+            <Icon name="check" size={12} color="#047857" style={{ marginRight: 4 }} />
+            <Text style={styles.handReceivedText}>
+              Main touchée {member.handReceivedDate ? `le ${formatDateShort(member.handReceivedDate)}` : ''}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.handPendingBadge}>
+            <Icon name="clock" size={12} color="#475569" style={{ marginRight: 4 }} />
+            <Text style={styles.handPendingText}>Main en attente de tour</Text>
+          </View>
+        )}
+
+        {member.handsCoveredAhead > 0 && (
+          <View style={styles.advanceBadge}>
+            <Text style={styles.advanceBadgeText}>+{member.handsCoveredAhead} j d'avance</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Middle Row: Payment Status Badge & Financial Total */}
       <View style={styles.middleRow}>
-        <Badge
-          paymentStatus={member.paymentStatusToday}
-          overdueCount={member.overdueRoundsCount}
-          hasReceivedPayout={member.hasReceivedPayout}
-        />
+        <View style={styles.statusBox}>
+          {member.paymentStatusToday === 'PAID_IN_ADVANCE' ? (
+            <View style={styles.badgeAdvance}>
+              <Icon name="check" size={12} color="#059669" style={{ marginRight: 4 }} />
+              <Text style={styles.badgeAdvanceText}>
+                Couvert jusqu'au {formatDateShort(member.paidUntilDate)}
+              </Text>
+            </View>
+          ) : member.paymentStatusToday === 'PAID_TODAY' ? (
+            <View style={styles.badgePaid}>
+              <Icon name="check" size={12} color="#059669" style={{ marginRight: 4 }} />
+              <Text style={styles.badgePaidText}>Payé aujourd'hui</Text>
+            </View>
+          ) : member.paymentStatusToday === 'OVERDUE' ? (
+            <View style={styles.badgeOverdue}>
+              <Icon name="alert" size={12} color="#DC2626" style={{ marginRight: 4 }} />
+              <Text style={styles.badgeOverdueText}>
+                En retard ({member.overdueRoundsCount} main{member.overdueRoundsCount > 1 ? 's' : ''})
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.badgeUnpaid}>
+              <Icon name="clock" size={12} color="#D97706" style={{ marginRight: 4 }} />
+              <Text style={styles.badgeUnpaidText}>Non payé aujourd'hui</Text>
+            </View>
+          )}
+        </View>
 
         <View style={styles.financialBox}>
-          <Text style={styles.balanceLabel}>Solde cotisé :</Text>
-          <Text style={styles.balanceAmount}>{formatCurrency(member.currentBalance)}</Text>
+          <Text style={styles.balanceLabel}>Total cotisé :</Text>
+          <Text style={styles.balanceAmount}>{formatCurrency(member.totalPaidAmount || member.currentBalance)}</Text>
         </View>
       </View>
 
-      {/* Bottom: Quick Actions */}
+      {/* Bottom Action Row: Encaisser & Donner la main */}
       <View style={styles.actionRow}>
-        {/* Payout Hand Action if it's their turn and not yet paid out */}
-        {isPayoutTurn && !member.hasReceivedPayout && (
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={handlePayoutPress}
-            style={styles.payoutButton}
-          >
-            <Icon name="crown" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.payoutButtonText}>Décaisser la Main</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Regular Collection Shortcut */}
+        {/* Quick Collect Action */}
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={handleCollectPress}
-          style={[
-            styles.collectButton,
-            member.paymentStatusToday === 'PAID_TODAY' && styles.collectButtonPaid,
-          ]}
+          style={[styles.actionBtn, styles.collectBtn, isCovered && styles.collectBtnCovered]}
         >
           <Icon
-            name={member.paymentStatusToday === 'PAID_TODAY' ? 'check' : 'collect'}
+            name={isCovered ? 'plus' : 'collect'}
             size={14}
-            color={member.paymentStatusToday === 'PAID_TODAY' ? '#15803D' : '#FFFFFF'}
+            color={isCovered ? '#059669' : '#FFFFFF'}
             style={{ marginRight: 6 }}
           />
-          <Text
-            style={[
-              styles.collectButtonText,
-              member.paymentStatusToday === 'PAID_TODAY' && styles.collectButtonTextPaid,
-            ]}
-          >
-            {member.paymentStatusToday === 'PAID_TODAY' ? 'Cotisé (Ajouter)' : 'Encaisser'}
+          <Text style={[styles.actionBtnText, isCovered && styles.collectBtnTextCovered]}>
+            {isCovered ? 'Avance (Ajouter)' : 'Encaisser'}
           </Text>
         </TouchableOpacity>
+
+        {/* Payout Hand Action */}
+        {!member.hasReceivedHand && (
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={handlePayoutPress}
+            style={[styles.actionBtn, styles.payoutBtn]}
+          >
+            <Icon name="crown" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+            <Text style={styles.actionBtnText}>Donner la Main</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -141,22 +180,22 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 12,
     borderWidth: 1.5,
-    borderColor: '#E2E8F0',
+    borderColor: '#CBD5E1',
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
   },
   cardHighlightTurn: {
-    borderColor: '#93C5FD',
-    backgroundColor: '#F8FAFC',
+    borderColor: '#3B82F6',
+    backgroundColor: '#F0F7FF',
     borderWidth: 2,
   },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   avatar: {
     width: 44,
@@ -167,10 +206,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
+  avatarHandReceived: {
+    backgroundColor: '#059669',
+  },
   avatarText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '800',
+    fontWeight: '900',
   },
   nameContainer: {
     flex: 1,
@@ -202,19 +244,127 @@ const styles = StyleSheet.create({
   },
   phone: {
     fontSize: 12,
-    color: SOL_COLORS.textSecondary,
+    color: '#64748B',
     marginTop: 2,
-    fontWeight: '500',
+    fontWeight: '600',
+  },
+  handStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  handReceivedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  handReceivedText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#047857',
+  },
+  handPendingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  handPendingText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  advanceBadge: {
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  advanceBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#16A34A',
   },
   middleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: '#F1F5F9',
     marginBottom: 10,
+  },
+  statusBox: {
+    flex: 1,
+  },
+  badgePaid: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  badgePaidText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  badgeAdvance: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  badgeAdvanceText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  badgeOverdue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  badgeOverdueText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#DC2626',
+  },
+  badgeUnpaid: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  badgeUnpaidText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#D97706',
   },
   financialBox: {
     alignItems: 'flex-end',
@@ -233,38 +383,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
-  collectButton: {
+  actionBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  collectBtn: {
     backgroundColor: SOL_COLORS.primary,
-    paddingVertical: 10,
-    borderRadius: 12,
   },
-  collectButtonPaid: {
-    backgroundColor: '#DCFCE7',
-    borderWidth: 1,
-    borderColor: '#86EFAC',
+  collectBtnCovered: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
   },
-  collectButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
+  collectBtnTextCovered: {
+    color: '#047857',
   },
-  collectButtonTextPaid: {
-    color: '#15803D',
-  },
-  payoutButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+  payoutBtn: {
     backgroundColor: '#2563EB',
-    paddingVertical: 10,
-    borderRadius: 12,
   },
-  payoutButtonText: {
+  actionBtnText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',

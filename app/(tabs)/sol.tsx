@@ -2,10 +2,12 @@ import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
   Alert,
+  Modal,
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,11 +16,13 @@ import { useFocusEffect } from 'expo-router';
 import { Header } from '@/components/Header';
 import { Badge } from '@/components/Badge';
 import { Icon } from '@/components/Icon';
+import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { getFrequencyLabel } from '@/lib/dateCalculations';
+import { calculatePot } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
 
@@ -26,6 +30,12 @@ export default function SolMatrixScreen() {
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Payout Flow State
+  const [payoutTargetMember, setPayoutTargetMember] = useState<Member | null>(null);
+  const [payoutNote, setPayoutNote] = useState('');
+  const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
+  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -55,37 +65,53 @@ export default function SolMatrixScreen() {
     }
   };
 
-  const handlePayout = async (member: Member) => {
-    if (!business) return;
+  const handleInitiatePayout = (member: Member) => {
     triggerMediumImpact();
-
-    const potAmount = business.contributionAmount * (business.totalSlots || members.length);
-
-    Alert.alert(
-      'Décaisser la Main (Remettre la Cagnotte)',
-      `Confirmez-vous le versement de la main du Sol à ${member.fullName} pour un montant de ${formatCurrency(potAmount)} ?`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Confirmer le Décaissement',
-          onPress: async () => {
-            try {
-              await payoutMemberHand(member.id, potAmount, business.id);
-              triggerSuccessFeedback();
-              Alert.alert('Succès', `La main a été décaissée avec succès pour ${member.fullName}.`);
-              loadData();
-            } catch (err: any) {
-              Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
-            }
-          },
-        },
-      ]
-    );
+    setPayoutTargetMember(member);
+    setPayoutNote(`Remise de la main #${member.rankOrder || member.payoutRank || 1} - ${member.fullName}`);
+    setIsPayoutModalOpen(true);
   };
 
-  const totalPaidOut = members.filter((m) => m.hasReceivedPayout).length;
+  const handleConfirmPayoutDetails = () => {
+    if (!payoutNote.trim()) {
+      Alert.alert('Justification requise', 'Veuillez saisir une note ou motif pour le déblocage de la main.');
+      return;
+    }
+    setIsPayoutModalOpen(false);
+    setIsPinModalOpen(true);
+  };
+
+  const potValue = calculatePot(
+    business?.contributionAmount || 250,
+    business?.totalSlots || members.length || 10
+  );
+
+  const handlePinSuccessPayout = async () => {
+    setIsPinModalOpen(false);
+    if (!payoutTargetMember) return;
+
+    try {
+      await payoutMemberHand(
+        payoutTargetMember.id,
+        potValue,
+        payoutNote.trim(),
+        business?.id
+      );
+      triggerSuccessFeedback();
+      Alert.alert(
+        'Main Remise avec Succès !',
+        `La cagnotte complète de ${formatCurrency(potValue)} a été décaissée pour ${payoutTargetMember.fullName}.\n\nRappel : Cet enfant reste actif et doit continuer ses cotisations restantes jusqu'à la fin du cycle.`
+      );
+      loadData();
+    } catch (err: any) {
+      Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
+    } finally {
+      setPayoutTargetMember(null);
+    }
+  };
+
+  const totalPaidOut = members.filter((m) => m.hasReceivedHand || m.hasReceivedPayout).length;
   const currentRound = Math.min(members.length || 1, totalPaidOut + 1);
-  const potValue = (business?.contributionAmount || 0) * (business?.totalSlots || members.length || 1);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -112,7 +138,7 @@ export default function SolMatrixScreen() {
               <Text style={styles.heroGroupLabel}>CYCLE EN COURS</Text>
               <Text style={styles.heroGroupName}>{business?.name || 'Groupe Sol'}</Text>
               <Text style={styles.heroFrequency}>
-                Fréquence : {getFrequencyLabel(business?.frequency || 'WED_SAT')}
+                Fréquence : {getFrequencyLabel(business?.frequency || 'DAILY')}
               </Text>
             </View>
             <View style={styles.potBox}>
@@ -121,11 +147,11 @@ export default function SolMatrixScreen() {
             </View>
           </View>
 
-          {/* Progress Indicator */}
+          {/* Progress Metrics */}
           <View style={styles.progressSection}>
-            <View style={styles.progressHeader}>
+            <View style={styles.progressTextRow}>
               <Text style={styles.progressLabel}>
-                Progression du cycle : Tour {currentRound} sur {business?.totalSlots || members.length}
+                Tour actuel : <Text style={styles.progressBold}>Main #{currentRound}</Text> sur {business?.totalSlots || members.length}
               </Text>
               <Text style={styles.progressPct}>
                 {Math.round((totalPaidOut / (business?.totalSlots || members.length || 1)) * 100)}%
@@ -136,7 +162,10 @@ export default function SolMatrixScreen() {
                 style={[
                   styles.progressFill,
                   {
-                    width: `${Math.round((totalPaidOut / (business?.totalSlots || members.length || 1)) * 100)}%`,
+                    width: `${Math.min(
+                      100,
+                      (totalPaidOut / (business?.totalSlots || members.length || 1)) * 100
+                    )}%`,
                   },
                 ]}
               />
@@ -144,75 +173,149 @@ export default function SolMatrixScreen() {
           </View>
         </View>
 
-        {/* Member Matrix */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            ORDRE DE PASSAGE DES MAINS ({members.length} ADHÉRENTS)
-          </Text>
-        </View>
+        {/* Matrix List of Ranks */}
+        <View style={styles.matrixContainer}>
+          <Text style={styles.sectionTitle}>ORDRE OFFICIEL DE PASSAGE DES MAINS</Text>
 
-        {members.map((m, index) => {
-          const rank = m.payoutRank || index + 1;
-          const isCurrentTurn = rank === currentRound && !m.hasReceivedPayout;
+          {members.map((member, index) => {
+            const hasReceived = Boolean(member.hasReceivedHand || member.hasReceivedPayout);
+            const isNextTurn = !hasReceived && member.payoutRank === currentRound;
 
-          return (
-            <View
-              key={m.id}
-              style={[
-                styles.memberRow,
-                isCurrentTurn && styles.memberRowHighlight,
-                m.hasReceivedPayout && styles.memberRowPaidOut,
-              ]}
-            >
-              {/* Rank Pill */}
+            return (
               <View
+                key={member.id}
                 style={[
-                  styles.rankCircle,
-                  isCurrentTurn && styles.rankCircleHighlight,
-                  m.hasReceivedPayout && styles.rankCirclePaidOut,
+                  styles.rankCard,
+                  isNextTurn && styles.rankCardHighlight,
+                  hasReceived && styles.rankCardCompleted,
                 ]}
               >
-                <Text
-                  style={[
-                    styles.rankText,
-                    isCurrentTurn && styles.rankTextHighlight,
-                    m.hasReceivedPayout && styles.rankTextPaidOut,
-                  ]}
-                >
-                  #{rank}
-                </Text>
-              </View>
-
-              {/* Member Details */}
-              <View style={styles.memberInfo}>
-                <Text style={styles.memberName}>{m.fullName}</Text>
-                <Text style={styles.memberPhone}>{m.phoneNumber}</Text>
-              </View>
-
-              {/* Status or Payout Action */}
-              <View style={styles.actionContainer}>
-                {m.hasReceivedPayout ? (
-                  <View style={styles.paidBadge}>
-                    <Icon name="check" size={12} color="#059669" style={{ marginRight: 4 }} />
-                    <Text style={styles.paidBadgeText}>Main Touchée</Text>
-                  </View>
-                ) : isCurrentTurn ? (
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={() => handlePayout(m)}
-                    style={styles.payoutBtn}
+                <View style={styles.rankLeft}>
+                  <View
+                    style={[
+                      styles.rankCircle,
+                      isNextTurn && styles.rankCircleHighlight,
+                      hasReceived && styles.rankCircleCompleted,
+                    ]}
                   >
-                    <Icon name="crown" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
-                    <Text style={styles.payoutBtnText}>Décaisser</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <Text style={styles.pendingRankText}>En attente</Text>
-                )}
+                    <Text
+                      style={[
+                        styles.rankNumber,
+                        isNextTurn && styles.rankNumberHighlight,
+                        hasReceived && styles.rankNumberCompleted,
+                      ]}
+                    >
+                      {member.rankOrder || member.payoutRank || index + 1}
+                    </Text>
+                  </View>
+
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.memberName}>{member.fullName}</Text>
+                    <Text style={styles.memberPhone}>{member.phoneNumber}</Text>
+                    {member.handReceivedDate && (
+                      <Text style={styles.receivedDateText}>
+                        Main touchée le {formatDateShort(member.handReceivedDate)}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                <View style={styles.rankRight}>
+                  {hasReceived ? (
+                    <View style={styles.badgePaidOut}>
+                      <Icon name="check" size={12} color="#047857" style={{ marginRight: 4 }} />
+                      <Text style={styles.badgePaidOutText}>Main Touchée</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => handleInitiatePayout(member)}
+                      style={[styles.payoutActionBtn, isNextTurn && styles.payoutActionBtnHighlight]}
+                    >
+                      <Icon name="crown" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.payoutActionBtnText}>
+                        {isNextTurn ? 'Donner la Main' : 'Décaisser'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
-            </View>
-          );
-        })}
+            );
+          })}
+        </View>
       </ScrollView>
+
+      {/* Payout Justification Modal */}
+      <Modal
+        visible={isPayoutModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsPayoutModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.iconCircleCrown}>
+                <Icon name="crown" size={24} color="#1D4ED8" />
+              </View>
+              <Text style={styles.modalTitle}>Remise de la Main (Payout)</Text>
+            </View>
+
+            <Text style={styles.modalSub}>
+              Vous allez débloquer la cagnotte complète de{' '}
+              <Text style={styles.modalSubBold}>{formatCurrency(potValue)}</Text> pour{' '}
+              <Text style={styles.modalSubBold}>{payoutTargetMember?.fullName}</Text> (Main #{payoutTargetMember?.rankOrder || payoutTargetMember?.payoutRank || 1}).
+            </Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>NOTE / JUSTIFICATION DU DÉCAISSEMENT (OBLIGATOIRE)</Text>
+              <TextInput
+                style={styles.textArea}
+                multiline
+                numberOfLines={3}
+                placeholder="Ex: Remise de main effectuée en mains propres au marché."
+                placeholderTextColor="#94A3B8"
+                value={payoutNote}
+                onChangeText={setPayoutNote}
+              />
+            </View>
+
+            <View style={styles.modalWarningBox}>
+              <Icon name="shield" size={14} color="#0284C7" style={{ marginRight: 6 }} />
+              <Text style={styles.modalWarningText}>
+                L'adhérent restera sur le tableau de bord et continuera d'être exigible pour les cotisations restantes.
+              </Text>
+            </View>
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setIsPayoutModalOpen(false)}
+                style={styles.modalCancelBtn}
+              >
+                <Text style={styles.modalCancelBtnText}>Annuler</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleConfirmPayoutDetails}
+                style={styles.modalConfirmBtn}
+              >
+                <Text style={styles.modalConfirmBtnText}>Valider (Code PIN)</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 4-Digit PIN Security Modal */}
+      <PinVerificationModal
+        visible={isPinModalOpen}
+        title="Validation Sécurisée de la Main"
+        subtitle={`Saisissez votre code PIN gestionnaire pour autoriser le décaissement de ${formatCurrency(potValue)}.`}
+        onSuccess={handlePinSuccessPayout}
+        onCancel={() => setIsPinModalOpen(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -224,23 +327,25 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 90,
   },
   heroCard: {
     backgroundColor: SOL_COLORS.secondary,
     borderRadius: 20,
-    padding: 18,
-    marginBottom: 20,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: '#334155',
   },
   heroHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   heroGroupLabel: {
     fontSize: 10,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#94A3B8',
     letterSpacing: 0.5,
   },
@@ -252,88 +357,96 @@ const styles = StyleSheet.create({
   },
   heroFrequency: {
     fontSize: 12,
-    color: '#34D399',
+    color: '#94A3B8',
     marginTop: 2,
     fontWeight: '600',
   },
   potBox: {
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
+    alignItems: 'flex-end',
+    backgroundColor: '#334155',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    alignItems: 'flex-end',
-    borderWidth: 1,
-    borderColor: '#334155',
+    borderRadius: 12,
   },
   potLabel: {
     fontSize: 9,
-    fontWeight: '800',
+    fontWeight: '900',
     color: '#94A3B8',
     letterSpacing: 0.5,
   },
   potAmount: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '900',
     color: '#34D399',
     marginTop: 2,
   },
   progressSection: {
-    marginTop: 4,
+    marginTop: 6,
   },
-  progressHeader: {
+  progressTextRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 6,
   },
   progressLabel: {
-    fontSize: 11,
-    color: '#E2E8F0',
-    fontWeight: '700',
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  progressBold: {
+    fontWeight: '900',
+    color: '#FFFFFF',
   },
   progressPct: {
-    fontSize: 11,
+    fontSize: 12,
+    fontWeight: '900',
     color: '#34D399',
-    fontWeight: '800',
   },
   progressBar: {
-    height: 8,
+    height: 6,
     backgroundColor: '#334155',
-    borderRadius: 4,
+    borderRadius: 3,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
     backgroundColor: '#34D399',
-    borderRadius: 4,
+    borderRadius: 3,
   },
-  sectionHeader: {
-    marginBottom: 12,
+  matrixContainer: {
+    marginTop: 4,
   },
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 11,
+    fontWeight: '900',
     color: '#64748B',
     letterSpacing: 0.5,
+    marginBottom: 10,
   },
-  memberRow: {
+  rankCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
+    borderRadius: 16,
+    padding: 14,
     marginBottom: 10,
     borderWidth: 1.5,
     borderColor: '#CBD5E1',
   },
-  memberRowHighlight: {
-    borderColor: '#3B82F6',
+  rankCardHighlight: {
+    borderColor: '#2563EB',
     backgroundColor: '#EFF6FF',
     borderWidth: 2,
   },
-  memberRowPaidOut: {
+  rankCardCompleted: {
     backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
     opacity: 0.85,
+  },
+  rankLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
   rankCircle: {
     width: 36,
@@ -342,27 +455,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
   },
   rankCircleHighlight: {
     backgroundColor: '#2563EB',
+    borderColor: '#1D4ED8',
   },
-  rankCirclePaidOut: {
-    backgroundColor: '#DCFCE7',
+  rankCircleCompleted: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
   },
-  rankText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
+  rankNumber: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#64748B',
   },
-  rankTextHighlight: {
+  rankNumberHighlight: {
     color: '#FFFFFF',
   },
-  rankTextPaidOut: {
-    color: '#15803D',
-  },
-  memberInfo: {
-    flex: 1,
+  rankNumberCompleted: {
+    color: '#059669',
   },
   memberName: {
     fontSize: 15,
@@ -371,41 +484,161 @@ const styles = StyleSheet.create({
   },
   memberPhone: {
     fontSize: 12,
-    color: SOL_COLORS.textSecondary,
-    marginTop: 1,
+    color: '#64748B',
+    fontWeight: '600',
   },
-  actionContainer: {
+  receivedDateText: {
+    fontSize: 11,
+    color: '#047857',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  rankRight: {
     alignItems: 'flex-end',
+    marginLeft: 8,
   },
-  paidBadge: {
+  badgePaidOut: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#DCFCE7',
+    backgroundColor: '#ECFDF5',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
   },
-  paidBadgeText: {
+  badgePaidOutText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#15803D',
+    color: '#047857',
   },
-  payoutBtn: {
+  payoutActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2563EB',
+    backgroundColor: SOL_COLORS.primary,
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
-  payoutBtnText: {
+  payoutActionBtnHighlight: {
+    backgroundColor: '#2563EB',
+  },
+  payoutActionBtnText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '800',
   },
-  pendingRankText: {
-    fontSize: 12,
-    color: '#94A3B8',
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
+    elevation: 6,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  iconCircleCrown: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: SOL_COLORS.textPrimary,
+  },
+  modalSub: {
+    fontSize: 13,
+    color: '#475569',
+    textAlign: 'center',
+    marginVertical: 8,
+    lineHeight: 18,
+  },
+  modalSubBold: {
+    fontWeight: '900',
+    color: '#1D4ED8',
+  },
+  inputGroup: {
+    marginVertical: 10,
+  },
+  inputLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  textArea: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#CBD5E1',
+    padding: 12,
+    fontSize: 13,
     fontWeight: '600',
+    color: SOL_COLORS.textPrimary,
+    textAlignVertical: 'top',
+    minHeight: 70,
+  },
+  modalWarningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    marginBottom: 14,
+  },
+  modalWarningText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#0369A1',
+    fontWeight: '600',
+    lineHeight: 15,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalCancelBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#F1F5F9',
+  },
+  modalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  modalConfirmBtn: {
+    flex: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#2563EB',
+  },
+  modalConfirmBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
 });

@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { SyncState, Transaction, Client } from '@/types';
+import { SyncState } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { markClientsSynced, markTransactionsSynced } from './transactionRepo';
 
@@ -93,7 +93,6 @@ class SyncEngine {
     this.notify();
 
     try {
-      // If remote Supabase credentials are not configured yet, operate in local offline mode
       if (!isSupabaseConfigured) {
         await this.refreshPendingCount();
         this.state.isSyncing = false;
@@ -115,45 +114,169 @@ class SyncEngine {
         return { success: false, pushedTransactions: 0, error: 'Aucune connexion internet' };
       }
 
-      // 2. Push Pending Clients
+      // 2. Ensure all Local Collectors exist in Supabase (Reconcile by phone_number)
+      const localCollectors = await db.getAllAsync<{
+        id: string;
+        full_name: string;
+        phone_number: string;
+        pin_hash: string;
+        status: string;
+        zone: string | null;
+        created_at?: string;
+      }>(`SELECT * FROM collectors`);
+
+      for (const c of localCollectors) {
+        try {
+          const { data: existingCol } = await supabase
+            .from('collectors')
+            .select('id, phone_number')
+            .or(`id.eq.${c.id},phone_number.eq.${c.phone_number}`)
+            .maybeSingle();
+
+          if (existingCol) {
+            if (existingCol.id === c.id) {
+              await supabase
+                .from('collectors')
+                .update({
+                  full_name: c.full_name,
+                  phone_number: c.phone_number,
+                  pin_hash: c.pin_hash,
+                  status: c.status || 'ACTIVE',
+                  zone: c.zone || null,
+                })
+                .eq('id', c.id);
+            } else {
+              const actualCollectorId = existingCol.id;
+              await supabase
+                .from('collectors')
+                .update({
+                  full_name: c.full_name,
+                  pin_hash: c.pin_hash,
+                  status: c.status || 'ACTIVE',
+                  zone: c.zone || null,
+                })
+                .eq('id', actualCollectorId);
+
+              await db.withTransactionAsync(async () => {
+                await db.runAsync(`UPDATE collectors SET id = ? WHERE id = ?`, [actualCollectorId, c.id]);
+                await db.runAsync(`UPDATE business_configs SET collector_id = ? WHERE collector_id = ?`, [actualCollectorId, c.id]);
+                await db.runAsync(`UPDATE clients SET collector_id = ? WHERE collector_id = ?`, [actualCollectorId, c.id]);
+                await db.runAsync(`UPDATE transactions SET collector_id = ? WHERE collector_id = ?`, [actualCollectorId, c.id]);
+              });
+            }
+          } else {
+            await supabase.from('collectors').insert({
+              id: c.id,
+              full_name: c.full_name,
+              phone_number: c.phone_number,
+              pin_hash: c.pin_hash,
+              status: c.status || 'ACTIVE',
+              zone: c.zone || null,
+              created_at: c.created_at || new Date().toISOString(),
+            });
+          }
+        } catch (colErr: any) {
+          // Gracefully suppress duplicate notices during concurrent sync cycles
+          if (!colErr?.message?.includes('duplicate')) {
+            console.warn('Collectors sync notice:', colErr?.message);
+          }
+        }
+      }
+
+      // 3. Ensure all Local Businesses exist in Supabase
+      const localBusinesses = await db.getAllAsync<{
+        id: string;
+        collector_id: string;
+        name: string;
+        type: string;
+        contribution_amount: number;
+        frequency: string;
+        total_slots: number;
+        start_date: string;
+        end_date: string;
+        status: string;
+        created_at: string;
+      }>(`SELECT * FROM business_configs`);
+
+      if (localBusinesses.length > 0) {
+        const bizPayload = localBusinesses.map((b) => ({
+          id: b.id,
+          collector_id: b.collector_id,
+          name: b.name,
+          type: b.type,
+          contribution_amount: Number(b.contribution_amount),
+          frequency: b.frequency,
+          total_slots: Number(b.total_slots),
+          start_date: b.start_date,
+          end_date: b.end_date,
+          status: b.status || 'ACTIVE',
+          created_at: b.created_at || new Date().toISOString(),
+        }));
+        const { error: bizErr } = await supabase
+          .from('business_configs')
+          .upsert(bizPayload, { onConflict: 'id', ignoreDuplicates: false });
+        if (bizErr) {
+          console.warn('Business configs sync notice:', bizErr.message);
+        }
+      }
+
+      // 4. Push Pending Clients (Reconcile by qr_code_token)
       const pendingClients = await db.getAllAsync<{
         id: string;
         collector_id: string;
+        business_id: string | null;
         full_name: string;
         phone_number: string;
         type: string;
         daily_amount: number;
         current_balance: number;
+        payout_rank: number | null;
+        has_received_payout: number;
         qr_code_token: string;
         created_at: string;
       }>(`SELECT * FROM clients WHERE sync_status = 'PENDING' LIMIT 50`);
 
       if (pendingClients.length > 0) {
-        const payload = pendingClients.map((c) => ({
-          id: c.id,
-          collector_id: c.collector_id,
-          full_name: c.full_name,
-          phone_number: c.phone_number,
-          type: c.type,
-          daily_amount: c.daily_amount,
-          current_balance: c.current_balance,
-          qr_code_token: c.qr_code_token,
-          created_at: c.created_at,
-        }));
+        for (const cl of pendingClients) {
+          const { data: clData, error: clientError } = await supabase
+            .from('clients')
+            .upsert(
+              {
+                id: cl.id,
+                collector_id: cl.collector_id,
+                business_id: cl.business_id || null,
+                full_name: cl.full_name,
+                phone_number: cl.phone_number,
+                type: cl.type,
+                daily_amount: Number(cl.daily_amount),
+                current_balance: Number(cl.current_balance),
+                payout_rank: cl.payout_rank !== null ? Number(cl.payout_rank) : null,
+                has_received_payout: Boolean(cl.has_received_payout),
+                qr_code_token: cl.qr_code_token,
+                created_at: cl.created_at || new Date().toISOString(),
+              },
+              { onConflict: 'qr_code_token' }
+            )
+            .select('id, qr_code_token')
+            .single();
 
-        const { error: clientError } = await supabase
-          .from('clients')
-          .upsert(payload, { onConflict: 'id', ignoreDuplicates: false });
-
-        if (!clientError) {
-          const clientIds = pendingClients.map((c) => c.id);
-          await markClientsSynced(clientIds);
-        } else {
-          console.warn('Clients sync notice:', clientError.message);
+          if (!clientError) {
+            if (clData && clData.id !== cl.id) {
+              const actualClientId = clData.id;
+              await db.withTransactionAsync(async () => {
+                await db.runAsync(`UPDATE clients SET id = ?, sync_status = 'SYNCED' WHERE id = ?`, [actualClientId, cl.id]);
+                await db.runAsync(`UPDATE transactions SET client_id = ? WHERE client_id = ?`, [actualClientId, cl.id]);
+              });
+            } else {
+              await markClientsSynced([cl.id]);
+            }
+          } else {
+            console.warn('Clients sync notice:', clientError.message);
+          }
         }
       }
 
-      // 3. Push Pending Transactions (Batch Push)
+      // 5. Push Pending Transactions (Batch Push)
       const pendingTx = await db.getAllAsync<{
         id: string;
         client_id: string;
@@ -168,18 +291,26 @@ class SyncEngine {
 
       let pushedTxCount = 0;
       if (pendingTx.length > 0) {
-        const txPayload = pendingTx.map((t) => ({
-          id: t.id,
-          client_id: t.client_id,
-          collector_id: t.collector_id,
-          sol_group_id: t.sol_group_id,
-          business_id: t.business_id,
-          amount: t.amount,
-          type: t.type,
-          payment_method: t.payment_method,
-          created_at_local: t.created_at_local,
-          sync_status: 'SYNCED',
-        }));
+        const txPayload = pendingTx.map((t) => {
+          let mappedType = 'SOL_CONTRIBUTION';
+          if (t.type === 'SABOTAY_DEPOSIT') mappedType = 'SABOTAY_DEPOSIT';
+          else if (t.type === 'SOL_CONTRIBUTION' || t.type === 'CONTRIBUTION') mappedType = 'SOL_CONTRIBUTION';
+          else if (t.type === 'HAND_PAYOUT' || t.type === 'SOL_PAYOUT') mappedType = 'SOL_PAYOUT';
+          else if (t.type === 'WITHDRAWAL') mappedType = 'WITHDRAWAL';
+
+          return {
+            id: t.id,
+            client_id: t.client_id,
+            collector_id: t.collector_id,
+            sol_group_id: t.sol_group_id || null,
+            business_id: t.business_id || null,
+            amount: Number(t.amount),
+            type: mappedType,
+            payment_method: t.payment_method || 'CASH',
+            created_at_local: t.created_at_local || new Date().toISOString(),
+            sync_status: 'SYNCED',
+          };
+        });
 
         const { error: txError } = await supabase
           .from('transactions')
@@ -194,7 +325,7 @@ class SyncEngine {
         }
       }
 
-      // 4. Pull Remote Clients
+      // 6. Pull Remote Clients
       try {
         const { data: remoteClients } = await supabase
           .from('clients')
@@ -205,16 +336,19 @@ class SyncEngine {
         if (remoteClients && remoteClients.length > 0) {
           for (const rc of remoteClients) {
             await db.runAsync(
-              `INSERT OR REPLACE INTO clients (id, collector_id, full_name, phone_number, type, daily_amount, current_balance, qr_code_token, created_at, sync_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED')`,
+              `INSERT OR REPLACE INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, has_received_payout, qr_code_token, created_at, sync_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED')`,
               [
                 rc.id,
+                rc.business_id || null,
                 rc.collector_id,
                 rc.full_name,
                 rc.phone_number,
                 rc.type,
-                rc.daily_amount,
-                rc.current_balance,
+                Number(rc.daily_amount),
+                Number(rc.current_balance),
+                rc.payout_rank || null,
+                rc.has_received_payout ? 1 : 0,
                 rc.qr_code_token,
                 rc.created_at,
               ]

@@ -2,6 +2,7 @@ import { FilterStatus, Member, MemberPaymentStatus, SortOption, Transaction } fr
 import { getActiveBusinessConfig } from './businessRepository';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { createTransaction } from './transactionRepository';
+import { calculateClientPaymentStatus } from '@/services/financialService';
 
 export async function getMembersWithPaymentStatus(options?: {
   businessId?: string;
@@ -16,6 +17,7 @@ export async function getMembersWithPaymentStatus(options?: {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const startOfDayIso = startOfDay.toISOString();
+  const todayStr = startOfDayIso.split('T')[0];
 
   let query = `
     SELECT 
@@ -28,7 +30,12 @@ export async function getMembersWithPaymentStatus(options?: {
       daily_amount,
       current_balance,
       payout_rank,
+      has_received_hand,
       has_received_payout,
+      hand_received_date,
+      total_paid_amount,
+      paid_hands_count,
+      paid_until_date,
       qr_code_token,
       created_at,
       sync_status
@@ -53,21 +60,25 @@ export async function getMembersWithPaymentStatus(options?: {
     daily_amount: number;
     current_balance: number;
     payout_rank: number | null;
-    has_received_payout: number;
+    has_received_hand: number | null;
+    has_received_payout: number | null;
+    hand_received_date: string | null;
+    total_paid_amount: number | null;
+    paid_hands_count: number | null;
+    paid_until_date: string | null;
     qr_code_token: string;
     created_at: string;
     sync_status: string;
   }>(query, params);
 
-  const contributionTarget = business?.contributionAmount || 250;
-
+  const unitAmount = business?.contributionAmount || 250;
   const members: Member[] = [];
 
   for (const r of rows) {
     // Check if member paid today
     const paidTodayRow = await db.getFirstAsync<{ count: number; last_date: string }>(
       `SELECT count(*) as count, MAX(created_at_local) as last_date FROM transactions 
-       WHERE client_id = ? AND type IN ('SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
+       WHERE client_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
       [r.id, startOfDayIso]
     );
     const hasPaidToday = (paidTodayRow?.count || 0) > 0;
@@ -79,13 +90,22 @@ export async function getMembersWithPaymentStatus(options?: {
     );
 
     const balance = Number(r.current_balance || 0);
-    let paymentStatusToday: MemberPaymentStatus = hasPaidToday ? 'PAID_TODAY' : 'UNPAID_TODAY';
-    let overdueRoundsCount = 0;
+    const totalPaid = Number(r.total_paid_amount || balance);
+    const paidHands = Number(r.paid_hands_count || Math.floor(balance / (unitAmount || 1)));
+    const paidUntil = r.paid_until_date || null;
+    const hasReceived = Boolean(r.has_received_hand || r.has_received_payout);
 
-    if (!hasPaidToday && balance < contributionTarget) {
-      paymentStatusToday = 'OVERDUE';
-      overdueRoundsCount = Math.max(1, Math.ceil((contributionTarget - balance) / (contributionTarget || 1)));
-    }
+    const calculated = calculateClientPaymentStatus({
+      todayStr,
+      paidUntilDate: paidUntil,
+      hasPaidToday,
+      currentBalance: balance,
+      unitAmount,
+    });
+
+    const paymentStatusToday: MemberPaymentStatus = calculated.status;
+    const overdueRoundsCount = calculated.overdueRoundsCount;
+    const handsCoveredAhead = calculated.handsCoveredAhead;
 
     members.push({
       id: r.id,
@@ -93,18 +113,25 @@ export async function getMembersWithPaymentStatus(options?: {
       collectorId: r.collector_id,
       fullName: r.full_name,
       phoneNumber: r.phone_number,
-      type: r.type as any,
-      dailyAmount: Number(r.daily_amount || contributionTarget),
+      type: (r.type as any) || 'SABOTAY',
+      dailyAmount: Number(r.daily_amount || unitAmount),
       currentBalance: balance,
-      payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
-      hasReceivedPayout: Boolean(r.has_received_payout),
+      payoutRank: r.payout_rank !== null && r.payout_rank !== undefined ? Number(r.payout_rank) : null,
+      rankOrder: r.payout_rank !== null && r.payout_rank !== undefined ? Number(r.payout_rank) : undefined,
+      hasReceivedHand: hasReceived,
+      hasReceivedPayout: hasReceived,
+      handReceivedDate: r.hand_received_date || undefined,
+      totalPaidAmount: totalPaid,
+      paidHandsCount: paidHands,
+      paidUntilDate: paidUntil || todayStr,
       qrCodeToken: r.qr_code_token,
       createdAt: r.created_at,
-      syncStatus: r.sync_status as any,
+      syncStatus: (r.sync_status as any) || 'PENDING',
       paymentStatusToday,
       overdueRoundsCount,
       lastPaymentDate: paidTodayRow?.last_date || lastTxRow?.last_date || null,
-      totalPaidInCycle: balance,
+      totalPaidInCycle: totalPaid,
+      handsCoveredAhead,
     });
   }
 
@@ -113,7 +140,9 @@ export async function getMembersWithPaymentStatus(options?: {
   if (options?.filter && options.filter !== 'ALL') {
     switch (options.filter) {
       case 'PAID_TODAY':
-        filtered = filtered.filter((m) => m.paymentStatusToday === 'PAID_TODAY');
+        filtered = filtered.filter(
+          (m) => m.paymentStatusToday === 'PAID_TODAY' || m.paymentStatusToday === 'PAID_IN_ADVANCE'
+        );
         break;
       case 'UNPAID_TODAY':
         filtered = filtered.filter((m) => m.paymentStatusToday === 'UNPAID_TODAY');
@@ -121,8 +150,14 @@ export async function getMembersWithPaymentStatus(options?: {
       case 'OVERDUE':
         filtered = filtered.filter((m) => m.paymentStatusToday === 'OVERDUE');
         break;
+      case 'HAND_RECEIVED':
+        filtered = filtered.filter((m) => m.hasReceivedHand);
+        break;
+      case 'HAND_PENDING':
+        filtered = filtered.filter((m) => !m.hasReceivedHand);
+        break;
       case 'UPCOMING_PAYOUT':
-        filtered = filtered.filter((m) => !m.hasReceivedPayout && m.payoutRank !== null);
+        filtered = filtered.filter((m) => !m.hasReceivedHand && m.payoutRank !== null);
         break;
     }
   }
@@ -154,24 +189,29 @@ export async function getMembersWithPaymentStatus(options?: {
 export async function payoutMemberHand(
   memberId: string,
   amount: number,
+  note?: string,
   businessId?: string
 ): Promise<Transaction> {
   const db = await getDatabase();
   const collectorId = await getActiveCollectorId();
+  const todayStr = new Date().toISOString().split('T')[0];
 
   const tx = await createTransaction({
     clientId: memberId,
     businessId: businessId || null,
     amount,
-    type: 'SOL_PAYOUT',
+    type: 'HAND_PAYOUT',
     collectorId,
     paymentMethod: 'CASH',
+    note: note || 'Remise de la main complète du SOL',
   });
 
-  // Mark member as having received payout
+  // Flag hand received on client record but KEEP client in cycle
   await db.runAsync(
-    `UPDATE clients SET has_received_payout = 1, sync_status = 'PENDING' WHERE id = ?`,
-    [memberId]
+    `UPDATE clients 
+     SET has_received_hand = 1, has_received_payout = 1, hand_received_date = ?, sync_status = 'PENDING' 
+     WHERE id = ?`,
+    [todayStr, memberId]
   );
 
   return tx;
