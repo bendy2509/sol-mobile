@@ -11,6 +11,8 @@ class SyncEngine {
     isOnline: true,
     isSyncing: false,
     pendingCount: 0,
+    syncedCount: 0,
+    failedCount: 0,
     lastSyncedAt: null,
     error: null,
   };
@@ -393,3 +395,7 @@ class SyncEngine {
 }
 
 export const syncEngine = SyncEngine.getInstance();
+
+export async function syncPendingData() {
+  return syncEngine.syncAll();
+}

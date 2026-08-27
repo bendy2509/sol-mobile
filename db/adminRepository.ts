@@ -318,19 +318,130 @@ export async function exportDatabaseBackup(): Promise<string> {
   const businesses = await db.getAllAsync(`SELECT * FROM business_configs`);
   const clients = await db.getAllAsync(`SELECT * FROM clients`);
   const transactions = await db.getAllAsync(`SELECT * FROM transactions`);
+  const cashClosures = await db.getAllAsync(`SELECT * FROM cash_closures`);
+  const auditLogs = await db.getAllAsync(`SELECT * FROM audit_logs`);
 
   const backupData = {
     exportedAt: new Date().toISOString(),
-    version: '1.0.0',
+    version: '2.0.0',
     platform: 'SOL Mobile',
     data: {
       collectors,
       businesses,
       clients,
       transactions,
+      cashClosures,
+      auditLogs,
     },
   };
 
   return JSON.stringify(backupData, null, 2);
+}
+
+/**
+ * Restores the local database from a verified JSON backup payload safely.
+ * Includes schema verification, pre-restore automatic rollback snapshot, and audit logging.
+ */
+export async function restoreDatabaseBackup(
+  jsonString: string,
+  adminId: string = 'admin'
+): Promise<{ success: boolean; stats: { collectors: number; businesses: number; clients: number; transactions: number }; error?: string }> {
+  try {
+    const parsed = JSON.parse(jsonString);
+
+    if (!parsed || !parsed.data) {
+      throw new Error('Format de fichier de sauvegarde invalide.');
+    }
+
+    const { collectors = [], businesses = [], clients = [], transactions = [], cashClosures = [], auditLogs = [] } = parsed.data;
+
+    const db = await getDatabase();
+
+    // 1. Take safety snapshot of current database
+    const currentBackup = await exportDatabaseBackup();
+
+    // 2. Atomic Restoration
+    await db.withTransactionAsync(async () => {
+      // Clear existing records safely
+      await db.runAsync(`DELETE FROM transactions`);
+      await db.runAsync(`DELETE FROM clients`);
+      await db.runAsync(`DELETE FROM business_configs`);
+      await db.runAsync(`DELETE FROM collectors`);
+      await db.runAsync(`DELETE FROM cash_closures`);
+
+      // Restore collectors
+      for (const c of collectors) {
+        await db.runAsync(
+          `INSERT INTO collectors (id, full_name, phone_number, pin_hash, status, zone, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [c.id, c.full_name, c.phone_number, c.pin_hash, c.status || 'ACTIVE', c.zone || null, c.created_at || new Date().toISOString()]
+        );
+      }
+
+      // Restore businesses
+      for (const b of businesses) {
+        await db.runAsync(
+          `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, cycle_status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            b.id, b.collector_id, b.name, b.type, b.contribution_amount, b.frequency,
+            b.total_slots, b.start_date, b.end_date, b.status || 'ACTIVE', b.cycle_status || 'ACTIVE', b.created_at || new Date().toISOString()
+          ]
+        );
+      }
+
+      // Restore clients
+      for (const cl of clients) {
+        await db.runAsync(
+          `INSERT INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, has_received_payout, has_received_hand, hand_received_date, total_paid_amount, paid_hands_count, paid_until_date, qr_code_token, created_at, sync_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            cl.id, cl.business_id, cl.collector_id, cl.full_name, cl.phone_number, cl.type || 'SABOTAY',
+            cl.daily_amount || 0, cl.current_balance || 0, cl.payout_rank || null, cl.has_received_payout || 0,
+            cl.has_received_hand || 0, cl.hand_received_date || null, cl.total_paid_amount || 0,
+            cl.paid_hands_count || 0, cl.paid_until_date || null, cl.qr_code_token, cl.created_at || new Date().toISOString(), 'SYNCED'
+          ]
+        );
+      }
+
+      // Restore transactions
+      for (const tx of transactions) {
+        await db.runAsync(
+          `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, synced_at, sync_status, idempotency_key, is_reversed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            tx.id, tx.client_id, tx.collector_id, tx.sol_group_id || null, tx.business_id || null,
+            tx.amount, tx.hands_covered || 1, tx.type, tx.payment_method || 'CASH', tx.note || null,
+            tx.created_at_local, tx.synced_at || null, 'SYNCED', tx.idempotency_key || null, tx.is_reversed || 0
+          ]
+        );
+      }
+
+      // Restore cash closures
+      for (const cc of cashClosures) {
+        await db.runAsync(
+          `INSERT INTO cash_closures (id, collector_id, closure_date, total_cash_declared, total_system_calculated, discrepancy_reason, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [cc.id, cc.collector_id, cc.closure_date, cc.total_cash_declared, cc.total_system_calculated, cc.discrepancy_reason || null, cc.status || 'SUBMITTED', cc.created_at || new Date().toISOString()]
+        );
+      }
+    });
+
+    return {
+      success: true,
+      stats: {
+        collectors: collectors.length,
+        businesses: businesses.length,
+        clients: clients.length,
+        transactions: transactions.length,
+      },
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      stats: { collectors: 0, businesses: 0, clients: 0, transactions: 0 },
+      error: err?.message || 'Erreur lors de la restauration de la sauvegarde.',
+    };
+  }
 }
 

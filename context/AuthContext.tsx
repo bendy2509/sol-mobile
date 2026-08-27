@@ -17,6 +17,7 @@ import { getActiveBusinessConfig, saveBusinessConfig } from '@/db/businessReposi
 import { triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { arePhoneNumbersEqual, normalizePhoneNumber } from '@/lib/phoneUtils';
 import { hashPin, verifyPinHash } from '@/lib/crypto';
+import { recordAuditLog } from '@/services/auditService';
 
 export interface AdminProfile {
   fullName: string;
@@ -56,6 +57,56 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// --- Anti-Brute-Force Rate Limiting Engine ---
+async function checkPinRateLimit(): Promise<{ isLocked: boolean; remainingSeconds?: number; message?: string }> {
+  try {
+    const lockUntilStr = await AsyncStorage.getItem('SOL_PIN_LOCK_UNTIL');
+    if (lockUntilStr) {
+      const lockUntil = Number(lockUntilStr);
+      const now = Date.now();
+      if (now < lockUntil) {
+        const remainingSeconds = Math.ceil((lockUntil - now) / 1000);
+        return {
+          isLocked: true,
+          remainingSeconds,
+          message: `Accès temporairement bloqué suite à plusieurs échecs de code PIN. Réessayez dans ${remainingSeconds}s.`,
+        };
+      } else {
+        await AsyncStorage.removeItem('SOL_PIN_LOCK_UNTIL');
+        await AsyncStorage.removeItem('SOL_PIN_FAILED_ATTEMPTS');
+      }
+    }
+  } catch {}
+  return { isLocked: false };
+}
+
+async function recordFailedPinAttempt(): Promise<{ isLocked: boolean; message?: string }> {
+  try {
+    const attemptsStr = (await AsyncStorage.getItem('SOL_PIN_FAILED_ATTEMPTS')) || '0';
+    const attempts = Number(attemptsStr) + 1;
+    await AsyncStorage.setItem('SOL_PIN_FAILED_ATTEMPTS', String(attempts));
+
+    if (attempts >= 5) {
+      const lockDurationMs = attempts === 5 ? 30 * 1000 : attempts === 6 ? 120 * 1000 : 300 * 1000;
+      const lockUntil = Date.now() + lockDurationMs;
+      await AsyncStorage.setItem('SOL_PIN_LOCK_UNTIL', String(lockUntil));
+      const remainingSeconds = Math.ceil(lockDurationMs / 1000);
+      return {
+        isLocked: true,
+        message: `Trop de tentatives de code PIN erronées. Verrouillage de sécurité actif pour ${remainingSeconds} secondes.`,
+      };
+    }
+  } catch {}
+  return { isLocked: false };
+}
+
+async function resetFailedPinAttempts(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem('SOL_PIN_FAILED_ATTEMPTS');
+    await AsyncStorage.removeItem('SOL_PIN_LOCK_UNTIL');
+  } catch {}
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeCollector, setActiveCollector] = useState<Collector | null>(null);
@@ -160,6 +211,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       await AsyncStorage.setItem('SOL_ADMIN_PIN', hashPin(data.pin));
     }
+
+    recordAuditLog({
+      userId: 'admin',
+      userRole: 'ADMIN',
+      action: 'UPDATE_SECURITY',
+      entityType: 'COLLECTOR',
+      entityId: 'admin',
+      newData: { fullName: data.fullName, phoneNumber: data.phoneNumber },
+      reason: 'Mise à jour des coordonnées Admin',
+    }).catch(() => {});
+
     triggerSuccessFeedback();
   };
 
@@ -168,6 +230,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pin: string
   ): Promise<{ success: boolean; role?: UserRole; status?: UserStatus; error?: string }> => {
     try {
+      // 0. Check Rate Limiter
+      const rateLimit = await checkPinRateLimit();
+      if (rateLimit.isLocked) {
+        triggerErrorFeedback();
+        return { success: false, error: rateLimit.message };
+      }
+
       const cleanPhone = phone.trim();
       const cleanPin = pin.trim();
 
@@ -195,14 +264,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Strict Coincidence: The PIN must match the Admin account's PIN
         const isAdminPinValid = verifyPinHash(cleanPin, adminStoredPin);
         if (!isAdminPinValid) {
+          const lockStatus = await recordFailedPinAttempt();
           triggerErrorFeedback();
           return {
             success: false,
-            error: 'Code PIN incorrect pour le compte Administrateur.',
+            error: lockStatus.message || 'Code PIN incorrect pour le compte Administrateur.',
           };
         }
 
-        // Successfully authenticated as Admin
+        await resetFailedPinAttempts();
         await AsyncStorage.setItem('SOL_IS_LOGGED_IN', 'true');
         await AsyncStorage.setItem('SOL_USER_ROLE', 'ADMIN');
         setUserRole('ADMIN');
@@ -226,12 +296,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 3. Strict Coincidence: The PIN must match this specific Collector's pinHash
       const isCollectorPinValid = verifyPinHash(cleanPin, collector.pinHash);
       if (!isCollectorPinValid) {
+        const lockStatus = await recordFailedPinAttempt();
         triggerErrorFeedback();
         return {
           success: false,
-          error: 'Code PIN incorrect pour ce numéro de téléphone.',
+          error: lockStatus.message || 'Code PIN incorrect pour ce numéro de téléphone.',
         };
       }
+
+      await resetFailedPinAttempts();
 
       // Silently upgrade legacy plaintext PIN to encrypted hash if needed
       if (collector.pinHash === cleanPin) {
@@ -282,12 +355,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginAsAdmin = async (pin: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const adminStoredPin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || hashPin('9999');
-      if (!verifyPinHash(pin, adminStoredPin) && pin !== '9999' && pin !== '1234') {
+      const rateLimit = await checkPinRateLimit();
+      if (rateLimit.isLocked) {
         triggerErrorFeedback();
-        return { success: false, error: 'Code PIN Administrateur incorrect.' };
+        return { success: false, error: rateLimit.message };
       }
 
+      const adminStoredPin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || hashPin('9999');
+      if (!verifyPinHash(pin, adminStoredPin)) {
+        const lockStatus = await recordFailedPinAttempt();
+        triggerErrorFeedback();
+        return { success: false, error: lockStatus.message || 'Code PIN Administrateur incorrect.' };
+      }
+
+      await resetFailedPinAttempts();
       await AsyncStorage.setItem('SOL_IS_LOGGED_IN', 'true');
       await AsyncStorage.setItem('SOL_USER_ROLE', 'ADMIN');
       setUserRole('ADMIN');
@@ -302,19 +383,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const verifyPin = async (pin: string): Promise<boolean> => {
+    const rateLimit = await checkPinRateLimit();
+    if (rateLimit.isLocked) {
+      triggerErrorFeedback();
+      return false;
+    }
+
     if (userRole === 'ADMIN') {
       const adminStoredPin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || hashPin('9999');
-      if (verifyPinHash(pin, adminStoredPin) || pin === '9999') {
+      if (verifyPinHash(pin, adminStoredPin)) {
+        await resetFailedPinAttempts();
         triggerSuccessFeedback();
         return true;
       }
+      await recordFailedPinAttempt();
+      triggerErrorFeedback();
+      return false;
     }
 
-    const isValid = verifyPinHash(pin, activeCollector?.pinHash) || pin === '1234';
-    if (isValid) {
+    const currentCollector = activeCollector || (await getActiveCollector());
+    if (currentCollector?.pinHash && verifyPinHash(pin, currentCollector.pinHash)) {
+      await resetFailedPinAttempts();
       triggerSuccessFeedback();
       return true;
     }
+
+    await recordFailedPinAttempt();
     triggerErrorFeedback();
     return false;
   };
@@ -363,8 +457,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Create Business Configuration
       const businessId = uuidv4();
       await db.runAsync(
-        `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)`,
+        `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, cycle_status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'ACTIVE', ?)`,
         [
           businessId,
           collectorId,
@@ -378,6 +472,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           now,
         ]
       );
+
+      // Log registration to audit
+      recordAuditLog({
+        userId: collectorId,
+        userRole: 'COLLECTOR',
+        action: 'CREATE_BOOK',
+        entityType: 'BUSINESS',
+        entityId: businessId,
+        newData: { businessName: data.businessName, unitAmount: data.unitAmount, frequency: data.frequency },
+        reason: 'Inscription nouveau carnet SOL/Sabotay',
+      }).catch(() => {});
 
       await setActiveCollectorId(collectorId);
       await setActiveBusinessId(businessId);
@@ -400,6 +505,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const targetId = collectorId || activeCollector?.id;
     if (targetId) {
       await updateCollectorStatus(targetId, 'ACTIVE');
+
+      recordAuditLog({
+        userId: 'admin',
+        userRole: 'ADMIN',
+        action: 'APPROVE_MANAGER',
+        entityType: 'COLLECTOR',
+        entityId: targetId,
+        reason: 'Approbation manuelle par administrateur',
+      }).catch(() => {});
+
       await refreshSession();
       setIsPendingApproval(false);
       setIsAuthenticated(true);
@@ -444,6 +559,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       start_date: string;
       end_date: string;
       status: any;
+      cycle_status: any;
       created_at: string;
     }>(`SELECT * FROM business_configs ORDER BY created_at DESC`);
 
@@ -457,21 +573,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       totalSlots: Number(r.total_slots),
       startDate: r.start_date,
       endDate: r.end_date,
-      status: r.status,
+      status: r.status || 'ACTIVE',
+      cycleStatus: r.cycle_status || 'ACTIVE',
       createdAt: r.created_at,
     }));
   };
 
   const switchRole = (role: UserRole) => {
     setUserRole(role);
-    AsyncStorage.setItem('SOL_USER_ROLE', role);
   };
 
-  const logout = async (): Promise<void> => {
+  const logout = async () => {
     await AsyncStorage.removeItem('SOL_IS_LOGGED_IN');
     setIsAuthenticated(false);
     setIsPendingApproval(false);
-    setUserSession(null);
+    setUserRole('MANAGER');
+    triggerSuccessFeedback();
   };
 
   return (
@@ -503,10 +620,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
-export function useAuth(): AuthContextType {
+export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
-}
+};

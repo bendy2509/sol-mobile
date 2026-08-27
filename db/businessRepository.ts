@@ -1,8 +1,9 @@
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
-import { BusinessConfig, DashboardMetrics, Member, PaymentFrequency } from '@/types';
+import { BusinessConfig, CycleStatus, DashboardMetrics, Member, PaymentFrequency } from '@/types';
 import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusinessId } from './sqlite';
 import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalculations';
+import { recordAuditLog } from '@/services/auditService';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -21,7 +22,8 @@ export async function getActiveBusinessConfig(collectorIdParam?: string): Promis
       total_slots: number;
       start_date: string;
       end_date: string;
-      status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
+      status: 'ACTIVE' | 'COMPLETED' | 'PAUSED' | 'CLOSED';
+      cycle_status: CycleStatus;
       created_at: string;
     }>(`SELECT * FROM business_configs WHERE id = ? AND collector_id = ?`, [activeId, collectorId]);
   }
@@ -38,7 +40,8 @@ export async function getActiveBusinessConfig(collectorIdParam?: string): Promis
       total_slots: number;
       start_date: string;
       end_date: string;
-      status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
+      status: 'ACTIVE' | 'COMPLETED' | 'PAUSED' | 'CLOSED';
+      cycle_status: CycleStatus;
       created_at: string;
     }>(`SELECT * FROM business_configs WHERE collector_id = ? ORDER BY created_at DESC LIMIT 1`, [collectorId]);
 
@@ -59,7 +62,8 @@ export async function getActiveBusinessConfig(collectorIdParam?: string): Promis
     totalSlots: Number(row.total_slots),
     startDate: row.start_date,
     endDate: row.end_date,
-    status: row.status,
+    status: row.status || 'ACTIVE',
+    cycleStatus: row.cycle_status || 'ACTIVE',
     createdAt: row.created_at,
   };
 }
@@ -73,8 +77,8 @@ export async function saveBusinessConfig(
   const now = new Date().toISOString();
 
   await db.runAsync(
-    `INSERT OR REPLACE INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, cycle_status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       collectorId,
@@ -86,6 +90,7 @@ export async function saveBusinessConfig(
       data.startDate,
       data.endDate,
       data.status || 'ACTIVE',
+      data.cycleStatus || 'ACTIVE',
       now,
     ]
   );
@@ -103,8 +108,38 @@ export async function saveBusinessConfig(
     startDate: data.startDate,
     endDate: data.endDate,
     status: data.status || 'ACTIVE',
+    cycleStatus: data.cycleStatus || 'ACTIVE',
     createdAt: now,
   };
+}
+
+/**
+ * Closes the active cycle formally with verification and audit trail.
+ */
+export async function closeCycle(params: {
+  businessId: string;
+  userId: string;
+  userRole: 'ADMIN' | 'MANAGER';
+  reason: string;
+}): Promise<void> {
+  const { businessId, userId, userRole, reason } = params;
+  const db = await getDatabase();
+
+  await db.runAsync(
+    `UPDATE business_configs 
+     SET status = 'COMPLETED', cycle_status = 'CLOSED' 
+     WHERE id = ?`,
+    [businessId]
+  );
+
+  await recordAuditLog({
+    userId,
+    userRole,
+    action: 'CLOSE_CYCLE',
+    entityType: 'BUSINESS',
+    entityId: businessId,
+    reason: reason || 'Clôture définitive du cycle SOL',
+  });
 }
 
 export async function getDashboardMetrics(): Promise<DashboardMetrics> {
@@ -136,6 +171,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       frequency: 'DAILY',
       startDate: todayStr,
       endDate: todayStr,
+      cycleStatus: 'ACTIVE',
       handsCollected: 0,
       handsRemaining: 0,
       totalCashToday: 0,
@@ -151,7 +187,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   // 1. Hands collected today (count of transactions)
   const todayTxRow = await db.getFirstAsync<{ count: number; total: number }>(
     `SELECT count(*) as count, COALESCE(SUM(amount), 0) as total FROM transactions 
-     WHERE collector_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
+     WHERE collector_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
+       AND is_reversed = 0 AND created_at_local >= ?`,
     [collectorId, startOfDayIso]
   );
   const handsCollectedToday = todayTxRow?.count || 0;
@@ -162,7 +199,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
        COALESCE(SUM(CASE WHEN type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') THEN amount ELSE 0 END), 0) as total_in,
        COALESCE(SUM(CASE WHEN type IN ('HAND_PAYOUT', 'SOL_PAYOUT', 'WITHDRAWAL') THEN amount ELSE 0 END), 0) as total_out
      FROM transactions 
-     WHERE collector_id = ? AND created_at_local >= ?`,
+     WHERE collector_id = ? AND is_reversed = 0 AND created_at_local >= ?`,
     [collectorId, startOfDayIso]
   );
   const totalCashToday = Math.max(0, (cashTodayRow?.total_in || 0) - (cashTodayRow?.total_out || 0));
@@ -212,7 +249,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     // Check if member paid today
     const paidTodayTx = await db.getFirstAsync<{ count: number }>(
       `SELECT count(*) as count FROM transactions 
-       WHERE client_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
+       WHERE client_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
+         AND is_reversed = 0 AND created_at_local >= ?`,
       [m.id, startOfDayIso]
     );
     const hasPaidToday = (paidTodayTx?.count || 0) > 0;
@@ -288,6 +326,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     frequency: business.frequency,
     startDate: business.startDate,
     endDate: dynamicEndDate,
+    cycleStatus: business.cycleStatus || 'ACTIVE',
     handsCollected: handsCollectedTotal,
     handsRemaining,
     totalCashToday,

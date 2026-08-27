@@ -25,7 +25,7 @@ import { SOL_COLORS } from '@/constants/Colors';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { activeCollector, userRole, logout } = useAuth();
+  const { activeCollector, userRole, logout, refreshSession } = useAuth();
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [isChangePinModalOpen, setIsChangePinModalOpen] = useState(false);
@@ -62,7 +62,7 @@ export default function ProfileScreen() {
       return;
     }
 
-    if (activeCollector?.pinHash && !verifyPinHash(oldPin, activeCollector.pinHash) && oldPin !== '1234') {
+    if (activeCollector?.pinHash && !verifyPinHash(oldPin, activeCollector.pinHash)) {
       triggerErrorFeedback();
       setPinError('Le code PIN actuel saisi est incorrect.');
       return;
@@ -82,6 +82,7 @@ export default function ProfileScreen() {
           hashPin(newPin),
           activeCollector.id,
         ]);
+        await refreshSession();
       }
 
       triggerSuccessFeedback();

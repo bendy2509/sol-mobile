@@ -32,6 +32,8 @@ export type TransactionType =
 
 export type SyncStatus = 'PENDING' | 'SYNCED' | 'FAILED';
 
+export type CycleStatus = 'ACTIVE' | 'COMPLETED' | 'CLOSED' | 'ARCHIVED';
+
 export type MemberPaymentStatus =
   | 'PAID_TODAY'
   | 'UNPAID_TODAY'
@@ -94,7 +96,8 @@ export interface BusinessConfig {
   totalSlots: number; // Nombre total d'enfants / slots prévus
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
-  status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
+  status: 'ACTIVE' | 'COMPLETED' | 'PAUSED' | 'CLOSED';
+  cycleStatus?: CycleStatus;
   createdAt: string;
 }
 
@@ -127,6 +130,7 @@ export interface Member extends MemberChild {
   lastPaymentDate?: string | null;
   totalPaidInCycle: number;
   handsCoveredAhead: number; // Nombre de jours/mains d'avance
+  nextDueDate?: string;
 }
 
 export type Client = Member;
@@ -166,6 +170,10 @@ export interface LocalTransaction {
   createdAtLocal: string;
   syncedAt?: string | null;
   syncStatus: SyncStatus;
+  idempotencyKey?: string | null;
+  isReversed?: boolean;
+  reversalId?: string | null;
+  reversedAt?: string | null;
   memberName?: string;
   memberPhone?: string;
 }
@@ -187,6 +195,49 @@ export interface CashClosure {
   createdAt: string;
 }
 
+export type AuditLogAction =
+  | 'CREATE_CONTRIBUTION'
+  | 'REVERSE_CONTRIBUTION'
+  | 'CREATE_PAYOUT'
+  | 'PAYOUT_OUT_OF_ORDER'
+  | 'UPDATE_PAYOUT_ORDER'
+  | 'CREATE_BOOK'
+  | 'UPDATE_BOOK'
+  | 'CLOSE_DAY'
+  | 'REOPEN_DAY'
+  | 'CLOSE_CYCLE'
+  | 'APPROVE_MANAGER'
+  | 'SUSPEND_MANAGER'
+  | 'RESTORE_BACKUP'
+  | 'UPDATE_SECURITY'
+  | 'LOGIN_FAILURE';
+
+export interface AuditLog {
+  id: string; // UUIDv4
+  userId: string;
+  userRole: UserRole;
+  action: AuditLogAction;
+  entityType: 'TRANSACTION' | 'CLIENT' | 'BUSINESS' | 'COLLECTOR' | 'CLOSURE' | 'SYSTEM';
+  entityId: string;
+  oldData?: string | null; // JSON string
+  newData?: string | null; // JSON string
+  reason?: string | null;
+  createdAt: string;
+  syncStatus: SyncStatus;
+}
+
+export interface SyncLogEntry {
+  id: string;
+  tableName: string;
+  entityId: string;
+  action: 'INSERT' | 'UPDATE' | 'DELETE' | 'PUSH';
+  status: 'PENDING' | 'SYNCED' | 'FAILED';
+  attemptsCount: number;
+  lastError?: string | null;
+  createdAt: string;
+  syncedAt?: string | null;
+}
+
 export interface DashboardMetrics {
   unitAmount: number; // Montant unitaire d'une main (ex: 250 HTG)
   totalPotAmount: number; // Cagnotte complète (unitAmount * totalSlots, ex: 2 500 HTG)
@@ -206,6 +257,7 @@ export interface DashboardMetrics {
   frequency: Frequency | PaymentFrequency;
   startDate: string;
   endDate: string;
+  cycleStatus?: CycleStatus;
   // Legacy aliases for backward compatibility
   handsCollected: number;
   handsRemaining: number;
@@ -228,6 +280,8 @@ export interface SyncState {
   isOnline: boolean;
   isSyncing: boolean;
   pendingCount: number;
+  syncedCount: number;
+  failedCount: number;
   lastSyncedAt: string | null;
   error?: string | null;
 }

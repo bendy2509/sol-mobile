@@ -1,8 +1,8 @@
-import { Frequency, MemberPaymentStatus, PaymentFrequency } from '@/types';
+import { Frequency, MemberPaymentStatus, PaymentFrequency, Transaction } from '../types';
 
 /**
  * Calculates the total payout pot of a Sol/Sabotay cycle.
- * Pot = Unit Amount * Total Slots
+ * Formula: Pot = Unit Amount * Total Slots
  */
 export function calculatePot(unitAmount: number, totalSlots: number): number {
   const unit = Math.max(0, Number(unitAmount) || 0);
@@ -38,9 +38,23 @@ export function calculateContributionAmount(handsCount: number, unitAmount: numb
   return count * unit;
 }
 
+function parseYMD(dateStr: string): Date {
+  const clean = dateStr.split('T')[0];
+  const [y, m, d] = clean.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0);
+}
+
+function formatYMD(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 /**
  * Calculates the coverage start date and new coverage end date (paidUntilDate).
  * Handles DAILY, 8_DAYS, 15_DAYS, MONTHLY, WED_SAT, and existing advance continuity.
+ * Ensures leap years and month boundaries (Jan 31 -> Feb 28/29) are handled without date overflow.
  */
 export function calculateCoverageDate(params: {
   todayStr: string;
@@ -52,18 +66,18 @@ export function calculateCoverageDate(params: {
   const hands = Math.max(1, Number(handsCovered) || 1);
 
   // Determine base starting date for the coverage period
-  let startDate = todayStr;
-  let baseDate = new Date(todayStr);
+  let startDate = todayStr.split('T')[0];
+  let baseDate = parseYMD(startDate);
 
-  if (currentPaidUntilDate && currentPaidUntilDate >= todayStr) {
+  if (currentPaidUntilDate && currentPaidUntilDate >= startDate) {
     // Member already has active advance coverage: extend from the day following current paidUntilDate
-    const existingUntil = new Date(currentPaidUntilDate);
+    const existingUntil = parseYMD(currentPaidUntilDate);
     existingUntil.setDate(existingUntil.getDate() + 1);
-    startDate = existingUntil.toISOString().split('T')[0];
-    baseDate = new Date(startDate);
+    startDate = formatYMD(existingUntil);
+    baseDate = parseYMD(startDate);
   }
 
-  const resultDate = new Date(baseDate);
+  let resultDate = new Date(baseDate);
 
   switch (frequency) {
     case 'DAILY': {
@@ -85,12 +99,15 @@ export function calculateCoverageDate(params: {
 
     case 'MONTHLY': {
       // Safely advance months preserving end-of-month dates (e.g. Jan 31 -> Feb 28/29)
-      const targetMonth = resultDate.getMonth() + (hands - 1);
       const originalDay = resultDate.getDate();
-      resultDate.setMonth(targetMonth);
-      if (resultDate.getDate() !== originalDay) {
-        resultDate.setDate(0); // Set to last day of previous month
-      }
+      const targetMonth = resultDate.getMonth() + (hands - 1);
+      const targetYear = resultDate.getFullYear() + Math.floor(targetMonth / 12);
+      const normalizedMonth = ((targetMonth % 12) + 12) % 12;
+
+      const maxDaysInTargetMonth = new Date(targetYear, normalizedMonth + 1, 0, 12, 0, 0).getDate();
+      const day = Math.min(originalDay, maxDaysInTargetMonth);
+
+      resultDate = new Date(targetYear, normalizedMonth, day, 12, 0, 0);
       break;
     }
 
@@ -102,7 +119,7 @@ export function calculateCoverageDate(params: {
         if (dayOfWeek === 3 || dayOfWeek === 6) {
           covered++;
           if (covered === hands) {
-            resultDate.setTime(cursor.getTime());
+            resultDate = new Date(cursor);
             break;
           }
         }
@@ -118,7 +135,7 @@ export function calculateCoverageDate(params: {
         if (cursor.getDay() === 3) {
           covered++;
           if (covered === hands) {
-            resultDate.setTime(cursor.getTime());
+            resultDate = new Date(cursor);
             break;
           }
         }
@@ -134,7 +151,7 @@ export function calculateCoverageDate(params: {
         if (cursor.getDay() === 6) {
           covered++;
           if (covered === hands) {
-            resultDate.setTime(cursor.getTime());
+            resultDate = new Date(cursor);
             break;
           }
         }
@@ -149,12 +166,106 @@ export function calculateCoverageDate(params: {
     }
   }
 
-  const paidUntilDate = resultDate.toISOString().split('T')[0];
+  const paidUntilDate = formatYMD(resultDate);
   return { startDate, paidUntilDate };
 }
 
+export const calculateNextCoverage = calculateCoverageDate;
+
 /**
- * Evaluates the real-time financial payment status of a member child.
+ * Reconstructs a member child's exact financial timeline from raw transaction history.
+ * Used during transaction reversals, audits, and consistency checks to guarantee zero state drift.
+ */
+export function reconstructClientFinancialTimeline(params: {
+  transactions: Transaction[];
+  unitAmount: number;
+  frequency: PaymentFrequency | Frequency;
+  cycleStartDate: string;
+}): {
+  currentBalance: number;
+  totalPaidAmount: number;
+  paidHandsCount: number;
+  hasReceivedHand: boolean;
+  handReceivedDate: string | null;
+  paidUntilDate: string;
+} {
+  const { transactions, unitAmount, frequency, cycleStartDate } = params;
+  const unit = Math.max(1, Number(unitAmount) || 250);
+
+  let currentBalance = 0;
+  let totalPaidAmount = 0;
+  let paidHandsCount = 0;
+  let hasReceivedHand = false;
+  let handReceivedDate: string | null = null;
+  let currentPaidUntilDate: string | null = null;
+
+  // Sort chronological ascending
+  const sortedTxs = [...transactions].sort(
+    (a, b) => new Date(a.createdAtLocal).getTime() - new Date(b.createdAtLocal).getTime()
+  );
+
+  // Identify reversed transaction IDs
+  const reversedTxIds = new Set<string>();
+  for (const tx of sortedTxs) {
+    if (tx.type === 'REVERSAL' && tx.note) {
+      const match = tx.note.match(/\[Réf #([a-zA-Z0-9-]+)\]/);
+      if (match && match[1]) {
+        // Find matching original tx
+        const orig = sortedTxs.find((t) => t.id.startsWith(match[1]));
+        if (orig) reversedTxIds.add(orig.id);
+      }
+    }
+  }
+
+  for (const tx of sortedTxs) {
+    // Skip if reversed or is a reversal itself
+    if (reversedTxIds.has(tx.id) || tx.type === 'REVERSAL' || tx.isReversed) {
+      continue;
+    }
+
+    const isContribution =
+      tx.type === 'CONTRIBUTION' ||
+      tx.type === 'SOL_CONTRIBUTION' ||
+      tx.type === 'SABOTAY_DEPOSIT';
+
+    const isPayout =
+      tx.type === 'HAND_PAYOUT' ||
+      tx.type === 'SOL_PAYOUT' ||
+      tx.type === 'WITHDRAWAL';
+
+    if (isContribution) {
+      const hands = tx.handsCovered || calculateHandsCount(tx.amount, unit);
+      currentBalance += tx.amount;
+      totalPaidAmount += tx.amount;
+      paidHandsCount += hands;
+
+      const txDateStr = tx.createdAtLocal.split('T')[0];
+      const cov = calculateCoverageDate({
+        todayStr: txDateStr,
+        handsCovered: hands,
+        frequency,
+        currentPaidUntilDate,
+      });
+      currentPaidUntilDate = cov.paidUntilDate;
+    } else if (isPayout) {
+      currentBalance = Math.max(0, currentBalance - tx.amount);
+      hasReceivedHand = true;
+      handReceivedDate = tx.createdAtLocal.split('T')[0];
+    }
+  }
+
+  return {
+    currentBalance,
+    totalPaidAmount,
+    paidHandsCount,
+    hasReceivedHand,
+    handReceivedDate,
+    paidUntilDate: currentPaidUntilDate || cycleStartDate,
+  };
+}
+
+/**
+ * Evaluates the real-time financial payment status of a member child with enriched metrics.
  */
 export function calculateClientPaymentStatus(params: {
   todayStr: string;
@@ -166,18 +277,34 @@ export function calculateClientPaymentStatus(params: {
   status: MemberPaymentStatus;
   overdueRoundsCount: number;
   handsCoveredAhead: number;
+  installmentsAhead: number;
+  installmentsOverdue: number;
+  nextDueDate: string;
 } {
   const { todayStr, paidUntilDate, hasPaidToday, currentBalance, unitAmount } = params;
   const unit = Math.max(1, Number(unitAmount) || 250);
+
+  // Compute next due date
+  let nextDueDate = todayStr;
+  if (paidUntilDate) {
+    const until = new Date(paidUntilDate);
+    until.setDate(until.getDate() + 1);
+    nextDueDate = until.toISOString().split('T')[0];
+  }
 
   if (paidUntilDate && paidUntilDate > todayStr) {
     const todayMs = new Date(todayStr).getTime();
     const untilMs = new Date(paidUntilDate).getTime();
     const advanceDays = Math.max(1, Math.round((untilMs - todayMs) / (24 * 60 * 60 * 1000)));
+    const advanceHands = Math.max(1, Math.floor(currentBalance / unit));
+
     return {
       status: 'PAID_IN_ADVANCE',
       overdueRoundsCount: 0,
       handsCoveredAhead: advanceDays,
+      installmentsAhead: advanceHands,
+      installmentsOverdue: 0,
+      nextDueDate,
     };
   }
 
@@ -186,6 +313,9 @@ export function calculateClientPaymentStatus(params: {
       status: 'PAID_TODAY',
       overdueRoundsCount: 0,
       handsCoveredAhead: 0,
+      installmentsAhead: 0,
+      installmentsOverdue: 0,
+      nextDueDate,
     };
   }
 
@@ -193,10 +323,15 @@ export function calculateClientPaymentStatus(params: {
     const todayMs = new Date(todayStr).getTime();
     const untilMs = new Date(paidUntilDate).getTime();
     const overdueDays = Math.max(1, Math.round((todayMs - untilMs) / (24 * 60 * 60 * 1000)));
+    const missingHands = Math.max(1, Math.ceil((unit - (currentBalance % unit)) / unit));
+
     return {
       status: 'OVERDUE',
       overdueRoundsCount: overdueDays,
       handsCoveredAhead: 0,
+      installmentsAhead: 0,
+      installmentsOverdue: missingHands,
+      nextDueDate,
     };
   }
 
@@ -204,8 +339,11 @@ export function calculateClientPaymentStatus(params: {
     const missingHands = Math.max(1, Math.ceil((unit - currentBalance) / unit));
     return {
       status: 'OVERDUE',
-      overdueRoundsCount: missingHands,
+      overdueRoundsCount: 1,
       handsCoveredAhead: 0,
+      installmentsAhead: 0,
+      installmentsOverdue: missingHands,
+      nextDueDate,
     };
   }
 
@@ -213,5 +351,8 @@ export function calculateClientPaymentStatus(params: {
     status: 'UNPAID_TODAY',
     overdueRoundsCount: 0,
     handsCoveredAhead: 0,
+    installmentsAhead: 0,
+    installmentsOverdue: 0,
+    nextDueDate,
   };
 }

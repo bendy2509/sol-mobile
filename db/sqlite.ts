@@ -24,6 +24,8 @@ interface WebTableStore {
   sol_group_members: any[];
   transactions: any[];
   cash_closures: any[];
+  audit_logs: any[];
+  sync_logs: any[];
 }
 
 class WebSQLiteAdapter {
@@ -35,6 +37,8 @@ class WebSQLiteAdapter {
     sol_group_members: [],
     transactions: [],
     cash_closures: [],
+    audit_logs: [],
+    sync_logs: [],
   };
 
   async init() {
@@ -123,6 +127,20 @@ class WebSQLiteAdapter {
           id, collector_id, closure_date, total_cash_declared: Number(total_cash_declared),
           total_system_calculated: Number(total_system_calculated), discrepancy_reason,
           status: 'SUBMITTED', created_at
+        });
+      } else if (tableName === 'audit_logs') {
+        const [id, user_id, user_role, action, entity_type, entity_id, old_data, new_data, reason, created_at, sync_status] = params;
+        this.data.audit_logs.unshift({
+          id, user_id, user_role, action, entity_type, entity_id,
+          old_data: old_data || null, new_data: new_data || null, reason: reason || null,
+          created_at, sync_status: sync_status || 'PENDING'
+        });
+      } else if (tableName === 'sync_logs') {
+        const [id, table_name, entity_id, action, status, attempts_count, last_error, created_at, synced_at] = params;
+        this.data.sync_logs.unshift({
+          id, table_name, entity_id, action, status: status || 'PENDING',
+          attempts_count: Number(attempts_count || 0), last_error: last_error || null,
+          created_at, synced_at: synced_at || null
         });
       }
       await this.persist();
@@ -285,6 +303,22 @@ class WebSQLiteAdapter {
       return this.data.cash_closures as any;
     }
 
+    if (upperSql.includes('FROM AUDIT_LOGS')) {
+      let logs = [...this.data.audit_logs];
+      if (cleanSql.includes('action = ?')) {
+        logs = logs.filter((l) => l.action === params[0]);
+      }
+      return logs as any;
+    }
+
+    if (upperSql.includes('FROM SYNC_LOGS')) {
+      let logs = [...this.data.sync_logs];
+      if (cleanSql.includes('status = ?')) {
+        logs = logs.filter((l) => l.status === params[0]);
+      }
+      return logs as any;
+    }
+
     return [] as any;
   }
 
@@ -319,72 +353,52 @@ export async function setActiveBusinessId(businessId: string): Promise<void> {
   } catch {}
 }
 
+async function safeAddColumn(db: UniversalSQLiteDatabase, table: string, colName: string, colDef: string): Promise<void> {
+  try {
+    const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+    const colNames = (columns || []).map((c: any) => c.name);
+    if (!colNames.includes(colName)) {
+      await db.execAsync(`ALTER TABLE ${table} ADD COLUMN ${colDef};`);
+    }
+  } catch (e) {
+    console.warn(`Migration notice for ${table}.${colName}:`, e);
+  }
+}
+
 async function runMigrations(db: UniversalSQLiteDatabase): Promise<void> {
   if (Platform.OS === 'web') return;
   try {
-    // 1. Check & migrate columns in 'clients'
-    const clientColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(clients)');
-    const clientColNames = clientColumns.map((c: any) => c.name);
+    // 1. Clients migrations
+    await safeAddColumn(db, 'clients', 'business_id', 'business_id TEXT');
+    await safeAddColumn(db, 'clients', 'payout_rank', 'payout_rank INTEGER');
+    await safeAddColumn(db, 'clients', 'has_received_payout', 'has_received_payout INTEGER DEFAULT 0');
+    await safeAddColumn(db, 'clients', 'has_received_hand', 'has_received_hand INTEGER DEFAULT 0');
+    await safeAddColumn(db, 'clients', 'hand_received_date', 'hand_received_date TEXT');
+    await safeAddColumn(db, 'clients', 'total_paid_amount', 'total_paid_amount REAL DEFAULT 0');
+    await safeAddColumn(db, 'clients', 'paid_hands_count', 'paid_hands_count INTEGER DEFAULT 0');
+    await safeAddColumn(db, 'clients', 'paid_until_date', 'paid_until_date TEXT');
 
-    if (clientColNames.length > 0) {
-      if (!clientColNames.includes('business_id')) {
-        await db.execAsync('ALTER TABLE clients ADD COLUMN business_id TEXT;');
-      }
-      if (!clientColNames.includes('payout_rank')) {
-        await db.execAsync('ALTER TABLE clients ADD COLUMN payout_rank INTEGER;');
-      }
-      if (!clientColNames.includes('has_received_payout')) {
-        await db.execAsync('ALTER TABLE clients ADD COLUMN has_received_payout INTEGER DEFAULT 0;');
-      }
-      if (!clientColNames.includes('has_received_hand')) {
-        await db.execAsync('ALTER TABLE clients ADD COLUMN has_received_hand INTEGER DEFAULT 0;');
-      }
-      if (!clientColNames.includes('hand_received_date')) {
-        await db.execAsync('ALTER TABLE clients ADD COLUMN hand_received_date TEXT;');
-      }
-      if (!clientColNames.includes('total_paid_amount')) {
-        await db.execAsync('ALTER TABLE clients ADD COLUMN total_paid_amount REAL DEFAULT 0;');
-      }
-      if (!clientColNames.includes('paid_hands_count')) {
-        await db.execAsync('ALTER TABLE clients ADD COLUMN paid_hands_count INTEGER DEFAULT 0;');
-      }
-      if (!clientColNames.includes('paid_until_date')) {
-        await db.execAsync('ALTER TABLE clients ADD COLUMN paid_until_date TEXT;');
-      }
-    }
+    // 2. Transactions migrations
+    await safeAddColumn(db, 'transactions', 'business_id', 'business_id TEXT');
+    await safeAddColumn(db, 'transactions', 'payment_method', "payment_method TEXT DEFAULT 'CASH'");
+    await safeAddColumn(db, 'transactions', 'hands_covered', 'hands_covered INTEGER DEFAULT 1');
+    await safeAddColumn(db, 'transactions', 'note', 'note TEXT');
+    await safeAddColumn(db, 'transactions', 'idempotency_key', 'idempotency_key TEXT');
+    await safeAddColumn(db, 'transactions', 'is_reversed', 'is_reversed INTEGER DEFAULT 0');
+    await safeAddColumn(db, 'transactions', 'reversal_id', 'reversal_id TEXT');
+    await safeAddColumn(db, 'transactions', 'reversed_at', 'reversed_at TEXT');
 
-    // 2. Check & migrate columns in 'transactions'
-    const txColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(transactions)');
-    const txColNames = txColumns.map((c: any) => c.name);
-
-    if (txColNames.length > 0) {
-      if (!txColNames.includes('business_id')) {
-        await db.execAsync('ALTER TABLE transactions ADD COLUMN business_id TEXT;');
-      }
-      if (!txColNames.includes('payment_method')) {
-        await db.execAsync("ALTER TABLE transactions ADD COLUMN payment_method TEXT DEFAULT 'CASH';");
-      }
-      if (!txColNames.includes('hands_covered')) {
-        await db.execAsync('ALTER TABLE transactions ADD COLUMN hands_covered INTEGER DEFAULT 1;');
-      }
-      if (!txColNames.includes('note')) {
-        await db.execAsync('ALTER TABLE transactions ADD COLUMN note TEXT;');
-      }
+    try {
       await db.runAsync(`UPDATE transactions SET type = 'SOL_CONTRIBUTION' WHERE type = 'CONTRIBUTION';`);
       await db.runAsync(`UPDATE transactions SET type = 'SOL_PAYOUT' WHERE type = 'HAND_PAYOUT';`);
-    }
+    } catch {}
 
-    // 3. Migrate collectors if needed
-    const colColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(collectors)');
-    const colColNames = colColumns.map((c: any) => c.name);
-    if (colColNames.length > 0) {
-      if (!colColNames.includes('zone')) {
-        await db.execAsync('ALTER TABLE collectors ADD COLUMN zone TEXT;');
-      }
-      if (!colColNames.includes('status')) {
-        await db.execAsync("ALTER TABLE collectors ADD COLUMN status TEXT DEFAULT 'PENDING_APPROVAL';");
-      }
-    }
+    // 3. Collectors migrations
+    await safeAddColumn(db, 'collectors', 'zone', 'zone TEXT');
+    await safeAddColumn(db, 'collectors', 'status', "status TEXT DEFAULT 'PENDING_APPROVAL'");
+
+    // 4. Business configs migrations
+    await safeAddColumn(db, 'business_configs', 'cycle_status', "cycle_status TEXT DEFAULT 'ACTIVE'");
   } catch (migrationErr) {
     console.warn('SQLite migration notice:', migrationErr);
   }
@@ -404,6 +418,7 @@ async function initDatabaseInternal(db: any): Promise<void> {
     await db.execAsync('PRAGMA foreign_keys = ON;');
   } catch {}
 
+  // 1. Create Base Tables
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS collectors (
       id TEXT PRIMARY KEY,
@@ -426,6 +441,7 @@ async function initDatabaseInternal(db: any): Promise<void> {
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
       status TEXT DEFAULT 'ACTIVE',
+      cycle_status TEXT DEFAULT 'ACTIVE',
       created_at TEXT NOT NULL
     );
 
@@ -484,7 +500,11 @@ async function initDatabaseInternal(db: any): Promise<void> {
       note TEXT,
       created_at_local TEXT NOT NULL,
       synced_at TEXT,
-      sync_status TEXT DEFAULT 'PENDING'
+      sync_status TEXT DEFAULT 'PENDING',
+      idempotency_key TEXT,
+      is_reversed INTEGER DEFAULT 0,
+      reversal_id TEXT,
+      reversed_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS cash_closures (
@@ -498,15 +518,59 @@ async function initDatabaseInternal(db: any): Promise<void> {
       created_at TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_clients_collector ON clients(collector_id);
-    CREATE INDEX IF NOT EXISTS idx_clients_business ON clients(business_id);
-    CREATE INDEX IF NOT EXISTS idx_tx_collector ON transactions(collector_id);
-    CREATE INDEX IF NOT EXISTS idx_tx_business ON transactions(business_id);
-    CREATE INDEX IF NOT EXISTS idx_tx_client ON transactions(client_id);
-    CREATE INDEX IF NOT EXISTS idx_tx_created ON transactions(created_at_local);
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      user_role TEXT NOT NULL,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      old_data TEXT,
+      new_data TEXT,
+      reason TEXT,
+      created_at TEXT NOT NULL,
+      sync_status TEXT DEFAULT 'PENDING'
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_logs (
+      id TEXT PRIMARY KEY,
+      table_name TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      status TEXT DEFAULT 'PENDING',
+      attempts_count INTEGER DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      synced_at TEXT
+    );
   `);
 
+  // 2. Ensure all table columns exist on upgraded/existing databases
   await runMigrations(db);
+
+  // 3. Create Indexes safely
+  const indexStatements = [
+    'CREATE INDEX IF NOT EXISTS idx_clients_collector ON clients(collector_id);',
+    'CREATE INDEX IF NOT EXISTS idx_clients_business ON clients(business_id);',
+    'CREATE INDEX IF NOT EXISTS idx_tx_collector ON transactions(collector_id);',
+    'CREATE INDEX IF NOT EXISTS idx_tx_business ON transactions(business_id);',
+    'CREATE INDEX IF NOT EXISTS idx_tx_client ON transactions(client_id);',
+    'CREATE INDEX IF NOT EXISTS idx_tx_created ON transactions(created_at_local);',
+    'CREATE INDEX IF NOT EXISTS idx_tx_idempotency ON transactions(idempotency_key);',
+    'CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);',
+    'CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);',
+    'CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_logs(status);',
+  ];
+
+  for (const idxSql of indexStatements) {
+    try {
+      await db.execAsync(idxSql);
+    } catch (idxErr) {
+      console.warn('Index notice:', idxErr);
+    }
+  }
+
+  // 4. Seed initial data
   await seedInitialData(db);
 }
 
@@ -522,20 +586,22 @@ export async function getDatabase(): Promise<UniversalSQLiteDatabase> {
   if (!dbInstance) {
     try {
       dbInstance = await SQLite.openDatabaseAsync('sol.db');
-      if (!dbInitPromise) {
-        dbInitPromise = initDatabaseInternal(dbInstance);
-      }
+      dbInitPromise = initDatabaseInternal(dbInstance);
       await dbInitPromise;
     } catch (e) {
       console.warn('Native SQLite fallback to Web Adapter:', e);
-      if (!dbInitPromise) {
-        dbInitPromise = initDatabaseInternal(webDb);
-      }
+      dbInitPromise = initDatabaseInternal(webDb);
       await dbInitPromise;
       return webDb;
     }
   } else if (dbInitPromise) {
-    await dbInitPromise;
+    try {
+      await dbInitPromise;
+    } catch {
+      // Retry init if previous failed
+      dbInitPromise = initDatabaseInternal(dbInstance);
+      await dbInitPromise;
+    }
   }
 
   return dbInstance;

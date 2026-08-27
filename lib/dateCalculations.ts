@@ -1,4 +1,4 @@
-import { Frequency, PaymentFrequency } from '@/types';
+import { Frequency, PaymentFrequency } from '../types';
 
 /**
  * Returns the exact interval duration in days for any SOL / Sabotay frequency.
