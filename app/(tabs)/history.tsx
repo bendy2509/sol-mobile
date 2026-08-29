@@ -25,6 +25,7 @@ import { getActiveCollector } from '@/db/sqlite';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { getClientById } from '@/db/clientRepository';
 import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
+import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
 import { Transaction, TransactionType } from '@/types';
 import { formatCurrency, formatDate } from '@/lib/formatters';
@@ -32,7 +33,10 @@ import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from 
 import { SOL_COLORS } from '@/constants/Colors';
 
 export default function HistoryScreen() {
+  const { userRole, activeCollector, getAdminProfile } = useAuth();
   const { triggerSync } = useSync();
+  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
+  const isAdmin = userRole === 'ADMIN';
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [filterType, setFilterType] = useState<TransactionType | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -197,11 +201,13 @@ Reçu certifié et archivé avec succès. Merci !`;
       await reverseTransaction({
         transactionId: selectedTx.id,
         reason: cancelReason.trim(),
+        userRole: userRole || 'MANAGER',
+        collectorId: activeCollector?.id,
       });
       triggerSuccessFeedback();
       Alert.alert(
         'Opération Annulée avec Succès',
-        `La transaction #${selectedTx.id.slice(0, 8)} a été annulée. Une écriture d'annulation (REVERSAL) a été inscrite à l'audit.`
+        `La transaction #${selectedTx.id.slice(0, 8)} a été annulée. Une écriture d'annulation certifiée a été inscrite à l'audit et le solde de l'adhérent a été recalculé.`
       );
       loadData();
     } catch (err: any) {
@@ -481,15 +487,42 @@ Reçu certifié et archivé avec succès. Merci !`;
                     <Text style={styles.whatsappActionBtnText}>Envoyer par WhatsApp</Text>
                   </TouchableOpacity>
 
-                  {selectedTx.type !== 'REVERSAL' && (
+                  {selectedTx.type !== 'REVERSAL' && !isReadOnly && (
                     <TouchableOpacity
                       activeOpacity={0.8}
                       onPress={handleInitiateCancel}
                       style={styles.cancelOpBtn}
                     >
                       <Icon name="alert" size={16} color="#DC2626" style={{ marginRight: 6 }} />
-                      <Text style={styles.cancelOpBtnText}>Annuler l'Opération</Text>
+                      <Text style={styles.cancelOpBtnText}>Annuler / Rectifier l'Opération</Text>
                     </TouchableOpacity>
+                  )}
+
+                  {!isAdmin && (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={async () => {
+                        const profile = await getAdminProfile();
+                        const phone = profile.phoneNumber || '+50900000000';
+                        const digits = phone.replace(/[^0-9+]/g, '');
+                        Linking.openURL(`tel:${digits}`).catch(() => {
+                          Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
+                        });
+                      }}
+                      style={styles.contactAdminBtn}
+                    >
+                      <Icon name="phone" size={14} color="#0284C7" style={{ marginRight: 6 }} />
+                      <Text style={styles.contactAdminBtnText}>Besoin d'aide ? Contacter l'Admin</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {isReadOnly && selectedTx.type !== 'REVERSAL' && (
+                    <View style={styles.managerNoticeCard}>
+                      <Icon name="shield" size={14} color="#64748B" style={{ marginRight: 6 }} />
+                      <Text style={styles.managerNoticeText}>
+                        Mode consultation seule. Contactez votre gestionnaire ou un Super-Admin pour régularisation.
+                      </Text>
+                    </View>
                   )}
                 </View>
               </View>
@@ -893,5 +926,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  contactAdminBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0F9FF',
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    marginTop: 4,
+  },
+  contactAdminBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0284C7',
+  },
+  managerNoticeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 4,
+  },
+  managerNoticeText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 15,
   },
 });

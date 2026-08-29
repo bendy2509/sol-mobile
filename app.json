@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "sol-mobile",
-    "slug": "sol-mobile",
+    "name": "SOL Mobile",
+    "slug": "projet-sol",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -14,6 +14,8 @@
       }
     },
     "android": {
+      "package": "com.servilus.projetsol",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -22,7 +24,9 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "CAMERA"
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -50,6 +54,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3ab48ab6-970c-4641-a9c3-f08e5e02cdf0"
+      }
+    },
+    "owner": "servilus2509s-team"
   }
 }

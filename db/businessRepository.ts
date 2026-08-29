@@ -4,6 +4,7 @@ import { BusinessConfig, CycleStatus, DashboardMetrics, Member, PaymentFrequency
 import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusinessId } from './sqlite';
 import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalculations';
 import { recordAuditLog } from '@/services/auditService';
+import { calculateCycleTotalHands } from '@/services/financialService';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -213,6 +214,9 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     daily_amount: number;
     current_balance: number;
     payout_rank: number | null;
+    payout_ranks: string | null;
+    hands_count: number | null;
+    received_hands_count: number | null;
     has_received_hand: number | null;
     has_received_payout: number | null;
     hand_received_date: string | null;
@@ -222,8 +226,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     qr_code_token: string;
     created_at: string;
   }>(
-    `SELECT id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, 
-            has_received_hand, has_received_payout, hand_received_date, total_paid_amount, 
+    `SELECT id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, payout_ranks,
+            hands_count, received_hands_count, has_received_hand, has_received_payout, hand_received_date, total_paid_amount, 
             paid_hands_count, paid_until_date, qr_code_token, created_at
      FROM clients 
      WHERE collector_id = ?
@@ -239,10 +243,16 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   let currentPayoutBeneficiary: Member | null = null;
 
   for (const m of members) {
-    const hasTouched = Boolean(m.has_received_hand || m.has_received_payout);
-    if (hasTouched) {
-      handsTouchedCount++;
-    }
+    const memberHandsCount = Math.max(1, Number(m.hands_count || 1));
+    const receivedCount = Number(
+      m.received_hands_count !== null && m.received_hands_count !== undefined
+        ? m.received_hands_count
+        : m.has_received_hand || m.has_received_payout
+        ? memberHandsCount
+        : 0
+    );
+    const hasTouched = receivedCount >= memberHandsCount || Boolean(m.has_received_hand || m.has_received_payout);
+    handsTouchedCount += receivedCount;
 
     handsCollectedTotal += Number(m.paid_hands_count || 0);
 
@@ -267,7 +277,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       overdueHandsCount += missingHands;
     }
 
-    // Determine current payout beneficiary (next rank who hasn't received hand)
+    // Determine current payout beneficiary (next rank who hasn't received all hands)
     if (!currentPayoutBeneficiary && !hasTouched && m.payout_rank) {
       currentPayoutBeneficiary = {
         id: m.id,
@@ -280,6 +290,9 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
         currentBalance: Number(m.current_balance || 0),
         payoutRank: m.payout_rank,
         rankOrder: m.payout_rank,
+        payoutRanks: m.payout_ranks || (m.payout_rank ? String(m.payout_rank) : undefined),
+        handsCount: memberHandsCount,
+        receivedHandsCount: receivedCount,
         hasReceivedHand: false,
         hasReceivedPayout: false,
         handReceivedDate: undefined,
@@ -298,10 +311,11 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   }
 
   const totalMembersCount = members.length;
-  const effectiveChildrenCount = totalMembersCount > 0 ? totalMembersCount : totalSlots;
+  const totalCycleHands = calculateCycleTotalHands(members) || (totalSlots || 10);
+  const effectiveChildrenCount = totalCycleHands;
   const unpaidTodayCount = Math.max(0, totalMembersCount - paidTodayCount);
   const handsRemaining = Math.max(0, effectiveChildrenCount - handsCollectedTotal);
-  const totalPotAmount = unitAmount * effectiveChildrenCount;
+  const totalPotAmount = unitAmount * totalCycleHands;
 
   // Dynamic End Date based on: startDate + (effectiveChildrenCount * frequencyInterval)
   const dynamicEndDate = calculateCycleEndDate(business.startDate, effectiveChildrenCount, business.frequency);

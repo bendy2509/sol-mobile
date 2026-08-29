@@ -16,7 +16,7 @@ import { Header } from '@/components/Header';
 import { Icon } from '@/components/Icon';
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
-import { getDatabase, isCollectorPinTaken } from '@/db/sqlite';
+import { getDatabase } from '@/db/sqlite';
 import { BusinessConfig } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
@@ -69,13 +69,6 @@ export default function ProfileScreen() {
     }
 
     try {
-      const isTaken = await isCollectorPinTaken(newPin, activeCollector?.id);
-      if (isTaken) {
-        triggerErrorFeedback();
-        setPinError('Ce code PIN est déjà utilisé. Veuillez choisir un code PIN unique (4 chiffres).');
-        return;
-      }
-
       const db = await getDatabase();
       if (activeCollector) {
         await db.runAsync(`UPDATE collectors SET pin_hash = ?, sync_status = 'PENDING' WHERE id = ?`, [

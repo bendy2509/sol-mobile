@@ -1,5 +1,7 @@
-import { BusinessConfig, Collector, Transaction, UserStatus } from '@/types';
-import { getDatabase, isCollectorPhoneTaken, isCollectorPinTaken } from './sqlite';
+import 'react-native-get-random-values';
+import { v4 as uuidv4 } from 'uuid';
+import { BusinessConfig, Collector, Transaction, UserRole, UserStatus } from '@/types';
+import { getDatabase, isCollectorPhoneTaken } from './sqlite';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { hashPin } from '@/lib/crypto';
 
@@ -44,10 +46,10 @@ export async function getAdminGlobalStats(): Promise<AdminGlobalStats> {
   );
   const totalBusinesses = Number(bizRow?.count || 0);
 
-  const clientRow = await db.getFirstAsync<{ count: number }>(
-    `SELECT count(*) as count FROM clients`
+  const clientRow = await db.getFirstAsync<{ count: number; total_hands: number }>(
+    `SELECT count(*) as count, COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total_hands FROM clients`
   );
-  const totalClients = Number(clientRow?.count || 0);
+  const totalClients = Number(clientRow?.total_hands || clientRow?.count || 0);
 
   const txStatsRow = await db.getFirstAsync<{
     count: number;
@@ -92,6 +94,7 @@ export async function getAllManagersOverview(): Promise<ManagerFullOverview[]> {
     phone_number: string;
     pin_hash: string;
     status: string;
+    role?: string;
     zone: string | null;
     created_at: string;
   }>(`SELECT * FROM collectors ORDER BY created_at DESC`);
@@ -115,8 +118,8 @@ export async function getAllManagersOverview(): Promise<ManagerFullOverview[]> {
   for (const c of collectors) {
     const biz = businesses.find((b) => b.collector_id === c.id) || null;
 
-    const clientsCountRow = await db.getFirstAsync<{ count: number }>(
-      `SELECT count(*) as count FROM clients WHERE collector_id = ?`,
+    const clientsCountRow = await db.getFirstAsync<{ count: number; total_hands: number }>(
+      `SELECT count(*) as count, COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total_hands FROM clients WHERE collector_id = ?`,
       [c.id]
     );
 
@@ -135,6 +138,7 @@ export async function getAllManagersOverview(): Promise<ManagerFullOverview[]> {
         phoneNumber: c.phone_number,
         pinHash: c.pin_hash,
         status: c.status as UserStatus,
+        role: (c.role as any) || 'MANAGER',
         zone: c.zone || undefined,
         createdAt: c.created_at,
       },
@@ -153,7 +157,7 @@ export async function getAllManagersOverview(): Promise<ManagerFullOverview[]> {
             createdAt: biz.created_at,
           }
         : null,
-      clientsCount: Number(clientsCountRow?.count || 0),
+      clientsCount: Number(clientsCountRow?.total_hands || clientsCountRow?.count || 0),
       totalCollected: Number(txStatsRow?.total_in || 0),
       totalDistributed: Number(txStatsRow?.total_out || 0),
     });
@@ -163,7 +167,7 @@ export async function getAllManagersOverview(): Promise<ManagerFullOverview[]> {
 }
 
 /**
- * Updates a manager's personal details (Name, Phone, Zone, PIN, Status).
+ * Updates a user's details (Name, Phone, Zone, PIN, Status, Role).
  */
 export async function updateManagerDetails(
   collectorId: string,
@@ -173,6 +177,7 @@ export async function updateManagerDetails(
     zone?: string;
     pin?: string;
     status?: UserStatus;
+    role?: UserRole;
   }
 ): Promise<void> {
   const db = await getDatabase();
@@ -197,10 +202,6 @@ export async function updateManagerDetails(
     params.push(data.zone.trim());
   }
   if (data.pin !== undefined && data.pin.length === 4) {
-    const isPinTaken = await isCollectorPinTaken(data.pin, collectorId);
-    if (isPinTaken) {
-      throw new Error('Ce code PIN est déjà utilisé. Veuillez choisir un code PIN unique.');
-    }
     fields.push('pin_hash = ?');
     params.push(hashPin(data.pin));
   }
@@ -208,11 +209,90 @@ export async function updateManagerDetails(
     fields.push('status = ?');
     params.push(data.status);
   }
+  if (data.role !== undefined) {
+    fields.push('role = ?');
+    params.push(data.role);
+  }
 
   if (fields.length === 0) return;
 
   params.push(collectorId);
   await db.runAsync(`UPDATE collectors SET ${fields.join(', ')} WHERE id = ?`, params);
+}
+
+/**
+ * Creates a brand new platform user from the Admin space (Admin, Manager, Read-Only).
+ */
+export async function createAdminUserAccount(data: {
+  fullName: string;
+  phoneNumber: string;
+  pin: string;
+  role: UserRole;
+  zone?: string;
+  businessName?: string;
+  contributionAmount?: number;
+  totalSlots?: number;
+  frequency?: string;
+}): Promise<Collector> {
+  const db = await getDatabase();
+  const normPhone = normalizePhoneNumber(data.phoneNumber);
+  const isTaken = await isCollectorPhoneTaken(normPhone);
+  if (isTaken) {
+    throw new Error('Ce numéro de téléphone est déjà utilisé par un autre compte.');
+  }
+
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  const pinHash = hashPin(data.pin);
+
+  await db.runAsync(
+    `INSERT INTO collectors (id, full_name, phone_number, pin_hash, status, role, zone, created_at)
+     VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?)`,
+    [id, data.fullName.trim(), normPhone, pinHash, data.role || 'MANAGER', data.zone?.trim() || null, now]
+  );
+
+  if (data.businessName && data.businessName.trim()) {
+    const bizId = uuidv4();
+    const startDate = now.split('T')[0];
+    const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    await db.runAsync(
+      `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, created_at)
+       VALUES (?, ?, ?, 'SABOTAY', ?, ?, ?, ?, ?, 'ACTIVE', ?)`,
+      [
+        bizId,
+        id,
+        data.businessName.trim(),
+        data.contributionAmount || 250,
+        data.frequency || 'DAILY',
+        data.totalSlots || 10,
+        startDate,
+        endDate,
+        now,
+      ]
+    );
+  }
+
+  return {
+    id,
+    fullName: data.fullName.trim(),
+    phoneNumber: normPhone,
+    pinHash,
+    status: 'ACTIVE',
+    role: data.role || 'MANAGER',
+    zone: data.zone?.trim(),
+    createdAt: now,
+  };
+}
+
+/**
+ * Deletes a user account and their associated records.
+ */
+export async function deleteUserAccount(collectorId: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(`DELETE FROM transactions WHERE collector_id = ?`, [collectorId]);
+  await db.runAsync(`DELETE FROM clients WHERE collector_id = ?`, [collectorId]);
+  await db.runAsync(`DELETE FROM business_configs WHERE collector_id = ?`, [collectorId]);
+  await db.runAsync(`DELETE FROM collectors WHERE id = ?`, [collectorId]);
 }
 
 /**

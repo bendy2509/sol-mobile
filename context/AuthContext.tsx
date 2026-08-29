@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { v4 as uuidv4 } from 'uuid';
 import { BusinessConfig, BusinessType, Collector, Frequency, UserRole, UserSession, UserStatus } from '@/types';
@@ -8,7 +9,6 @@ import {
   getCollectorByPhone,
   getDatabase,
   isCollectorPhoneTaken,
-  isCollectorPinTaken,
   setActiveBusinessId,
   setActiveCollectorId,
   updateCollectorStatus,
@@ -16,8 +16,9 @@ import {
 import { getActiveBusinessConfig, saveBusinessConfig } from '@/db/businessRepository';
 import { triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { arePhoneNumbersEqual, normalizePhoneNumber } from '@/lib/phoneUtils';
-import { hashPin, verifyPinHash } from '@/lib/crypto';
+import { hashPin, verifyPinHash, isBcryptHash } from '@/lib/crypto';
 import { recordAuditLog } from '@/services/auditService';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export interface AdminProfile {
   fullName: string;
@@ -54,9 +55,30 @@ interface AuthContextType {
   switchRole: (role: UserRole) => void;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
+  touchSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// --- Session Inactivity & Auto-Lockout Engine (15 minutes) ---
+export const SESSION_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+
+async function recordUserActivity(): Promise<void> {
+  try {
+    await AsyncStorage.setItem('SOL_LAST_ACTIVITY_TIME', String(Date.now()));
+  } catch {}
+}
+
+async function checkSessionInactivity(): Promise<boolean> {
+  try {
+    const lastActiveStr = await AsyncStorage.getItem('SOL_LAST_ACTIVITY_TIME');
+    if (!lastActiveStr) return false;
+    const elapsed = Date.now() - Number(lastActiveStr);
+    return elapsed > SESSION_INACTIVITY_TIMEOUT_MS;
+  } catch {
+    return false;
+  }
+}
 
 // --- Anti-Brute-Force Rate Limiting Engine ---
 async function checkPinRateLimit(): Promise<{ isLocked: boolean; remainingSeconds?: number; message?: string }> {
@@ -117,12 +139,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isPendingApproval, setIsPendingApproval] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  const touchSession = useCallback(async () => {
+    await recordUserActivity();
+  }, []);
+
+  // Monitor app transitions & auto-lock if inactive for > 15 minutes
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        const loggedInFlag = await AsyncStorage.getItem('SOL_IS_LOGGED_IN');
+        if (loggedInFlag === 'true') {
+          const isExpired = await checkSessionInactivity();
+          if (isExpired) {
+            await AsyncStorage.removeItem('SOL_IS_LOGGED_IN');
+            setIsAuthenticated(false);
+            triggerErrorFeedback();
+          } else {
+            await recordUserActivity();
+          }
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
   const refreshSession = useCallback(async () => {
     try {
       const loggedInFlag = await AsyncStorage.getItem('SOL_IS_LOGGED_IN');
       const storedRole = (await AsyncStorage.getItem('SOL_USER_ROLE')) as UserRole;
       if (storedRole) {
         setUserRole(storedRole);
+      }
+
+      // Check session expiration
+      if (loggedInFlag === 'true') {
+        const isExpired = await checkSessionInactivity();
+        if (isExpired) {
+          await AsyncStorage.removeItem('SOL_IS_LOGGED_IN');
+          setIsAuthenticated(false);
+          setIsPendingApproval(false);
+          setIsLoading(false);
+          return;
+        }
       }
 
       const collector = await getActiveCollector();
@@ -132,6 +193,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveBusiness(business);
 
       if (loggedInFlag === 'true') {
+        await recordUserActivity();
         if (storedRole === 'ADMIN') {
           setIsAuthenticated(true);
           setIsPendingApproval(false);
@@ -205,10 +267,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await AsyncStorage.setItem('SOL_ADMIN_PHONE', norm);
     }
     if (data.pin !== undefined && data.pin.length === 4) {
-      const isPinTaken = await isCollectorPinTaken(data.pin);
-      if (isPinTaken) {
-        throw new Error('Ce code PIN est déjà attribué. Veuillez choisir un code PIN unique.');
-      }
       await AsyncStorage.setItem('SOL_ADMIN_PIN', hashPin(data.pin));
     }
 
@@ -242,12 +300,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (!cleanPhone || cleanPhone.length < 4) {
         triggerErrorFeedback();
-        return { success: false, error: 'Veuillez saisir un numéro de téléphone valide.' };
+        return { success: false, error: 'Numéro de téléphone ou code PIN incorrect.' };
       }
 
       if (!cleanPin || cleanPin.length !== 4) {
         triggerErrorFeedback();
-        return { success: false, error: 'Le code PIN doit comporter exactement 4 chiffres.' };
+        return { success: false, error: 'Numéro de téléphone ou code PIN incorrect.' };
       }
 
       // Retrieve dynamic Admin credentials
@@ -268,8 +326,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           triggerErrorFeedback();
           return {
             success: false,
-            error: lockStatus.message || 'Code PIN incorrect pour le compte Administrateur.',
+            error: lockStatus.message || 'Numéro de téléphone ou code PIN incorrect.',
           };
+        }
+
+        if (!isBcryptHash(adminStoredPin)) {
+          await AsyncStorage.setItem('SOL_ADMIN_PIN', hashPin(cleanPin));
         }
 
         await resetFailedPinAttempts();
@@ -282,34 +344,106 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: true, role: 'ADMIN' };
       }
 
-      // 2. Lookup Collector strictly by normalized phone number
-      const collector = await getCollectorByPhone(cleanPhone);
+      // 2. FAST-PATH: Local SQLite check first (Instant < 5ms)
+      let collector = await getCollectorByPhone(cleanPhone);
+      let isLocalMatch = collector ? verifyPinHash(cleanPin, collector.pinHash) : false;
 
-      if (!collector) {
-        triggerErrorFeedback();
-        return {
-          success: false,
-          error: 'Aucun compte trouvé avec ce numéro de téléphone. Vérifiez le numéro ou inscrivez votre carnet.',
-        };
+      // 3. SLOW-PATH FALLBACK: If not found locally or PIN changed on Supabase, query Supabase with 1.5s timeout
+      if (!isLocalMatch && isSupabaseConfigured) {
+        try {
+          const normPhone = normalizePhoneNumber(cleanPhone);
+          const fetchPromise = supabase
+            .from('collectors')
+            .select('*')
+            .or(`phone_number.eq.${normPhone},phone_number.eq.${cleanPhone}`)
+            .maybeSingle();
+
+          const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+            setTimeout(() => resolve({ data: null }), 1500)
+          );
+
+          const { data: supaCol } = await Promise.race([fetchPromise, timeoutPromise]);
+
+          if (supaCol && verifyPinHash(cleanPin, supaCol.pin_hash || (supaCol as any).pin)) {
+            const db = await getDatabase();
+            await db.runAsync(
+              `INSERT INTO collectors (id, full_name, phone_number, pin_hash, status, zone, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 full_name = excluded.full_name,
+                 phone_number = excluded.phone_number,
+                 pin_hash = excluded.pin_hash,
+                 status = excluded.status,
+                 zone = excluded.zone`,
+              [
+                supaCol.id,
+                supaCol.full_name || 'Responsable',
+                supaCol.phone_number,
+                hashPin(cleanPin),
+                supaCol.status || 'ACTIVE',
+                supaCol.zone || null,
+                supaCol.created_at || new Date().toISOString(),
+              ]
+            );
+
+            // Fetch business if available in Supabase
+            const { data: supaBiz } = await supabase
+              .from('business_configs')
+              .select('*')
+              .eq('collector_id', supaCol.id)
+              .maybeSingle();
+
+            if (supaBiz) {
+              await db.runAsync(
+                `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, cycle_status, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                   name = excluded.name,
+                   contribution_amount = excluded.contribution_amount,
+                   total_slots = excluded.total_slots`,
+                [
+                  supaBiz.id,
+                  supaBiz.collector_id,
+                  supaBiz.name,
+                  supaBiz.type || 'SABOTAY',
+                  supaBiz.contribution_amount || 250,
+                  supaBiz.frequency || 'DAILY',
+                  supaBiz.total_slots || 10,
+                  supaBiz.start_date || new Date().toISOString(),
+                  supaBiz.end_date || new Date().toISOString(),
+                  supaBiz.status || 'ACTIVE',
+                  supaBiz.cycle_status || 'ACTIVE',
+                  supaBiz.created_at || new Date().toISOString(),
+                ]
+              );
+            }
+
+            collector = await getCollectorByPhone(cleanPhone);
+            isLocalMatch = collector ? verifyPinHash(cleanPin, collector.pinHash) : false;
+          }
+        } catch (supaErr) {
+          // Offline or network error
+        }
       }
 
-      // 3. Strict Coincidence: The PIN must match this specific Collector's pinHash
-      const isCollectorPinValid = verifyPinHash(cleanPin, collector.pinHash);
-      if (!isCollectorPinValid) {
+      if (!collector || !isLocalMatch) {
         const lockStatus = await recordFailedPinAttempt();
         triggerErrorFeedback();
         return {
           success: false,
-          error: lockStatus.message || 'Code PIN incorrect pour ce numéro de téléphone.',
+          error: lockStatus.message || 'Numéro de téléphone ou code PIN incorrect.',
         };
       }
 
       await resetFailedPinAttempts();
 
-      // Silently upgrade legacy plaintext PIN to encrypted hash if needed
-      if (collector.pinHash === cleanPin) {
+      // Silently upgrade legacy plaintext or SHA-256 PIN to standard bcrypt hash
+      if (!isBcryptHash(collector.pinHash)) {
         const db = await getDatabase();
-        await db.runAsync(`UPDATE collectors SET pin_hash = ? WHERE id = ?`, [hashPin(cleanPin), collector.id]);
+        await db.runAsync(`UPDATE collectors SET pin_hash = ?, sync_status = 'PENDING' WHERE id = ?`, [
+          hashPin(cleanPin),
+          collector.id,
+        ]);
       }
 
       // 4. Bind strictly to this collector and their own business
@@ -324,29 +458,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await setActiveBusinessId(userBiz.id);
       }
 
+      const assignedUserRole: UserRole = (collector.role as UserRole) || 'MANAGER';
       await AsyncStorage.setItem('SOL_IS_LOGGED_IN', 'true');
-      await AsyncStorage.setItem('SOL_USER_ROLE', 'MANAGER');
-      setUserRole('MANAGER');
+      await AsyncStorage.setItem('SOL_USER_ROLE', assignedUserRole);
+      setUserRole(assignedUserRole);
       await refreshSession();
 
       if (collector.status === 'SUSPENDED') {
         setIsPendingApproval(false);
         setIsAuthenticated(false);
         triggerErrorFeedback();
-        return { success: true, role: 'MANAGER', status: 'SUSPENDED' };
+        return { success: true, role: assignedUserRole, status: 'SUSPENDED' };
       }
 
       if (collector.status === 'PENDING_APPROVAL') {
         setIsPendingApproval(true);
         setIsAuthenticated(false);
         triggerSuccessFeedback();
-        return { success: true, role: 'MANAGER', status: 'PENDING_APPROVAL' };
+        return { success: true, role: assignedUserRole, status: 'PENDING_APPROVAL' };
       }
 
       setIsPendingApproval(false);
       setIsAuthenticated(true);
       triggerSuccessFeedback();
-      return { success: true, role: 'MANAGER', status: 'ACTIVE' };
+      return { success: true, role: assignedUserRole, status: 'ACTIVE' };
     } catch (err: any) {
       triggerErrorFeedback();
       return { success: false, error: err?.message || 'Erreur lors de la connexion.' };
@@ -365,7 +500,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!verifyPinHash(pin, adminStoredPin)) {
         const lockStatus = await recordFailedPinAttempt();
         triggerErrorFeedback();
-        return { success: false, error: lockStatus.message || 'Code PIN Administrateur incorrect.' };
+        return { success: false, error: lockStatus.message || 'Code PIN incorrect.' };
       }
 
       await resetFailedPinAttempts();
@@ -431,13 +566,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isPhoneTaken) {
         triggerErrorFeedback();
         return { success: false, error: 'Ce numéro de téléphone est déjà associé à un autre compte.' };
-      }
-
-      // Check PIN uniqueness
-      const isPinTaken = await isCollectorPinTaken(data.pin);
-      if (isPinTaken) {
-        triggerErrorFeedback();
-        return { success: false, error: 'Ce code PIN est déjà utilisé. Veuillez choisir un code PIN unique (4 chiffres).' };
       }
 
       const db = await getDatabase();
@@ -585,6 +713,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     await AsyncStorage.removeItem('SOL_IS_LOGGED_IN');
+    await AsyncStorage.removeItem('SOL_LAST_ACTIVITY_TIME');
     setIsAuthenticated(false);
     setIsPendingApproval(false);
     setUserRole('MANAGER');
@@ -613,6 +742,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         switchRole,
         logout,
         refreshSession,
+        touchSession,
       }}
     >
       {children}

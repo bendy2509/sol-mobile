@@ -19,8 +19,8 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth, AdminProfile } from '@/context/AuthContext';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { SOL_COLORS } from '@/constants/Colors';
-import { formatCurrency, formatDateShort, formatDate } from '@/lib/formatters';
+import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { formatCurrency, formatDateShort, formatDate, getInitials } from '@/lib/formatters';
 import { normalizePhoneNumber, arePhoneNumbersEqual, extractRaw8Digits } from '@/lib/phoneUtils';
 import {
   AdminGlobalStats,
@@ -30,21 +30,24 @@ import {
   getGlobalRecentTransactions,
   updateManagerDetails,
   updateBusinessDetails,
+  createAdminUserAccount,
+  deleteUserAccount,
   exportDatabaseBackup,
   restoreDatabaseBackup,
 } from '@/db/adminRepository';
-import { updateCollectorStatus, setActiveCollectorId, setActiveBusinessId } from '@/db/sqlite';
-import { generateAdminGlobalReportPdf, sharePdfFile } from '@/services/pdfService';
+import { reverseTransaction } from '@/db/transactionRepository';
+import { updateCollectorStatus, setActiveCollectorId, setActiveBusinessId, getDatabase } from '@/db/sqlite';
+import { generateAdminGlobalReportPdf, generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfService';
 import { getAuditLogs } from '@/services/auditService';
 import { getSyncQueueSummary, triggerManualSync } from '@/services/syncQueueService';
-import { AuditLog, AuditLogAction, SyncState, Transaction, UserStatus } from '@/types';
+import { AuditLog, AuditLogAction, SyncState, Transaction, UserRole, UserStatus } from '@/types';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 
 export default function AdminScreen() {
   const router = useRouter();
   const { logout, getAdminProfile, updateAdminProfile } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'MANAGERS' | 'TRANSACTIONS' | 'AUDIT_LOGS' | 'SYNC_STATUS' | 'SETTINGS'>('MANAGERS');
+  const [activeTab, setActiveTab] = useState<'USERS' | 'TRANSACTIONS' | 'AUDIT_LOGS' | 'SYNC_STATUS' | 'SETTINGS'>('USERS');
   const [stats, setStats] = useState<AdminGlobalStats>({
     totalManagers: 0,
     activeManagers: 0,
@@ -73,18 +76,31 @@ export default function AdminScreen() {
   });
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterRole, setFilterRole] = useState<UserRole | 'ALL'>('ALL');
   const [filterStatus, setFilterStatus] = useState<UserStatus | 'ALL'>('ALL');
   const [refreshing, setRefreshing] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
-  const [isManualSyncing, setIsManualSyncing] = useState(false);
+  const [generatingManagerReportId, setGeneratingManagerReportId] = useState<string | null>(null);
 
-  // Edit Manager & Business Modal State
+  // Create User Modal State
+  const [isCreateUserModalOpen, setIsCreateUserModalOpen] = useState(false);
+  const [newFullName, setNewFullName] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newZone, setNewZone] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [newRole, setNewRole] = useState<UserRole>('MANAGER');
+  const [newBizName, setNewBizName] = useState('');
+  const [newUnitAmount, setNewUnitAmount] = useState('250');
+  const [newSlots, setNewSlots] = useState('10');
+
+  // Edit User & Business Modal State
   const [selectedManager, setSelectedManager] = useState<ManagerFullOverview | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editFullName, setEditFullName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editZone, setEditZone] = useState('');
   const [editPin, setEditPin] = useState('');
+  const [editRole, setEditRole] = useState<UserRole>('MANAGER');
   const [editBizName, setEditBizName] = useState('');
   const [editUnitAmount, setEditUnitAmount] = useState('');
   const [editSlots, setEditSlots] = useState('');
@@ -103,6 +119,11 @@ export default function AdminScreen() {
   // Restore Modal State
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
   const [restoreJsonInput, setRestoreJsonInput] = useState('');
+
+  // Super-Admin Transaction Cancellation State
+  const [selectedTxToCancel, setSelectedTxToCancel] = useState<Transaction | null>(null);
+  const [isCancelTxModalOpen, setIsCancelTxModalOpen] = useState(false);
+  const [cancelTxReason, setCancelTxReason] = useState('');
 
   // Universal Sensitive PIN Action State
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
@@ -174,7 +195,7 @@ export default function AdminScreen() {
         ? `Êtes-vous sûr de vouloir SUSPENDRE le compte de ${managerName} ? Toutes ses autorisations seront immédiatement bloquées sur son téléphone.`
         : `Voulez-vous ${actionLabel.toLowerCase()} le compte de ${managerName} ?`;
 
-    Alert.alert(`${actionLabel} le responsable`, explanation, [
+    Alert.alert(`${actionLabel} l'utilisateur`, explanation, [
       { text: 'Annuler', style: 'cancel' },
       {
         text: actionLabel,
@@ -204,7 +225,7 @@ export default function AdminScreen() {
     triggerLightImpact();
     const cleanNumber = phone.replace(/[^0-9+]/g, '');
     Linking.openURL(`tel:${cleanNumber}`).catch(() => {
-      Alert.alert('Appel', `Numéro du responsable : ${phone}`);
+      Alert.alert('Appel', `Numéro de l'utilisateur : ${phone}`);
     });
   };
 
@@ -212,8 +233,63 @@ export default function AdminScreen() {
     triggerLightImpact();
     const digitsOnly = phone.replace(/[^0-9]/g, '');
     Linking.openURL(`https://wa.me/${digitsOnly}`).catch(() => {
-      Alert.alert('WhatsApp', `Numéro du responsable : ${phone}`);
+      Alert.alert('WhatsApp', `Numéro de l'utilisateur : ${phone}`);
     });
+  };
+
+  const handleOpenCreateModal = () => {
+    triggerLightImpact();
+    setNewFullName('');
+    setNewPhone('+509');
+    setNewZone('');
+    setNewPin('');
+    setNewRole('MANAGER');
+    setNewBizName('');
+    setNewUnitAmount('250');
+    setNewSlots('10');
+    setIsCreateUserModalOpen(true);
+  };
+
+  const handleCreateNewUser = () => {
+    if (!newFullName.trim()) {
+      Alert.alert('Nom requis', "Veuillez saisir le nom complet de l'utilisateur.");
+      return;
+    }
+    if (newPhone.trim().length < 8) {
+      Alert.alert('Téléphone requis', "Veuillez saisir un numéro de téléphone valide (+509...).");
+      return;
+    }
+    if (newPin.trim().length !== 4) {
+      Alert.alert('Code PIN requis', "Le code PIN doit comporter exactement 4 chiffres.");
+      return;
+    }
+
+    requirePinForAction(
+      'Création Utilisateur',
+      `Saisissez votre code PIN Admin pour valider la création du compte ${newRole} pour ${newFullName}.`,
+      async () => {
+        try {
+          await createAdminUserAccount({
+            fullName: newFullName.trim(),
+            phoneNumber: newPhone.trim(),
+            pin: newPin.trim(),
+            role: newRole,
+            zone: newZone.trim() || undefined,
+            businessName: newRole === 'MANAGER' && newBizName.trim() ? newBizName.trim() : undefined,
+            contributionAmount: parseInt(newUnitAmount, 10) || 250,
+            totalSlots: parseInt(newSlots, 10) || 10,
+          });
+
+          triggerSuccessFeedback();
+          Alert.alert('Compte Créé !', `Le compte [${newRole}] de ${newFullName} a été créé avec succès.`);
+          setIsCreateUserModalOpen(false);
+          loadData();
+        } catch (err: any) {
+          triggerErrorFeedback();
+          Alert.alert('Erreur', err?.message || 'Échec de la création du compte.');
+        }
+      }
+    );
   };
 
   const handleOpenEditModal = (item: ManagerFullOverview) => {
@@ -222,6 +298,7 @@ export default function AdminScreen() {
     setEditFullName(item.collector.fullName);
     setEditPhone(item.collector.phoneNumber);
     setEditZone(item.collector.zone || '');
+    setEditRole((item.collector.role as UserRole) || 'MANAGER');
     setEditPin('');
     setEditBizName(item.business?.name || '');
     setEditUnitAmount(item.business?.contributionAmount?.toString() || '250');
@@ -232,7 +309,7 @@ export default function AdminScreen() {
   const handleSaveEdit = () => {
     if (!selectedManager) return;
     if (!editFullName.trim()) {
-      Alert.alert('Erreur', 'Le nom du responsable ne peut pas être vide.');
+      Alert.alert('Erreur', 'Le nom ne peut pas être vide.');
       return;
     }
     if (editPin.trim().length > 0 && editPin.trim().length !== 4) {
@@ -242,7 +319,7 @@ export default function AdminScreen() {
 
     requirePinForAction(
       'Confirmation des Modifications',
-      `Saisissez votre code PIN Admin pour valider les modifications du compte et du carnet de ${selectedManager.collector.fullName}.`,
+      `Saisissez votre code PIN Admin pour valider les modifications de ${selectedManager.collector.fullName}.`,
       async () => {
         try {
           const normPhone = normalizePhoneNumber(editPhone);
@@ -251,24 +328,106 @@ export default function AdminScreen() {
             fullName: editFullName.trim(),
             phoneNumber: normPhone,
             zone: editZone.trim(),
+            role: editRole,
             pin: editPin.trim().length === 4 ? editPin.trim() : undefined,
           });
 
-          if (selectedManager.business) {
+          if (selectedManager.business && editBizName.trim()) {
             await updateBusinessDetails(selectedManager.business.id, {
               name: editBizName.trim(),
-              contributionAmount: parseFloat(editUnitAmount) || 250,
+              contributionAmount: parseInt(editUnitAmount, 10) || 250,
               totalSlots: parseInt(editSlots, 10) || 10,
             });
           }
 
           triggerSuccessFeedback();
-          Alert.alert('Succès', 'Les modifications ont été enregistrées avec succès.');
+          Alert.alert('Succès', 'Les données du compte ont été mises à jour avec succès.');
           setIsEditModalOpen(false);
           loadData();
         } catch (err: any) {
           triggerErrorFeedback();
           Alert.alert('Erreur', err?.message || 'Échec de la mise à jour.');
+        }
+      }
+    );
+  };
+
+  const handleDeleteUser = (item: ManagerFullOverview) => {
+    triggerMediumImpact();
+    Alert.alert(
+      "Supprimer l'Utilisateur",
+      `Êtes-vous sûr de vouloir supprimer définitivement le compte de ${item.collector.fullName} ? Cette action est irréversible.`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: () => {
+            requirePinForAction(
+              'Confirmation de Suppression',
+              `Saisissez votre code PIN Admin pour supprimer définitivement le compte de ${item.collector.fullName}.`,
+              async () => {
+                try {
+                  await deleteUserAccount(item.collector.id);
+                  triggerSuccessFeedback();
+                  Alert.alert('Utilisateur Supprimé', `Le compte de ${item.collector.fullName} a été supprimé.`);
+                  loadData();
+                } catch (err: any) {
+                  triggerErrorFeedback();
+                  Alert.alert('Erreur', err?.message || "Échec de la suppression.");
+                }
+              }
+            );
+          },
+        },
+      ]
+    );
+  };
+
+  // Super-Admin Transaction Cancellation Workflow
+  const handleInitiateCancelTx = (tx: Transaction) => {
+    triggerMediumImpact();
+    if (tx.isReversed || tx.type === 'REVERSAL') {
+      Alert.alert('Action Impossible', 'Cette transaction est déjà une annulation ou a déjà été annulée.');
+      return;
+    }
+    setSelectedTxToCancel(tx);
+    setCancelTxReason('');
+    setIsCancelTxModalOpen(true);
+  };
+
+  const handleConfirmCancelTx = () => {
+    if (!selectedTxToCancel) return;
+    if (!cancelTxReason.trim()) {
+      Alert.alert('Motif obligatoire', "Veuillez obligatoirement saisir la raison de l'annulation administrative.");
+      return;
+    }
+
+    setIsCancelTxModalOpen(false);
+
+    requirePinForAction(
+      "Validation de l'Annulation Admin",
+      `Saisissez votre code PIN Super-Admin pour annuler la transaction #${selectedTxToCancel.id.slice(0, 8)} (${formatCurrency(selectedTxToCancel.amount)}).`,
+      async () => {
+        try {
+          await reverseTransaction({
+            transactionId: selectedTxToCancel.id,
+            reason: cancelTxReason.trim(),
+            userRole: 'ADMIN',
+            adminId: adminProfile.phoneNumber || 'Super-Admin',
+          });
+
+          triggerSuccessFeedback();
+          Alert.alert(
+            'Transaction Annulée avec Succès',
+            `L'opération #${selectedTxToCancel.id.slice(0, 8)} a été annulée et tracée dans le journal d'audit.\n\nLes métriques de l'adhérent ont été automatiquement recalculées.`
+          );
+          loadData();
+        } catch (err: any) {
+          triggerErrorFeedback();
+          Alert.alert('Erreur', err?.message || "Échec de l'annulation administrative.");
+        } finally {
+          setSelectedTxToCancel(null);
         }
       }
     );
@@ -343,6 +502,81 @@ export default function AdminScreen() {
     }
   };
 
+  // Generate Individual Manager Business Report PDF directly from Admin
+  const handleGenerateManagerReport = async (item: ManagerFullOverview) => {
+    triggerMediumImpact();
+    setGeneratingManagerReportId(item.collector.id);
+    try {
+      const db = await getDatabase();
+      const unitAmount = item.business?.contributionAmount || 250;
+      const totalSlots = item.business?.totalSlots || 10;
+      const totalPotAmount = totalSlots * unitAmount;
+
+      const clientRows = await db.getAllAsync<{
+        id: string;
+        full_name: string;
+        phone_number: string;
+        payout_rank: number | null;
+        total_paid_amount: number;
+        current_balance: number;
+        paid_hands_count: number;
+        paid_until_date: string | null;
+        has_received_hand: number;
+        has_received_payout: number;
+      }>(
+        `SELECT id, full_name, phone_number, payout_rank, total_paid_amount, current_balance, paid_hands_count, paid_until_date, has_received_hand, has_received_payout
+         FROM clients WHERE collector_id = ? ORDER BY payout_rank ASC`,
+        [item.collector.id]
+      );
+
+      const registeredChildrenCount = clientRows.length;
+      const totalCashCollected = clientRows.reduce((sum, c) => sum + (c.total_paid_amount || c.current_balance || 0), 0);
+      const handsCollectedTotal = clientRows.reduce((sum, c) => sum + (c.paid_hands_count || Math.floor((c.total_paid_amount || c.current_balance || 0) / unitAmount)), 0);
+      const totalDistributed = clientRows.filter((c) => c.has_received_hand || c.has_received_payout).length * totalPotAmount;
+      const netReserveBalance = totalCashCollected - totalDistributed;
+      const completionRate = totalSlots > 0 ? Math.round((handsCollectedTotal / (totalSlots * Math.max(1, registeredChildrenCount))) * 100) : 0;
+
+      const pdfUri = await generateManagerBusinessReportPdf({
+        businessName: item.business?.name || `Carnet de ${item.collector.fullName}`,
+        collectorName: item.collector.fullName,
+        collectorPhone: item.collector.phoneNumber,
+        collectorZone: item.collector.zone,
+        unitAmount,
+        totalSlots,
+        registeredChildrenCount,
+        totalPotAmount,
+        cycleStartDate: item.business?.startDate || new Date().toISOString(),
+        cycleEndDate: item.business?.endDate || new Date().toISOString(),
+        handsCollectedTotal,
+        totalCashCollected,
+        totalDistributed,
+        netReserveBalance,
+        completionRate,
+        members: clientRows.map((m) => {
+          const hands = m.paid_hands_count || (unitAmount > 0 ? Math.floor((m.total_paid_amount || m.current_balance || 0) / unitAmount) : 1);
+          return {
+            rank: m.payout_rank || 1,
+            fullName: m.full_name,
+            phoneNumber: m.phone_number,
+            totalPaid: m.total_paid_amount || m.current_balance || 0,
+            handsCovered: hands,
+            coverageStatus: (m.has_received_hand || m.has_received_payout) ? 'HAND_RECEIVED' : 'PAID_TODAY',
+            hasReceivedPayout: Boolean(m.has_received_hand || m.has_received_payout),
+          };
+        }),
+        generatedAt: new Date().toISOString(),
+      });
+
+      await sharePdfFile(pdfUri, `Rapport_Carnet_${item.collector.fullName.replace(/\s+/g, '_')}.pdf`);
+      triggerSuccessFeedback();
+    } catch (err: any) {
+      triggerErrorFeedback();
+      Alert.alert('Erreur', 'Impossible de générer le rapport pour ce carnet.');
+    } finally {
+      setGeneratingManagerReportId(null);
+    }
+  };
+
   // Export Full JSON Backup
   const handleExportBackup = async () => {
     triggerMediumImpact();
@@ -366,7 +600,7 @@ export default function AdminScreen() {
 
     requirePinForAction(
       'Confirmation Restauration',
-      'ATTENTION : La restauration remplacera les données locales par celles de la sauvegarde. Un instantané de secours préalable sera conservé. Saisissez votre PIN Admin :',
+      'ATTENTION : La restauration remplacera les données locales. Saisissez votre PIN Admin :',
       async () => {
         try {
           const res = await restoreDatabaseBackup(restoreJsonInput.trim(), 'admin');
@@ -374,7 +608,7 @@ export default function AdminScreen() {
             triggerSuccessFeedback();
             Alert.alert(
               'Restauration Réussie !',
-              `Données restaurées :\n- ${res.stats.collectors} responsables\n- ${res.stats.businesses} carnets\n- ${res.stats.clients} adhérents\n- ${res.stats.transactions} transactions.`
+              `Données restaurées :\n- ${res.stats.collectors} utilisateurs\n- ${res.stats.businesses} carnets\n- ${res.stats.clients} adhérents\n- ${res.stats.transactions} transactions.`
             );
             setIsRestoreModalOpen(false);
             setRestoreJsonInput('');
@@ -391,33 +625,14 @@ export default function AdminScreen() {
     );
   };
 
-  // Trigger Manual Sync
-  const handleManualSyncTrigger = async () => {
-    triggerLightImpact();
-    setIsManualSyncing(true);
-    try {
-      const res = await triggerManualSync();
-      if (res.success) {
-        triggerSuccessFeedback();
-        Alert.alert('Synchronisation', 'Synchronisation avec Supabase terminée.');
-      } else {
-        triggerErrorFeedback();
-        Alert.alert('Notice Synchronisation', res.message);
-      }
-      await loadData();
-    } finally {
-      setIsManualSyncing(false);
-    }
-  };
-
   const handleOpenBusinessAsManager = async (item: ManagerFullOverview) => {
     triggerLightImpact();
     if (item.business) {
       await setActiveCollectorId(item.collector.id);
       await setActiveBusinessId(item.business.id);
       Alert.alert(
-        'Espace Gestionnaire Activé',
-        `Vous êtes maintenant positionné sur le carnet "${item.business.name}" de ${item.collector.fullName}.`,
+        'Espace Activé',
+        `Vous êtes maintenant positionné sur le carnet "${item.business.name}" de ${item.collector.fullName} (${item.collector.role || 'MANAGER'}).`,
         [
           { text: 'Annuler', style: 'cancel' },
           {
@@ -444,12 +659,19 @@ export default function AdminScreen() {
     ]);
   };
 
-  // Filtered Managers
-  const filteredManagers = useMemo(() => {
+  // Filtered Users
+  const filteredUsers = useMemo(() => {
     let result = managers;
 
     if (filterStatus !== 'ALL') {
       result = result.filter((m) => m.collector.status === filterStatus);
+    }
+
+    if (filterRole !== 'ALL') {
+      result = result.filter((m) => {
+        const uRole = m.collector.role || 'MANAGER';
+        return uRole === filterRole;
+      });
     }
 
     if (searchQuery.trim()) {
@@ -464,7 +686,7 @@ export default function AdminScreen() {
     }
 
     return result;
-  }, [managers, filterStatus, searchQuery]);
+  }, [managers, filterStatus, filterRole, searchQuery]);
 
   // Filtered Audit Logs
   const filteredAuditLogs = useMemo(() => {
@@ -512,7 +734,7 @@ export default function AdminScreen() {
       <View style={styles.kpiContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.kpiScroll}>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>TOTAL GESTIONNAIRES</Text>
+            <Text style={styles.kpiLabel}>TOTAL UTILISATEURS</Text>
             <Text style={styles.kpiValue}>{stats.totalManagers}</Text>
             <Text style={styles.kpiSub}>
               {stats.activeManagers} actifs · {stats.pendingManagers} en attente
@@ -521,43 +743,43 @@ export default function AdminScreen() {
 
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>TOTAL COTISÉ PLATEFORME</Text>
-            <Text style={styles.kpiValueGreen}>{formatCurrency(stats.totalPlatformCollected)}</Text>
-            <Text style={styles.kpiSub}>{stats.totalTransactionsCount} transactions</Text>
+            <Text style={styles.kpiGreen}>{formatCurrency(stats.totalPlatformCollected)}</Text>
+            <Text style={styles.kpiSub}>{stats.totalTransactionsCount} opérations</Text>
           </View>
 
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>TOTAL DISTRIBUÉ (MAINS)</Text>
-            <Text style={styles.kpiValueAmber}>{formatCurrency(stats.totalPlatformDistributed)}</Text>
-            <Text style={styles.kpiSub}>{stats.totalBusinesses} carnets SOL</Text>
+            <Text style={styles.kpiRed}>{formatCurrency(stats.totalPlatformDistributed)}</Text>
+            <Text style={styles.kpiSub}>Mains payées aux adhérents</Text>
           </View>
 
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>RÉSERVE NETTE LOCALE</Text>
-            <Text style={styles.kpiValuePrimary}>{formatCurrency(stats.platformNetBalance)}</Text>
-            <Text style={styles.kpiSub}>{stats.totalClients} adhérents inscrits</Text>
+            <Text style={styles.kpiValue}>{formatCurrency(stats.platformNetBalance)}</Text>
+            <Text style={styles.kpiSub}>Solde net disponible</Text>
           </View>
         </ScrollView>
       </View>
 
-      {/* 5 Main Navigation Tabs */}
-      <View style={styles.tabsWrapper}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow}>
+      {/* Tab Navigation */}
+      <View style={styles.tabBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScroll}>
           <TouchableOpacity
             activeOpacity={0.7}
             onPress={() => {
               triggerLightImpact();
-              setActiveTab('MANAGERS');
+              setActiveTab('USERS');
             }}
-            style={[styles.tabBtn, activeTab === 'MANAGERS' && styles.tabBtnActive]}
+            style={[styles.tabBtn, activeTab === 'USERS' && styles.tabBtnActive]}
           >
             <Icon
               name="user"
               size={13}
-              color={activeTab === 'MANAGERS' ? '#FFFFFF' : '#64748B'}
+              color={activeTab === 'USERS' ? '#FFFFFF' : '#64748B'}
               style={{ marginRight: 4 }}
             />
-            <Text style={[styles.tabBtnText, activeTab === 'MANAGERS' && styles.tabBtnTextActive]}>
-              Responsables ({managers.length})
+            <Text style={[styles.tabBtnText, activeTab === 'USERS' && styles.tabBtnTextActive]}>
+              Utilisateurs ({managers.length})
             </Text>
           </TouchableOpacity>
 
@@ -639,15 +861,32 @@ export default function AdminScreen() {
         </ScrollView>
       </View>
 
-      {/* TAB 1: MANAGERS */}
-      {activeTab === 'MANAGERS' && (
+      {/* TAB 1: USERS (GESTION DES UTILISATEURS & ROLES) */}
+      {activeTab === 'USERS' && (
         <>
           <View style={styles.searchSection}>
+            {/* Top Action Row with Create User Button */}
+            <View style={styles.userSectionHeader}>
+              <View>
+                <Text style={styles.userSectionTitle}>RÉPERTOIRE DES COMPTES</Text>
+                <Text style={styles.userSectionSub}>{filteredUsers.length} utilisateur(s) trouvé(s)</Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleOpenCreateModal}
+                style={styles.createUserBtn}
+              >
+                <Icon name="check" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                <Text style={styles.createUserBtnText}>+ Créer Utilisateur</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Search Input */}
             <View style={styles.searchBar}>
               <Icon name="search" size={16} color="#64748B" style={{ marginRight: 8 }} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Rechercher responsable, téléphone, carnet, zone..."
+                placeholder="Rechercher nom, téléphone, rôle, zone..."
                 placeholderTextColor="#94A3B8"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -659,44 +898,82 @@ export default function AdminScreen() {
               )}
             </View>
 
+            {/* Role Filter Chips */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
               <TouchableOpacity
-                onPress={() => setFilterStatus('ALL')}
-                style={[styles.filterChip, filterStatus === 'ALL' && styles.filterChipActive]}
+                onPress={() => setFilterRole('ALL')}
+                style={[styles.filterChip, filterRole === 'ALL' && styles.filterChipActive]}
               >
-                <Text style={[styles.filterChipText, filterStatus === 'ALL' && styles.filterChipTextActive]}>
-                  Tous ({managers.length})
+                <Text style={[styles.filterChipText, filterRole === 'ALL' && styles.filterChipTextActive]}>
+                  Tous Rôles
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setFilterRole('MANAGER')}
+                style={[styles.filterChip, filterRole === 'MANAGER' && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, filterRole === 'MANAGER' && styles.filterChipTextActive]}>
+                  💼 Gestionnaires
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setFilterRole('READ_ONLY')}
+                style={[styles.filterChip, filterRole === 'READ_ONLY' && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, filterRole === 'READ_ONLY' && styles.filterChipTextActive]}>
+                  👁️ Lecture Seule
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setFilterRole('ADMIN')}
+                style={[styles.filterChip, filterRole === 'ADMIN' && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, filterRole === 'ADMIN' && styles.filterChipTextActive]}>
+                  🛡️ Super-Admins
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            {/* Status Filter Chips */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.filterChipsRow, { marginTop: 6 }]}>
+              <TouchableOpacity
+                onPress={() => setFilterStatus('ALL')}
+                style={[styles.filterChipSubtle, filterStatus === 'ALL' && styles.filterChipSubtleActive]}
+              >
+                <Text style={[styles.filterChipSubtleText, filterStatus === 'ALL' && styles.filterChipSubtleTextActive]}>
+                  Tous Statuts
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setFilterStatus('ACTIVE')}
-                style={[styles.filterChip, filterStatus === 'ACTIVE' && styles.filterChipActive, styles.filterChipSuccess]}
+                style={[styles.filterChipSubtle, filterStatus === 'ACTIVE' && styles.filterChipSubtleActive]}
               >
-                <Text style={[styles.filterChipText, filterStatus === 'ACTIVE' && styles.filterChipTextActive]}>
+                <Text style={[styles.filterChipSubtleText, filterStatus === 'ACTIVE' && styles.filterChipSubtleTextActive]}>
                   Actifs ({stats.activeManagers})
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setFilterStatus('PENDING_APPROVAL')}
-                style={[styles.filterChip, filterStatus === 'PENDING_APPROVAL' && styles.filterChipActive, styles.filterChipWarning]}
+                style={[styles.filterChipSubtle, filterStatus === 'PENDING_APPROVAL' && styles.filterChipSubtleActive]}
               >
-                <Text style={[styles.filterChipText, filterStatus === 'PENDING_APPROVAL' && styles.filterChipTextActive]}>
+                <Text style={[styles.filterChipSubtleText, filterStatus === 'PENDING_APPROVAL' && styles.filterChipSubtleTextActive]}>
                   En attente ({stats.pendingManagers})
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setFilterStatus('SUSPENDED')}
-                style={[styles.filterChip, filterStatus === 'SUSPENDED' && styles.filterChipActive, styles.filterChipDanger]}
+                style={[styles.filterChipSubtle, filterStatus === 'SUSPENDED' && styles.filterChipSubtleActive]}
               >
-                <Text style={[styles.filterChipText, filterStatus === 'SUSPENDED' && styles.filterChipTextActive]}>
+                <Text style={[styles.filterChipSubtleText, filterStatus === 'SUSPENDED' && styles.filterChipSubtleTextActive]}>
                   Suspendus ({stats.suspendedManagers})
                 </Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
 
+          {/* Users List */}
           <FlatList
-            data={filteredManagers}
+            data={filteredUsers}
             keyExtractor={(item) => item.collector.id}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[SOL_COLORS.primary]} />}
             contentContainerStyle={styles.listContent}
@@ -704,12 +981,29 @@ export default function AdminScreen() {
               const { collector, business, clientsCount, totalCollected, totalDistributed } = item;
               const isPending = collector.status === 'PENDING_APPROVAL';
               const isSuspended = collector.status === 'SUSPENDED';
+              const role = (collector.role as UserRole) || 'MANAGER';
+              const isReadOnly = role === 'READ_ONLY' || role === 'USER';
+              const isAdmin = role === 'ADMIN';
 
               return (
                 <View style={[styles.managerCard, isPending && styles.managerCardPending, isSuspended && styles.managerCardSuspended]}>
+                  {/* Top Identity Row */}
                   <View style={styles.managerTopRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.managerName}>{collector.fullName}</Text>
+                    <View style={styles.avatarCircleSmall}>
+                      <Text style={styles.avatarTextSmall}>{getInitials(collector.fullName)}</Text>
+                    </View>
+
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={styles.managerName}>{collector.fullName}</Text>
+                        {/* Role Badge */}
+                        <View style={[styles.roleBadge, isAdmin ? styles.roleBadgeAdmin : isReadOnly ? styles.roleBadgeReadOnly : styles.roleBadgeManager]}>
+                          <Text style={[styles.roleBadgeText, isAdmin ? styles.roleBadgeTextAdmin : isReadOnly ? styles.roleBadgeTextReadOnly : styles.roleBadgeTextManager]}>
+                            {isAdmin ? '🛡️ ADMIN' : isReadOnly ? '👁️ LECTURE SEULE' : '💼 GESTIONNAIRE'}
+                          </Text>
+                        </View>
+                      </View>
+
                       <Text style={styles.managerPhone}>
                         {collector.phoneNumber} · PIN : <Text style={styles.pinBold}>**** (Chiffré)</Text>
                       </Text>
@@ -721,6 +1015,7 @@ export default function AdminScreen() {
                       )}
                     </View>
 
+                    {/* Status Badge */}
                     <View style={[styles.statusBadge, isPending ? styles.statusBadgePending : isSuspended ? styles.statusBadgeSuspended : styles.statusBadgeActive]}>
                       <Text style={[styles.statusBadgeText, isPending ? styles.statusBadgeTextPending : isSuspended ? styles.statusBadgeTextSuspended : styles.statusBadgeTextActive]}>
                         {isPending ? 'EN ATTENTE' : isSuspended ? 'SUSPENDU' : 'ACTIF'}
@@ -728,21 +1023,34 @@ export default function AdminScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.managerStatsRow}>
-                    <View style={styles.managerStatItem}>
-                      <Text style={styles.managerStatLabel}>ENFANTS</Text>
-                      <Text style={styles.managerStatValue}>{clientsCount}</Text>
+                  {/* Financial Stats Row (Only if has carnet or active transactions) */}
+                  {!isReadOnly && (
+                    <View style={styles.managerStatsRow}>
+                      <View style={styles.managerStatItem}>
+                        <Text style={styles.managerStatLabel}>ENFANTS</Text>
+                        <Text style={styles.managerStatValue}>{clientsCount}</Text>
+                      </View>
+                      <View style={styles.managerStatItem}>
+                        <Text style={styles.managerStatLabel}>TOTAL COTISÉ</Text>
+                        <Text style={styles.managerStatGreen}>{formatCurrency(totalCollected)}</Text>
+                      </View>
+                      <View style={styles.managerStatItem}>
+                        <Text style={styles.managerStatLabel}>TOTAL DISTRIBUÉ</Text>
+                        <Text style={styles.managerStatRed}>{formatCurrency(totalDistributed)}</Text>
+                      </View>
                     </View>
-                    <View style={styles.managerStatItem}>
-                      <Text style={styles.managerStatLabel}>TOTAL COTISÉ</Text>
-                      <Text style={styles.managerStatGreen}>{formatCurrency(totalCollected)}</Text>
-                    </View>
-                    <View style={styles.managerStatItem}>
-                      <Text style={styles.managerStatLabel}>TOTAL DISTRIBUÉ</Text>
-                      <Text style={styles.managerStatRed}>{formatCurrency(totalDistributed)}</Text>
-                    </View>
-                  </View>
+                  )}
 
+                  {isReadOnly && (
+                    <View style={styles.readOnlyNoticeBanner}>
+                      <Icon name="shield" size={13} color="#64748B" style={{ marginRight: 6 }} />
+                      <Text style={styles.readOnlyNoticeText}>
+                        Compte en mode consultation seule (accès aux rapports et statistiques).
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Actions Row */}
                   <View style={styles.managerActionRow}>
                     <TouchableOpacity onPress={() => handleCallManager(collector.phoneNumber)} style={styles.actionCircleBtn}>
                       <Icon name="phone" size={14} color="#0284C7" />
@@ -752,7 +1060,7 @@ export default function AdminScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => handleOpenEditModal(item)} style={styles.actionEditBtn}>
                       <Icon name="user" size={12} color="#475569" style={{ marginRight: 4 }} />
-                      <Text style={styles.actionEditText}>Modifier</Text>
+                      <Text style={styles.actionEditText}>Modifier / Rôle</Text>
                     </TouchableOpacity>
                     {isPending && (
                       <TouchableOpacity onPress={() => handleQuickStatusChange(collector.id, collector.fullName, 'ACTIVE')} style={styles.actionApproveBtn}>
@@ -772,12 +1080,28 @@ export default function AdminScreen() {
                         <Text style={styles.actionReactivateText}>Réactiver</Text>
                       </TouchableOpacity>
                     )}
+                    {business && !isReadOnly && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => handleGenerateManagerReport(item)}
+                        disabled={generatingManagerReportId === collector.id}
+                        style={styles.actionReportBtn}
+                      >
+                        <Icon name="print" size={12} color="#7C3AED" style={{ marginRight: 4 }} />
+                        <Text style={styles.actionReportText}>
+                          {generatingManagerReportId === collector.id ? 'PDF...' : 'Rapport PDF'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                     {business && (
                       <TouchableOpacity onPress={() => handleOpenBusinessAsManager(item)} style={styles.actionSwitchBtn}>
                         <Icon name="arrow-right" size={12} color="#4338CA" style={{ marginRight: 4 }} />
                         <Text style={styles.actionSwitchText}>Ouvrir</Text>
                       </TouchableOpacity>
                     )}
+                    <TouchableOpacity onPress={() => handleDeleteUser(item)} style={styles.actionDeleteBtn}>
+                      <Icon name="close" size={12} color="#DC2626" />
+                    </TouchableOpacity>
                   </View>
                 </View>
               );
@@ -786,7 +1110,7 @@ export default function AdminScreen() {
         </>
       )}
 
-      {/* TAB 2: TRANSACTIONS */}
+      {/* TAB 2: TRANSACTIONS WITH SUPER-ADMIN CANCELLATION */}
       {activeTab === 'TRANSACTIONS' && (
         <FlatList
           data={transactions}
@@ -803,17 +1127,36 @@ export default function AdminScreen() {
                     <Icon name={isReversal ? 'arrow-left' : isPayout ? 'arrow-right' : 'arrow-left'} size={16} color="#FFFFFF" />
                   </View>
                   <View style={{ marginLeft: 10, flex: 1 }}>
-                    <Text style={styles.txClientName}>{item.clientName || 'Adhérent inconnu'}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.txClientName}>{item.clientName || 'Adhérent inconnu'}</Text>
+                      {isReversal && (
+                        <View style={styles.txCancelledBadge}>
+                          <Text style={styles.txCancelledBadgeText}>ANNULÉE</Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={styles.txNote}>{item.note || item.type}</Text>
                     <Text style={styles.txDate}>{formatDate(item.createdAtLocal)}</Text>
                   </View>
                 </View>
-                <View style={{ alignItems: 'flex-end' }}>
+
+                <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
                   <Text style={[styles.txAmount, isReversal ? styles.txAmountReversal : isPayout ? styles.txAmountPayout : styles.txAmountDeposit]}>
                     {isReversal ? '-' : isPayout ? '-' : '+'}
                     {formatCurrency(item.amount)}
                   </Text>
                   <Text style={styles.txRef}>#{item.id.slice(0, 8)}</Text>
+
+                  {!isReversal && (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => handleInitiateCancelTx(item)}
+                      style={styles.adminCancelTxBtn}
+                    >
+                      <Icon name="alert" size={11} color="#DC2626" style={{ marginRight: 3 }} />
+                      <Text style={styles.adminCancelTxBtnText}>Annuler</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             );
@@ -829,17 +1172,14 @@ export default function AdminScreen() {
               <TouchableOpacity onPress={() => setAuditFilter('ALL')} style={[styles.filterChip, auditFilter === 'ALL' && styles.filterChipActive]}>
                 <Text style={[styles.filterChipText, auditFilter === 'ALL' && styles.filterChipTextActive]}>Tous ({auditLogs.length})</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setAuditFilter('CREATE_CONTRIBUTION')} style={[styles.filterChip, auditFilter === 'CREATE_CONTRIBUTION' && styles.filterChipActive]}>
-                <Text style={[styles.filterChipText, auditFilter === 'CREATE_CONTRIBUTION' && styles.filterChipTextActive]}>Cotisations</Text>
+              <TouchableOpacity onPress={() => setAuditFilter('CREATE_CLIENT')} style={[styles.filterChip, auditFilter === 'CREATE_CLIENT' && styles.filterChipActive]}>
+                <Text style={[styles.filterChipText, auditFilter === 'CREATE_CLIENT' && styles.filterChipTextActive]}>Inscriptions</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setAuditFilter('REVERSE_CONTRIBUTION')} style={[styles.filterChip, auditFilter === 'REVERSE_CONTRIBUTION' && styles.filterChipActive, styles.filterChipDanger]}>
-                <Text style={[styles.filterChipText, auditFilter === 'REVERSE_CONTRIBUTION' && styles.filterChipTextActive]}>Annulations</Text>
+              <TouchableOpacity onPress={() => setAuditFilter('PAYOUT_OUT_OF_ORDER')} style={[styles.filterChip, auditFilter === 'PAYOUT_OUT_OF_ORDER' && styles.filterChipActive]}>
+                <Text style={[styles.filterChipText, auditFilter === 'PAYOUT_OUT_OF_ORDER' && styles.filterChipTextActive]}>Décaissements</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setAuditFilter('CREATE_PAYOUT')} style={[styles.filterChip, auditFilter === 'CREATE_PAYOUT' && styles.filterChipActive]}>
-                <Text style={[styles.filterChipText, auditFilter === 'CREATE_PAYOUT' && styles.filterChipTextActive]}>Mains Remises</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setAuditFilter('SUSPEND_MANAGER')} style={[styles.filterChip, auditFilter === 'SUSPEND_MANAGER' && styles.filterChipActive, styles.filterChipDanger]}>
-                <Text style={[styles.filterChipText, auditFilter === 'SUSPEND_MANAGER' && styles.filterChipTextActive]}>Suspensions</Text>
+              <TouchableOpacity onPress={() => setAuditFilter('REVERSE_TRANSACTION')} style={[styles.filterChip, auditFilter === 'REVERSE_TRANSACTION' && styles.filterChipActive]}>
+                <Text style={[styles.filterChipText, auditFilter === 'REVERSE_TRANSACTION' && styles.filterChipTextActive]}>Annulations</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -851,16 +1191,17 @@ export default function AdminScreen() {
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => (
               <View style={styles.auditCard}>
-                <View style={styles.auditTopRow}>
-                  <View style={styles.auditActionTag}>
+                <View style={styles.auditHeader}>
+                  <View style={styles.auditActionBadge}>
                     <Text style={styles.auditActionText}>{item.action}</Text>
                   </View>
                   <Text style={styles.auditDate}>{formatDate(item.createdAt)}</Text>
                 </View>
-                <Text style={styles.auditUser}>
-                  Opérateur : <Text style={styles.auditUserBold}>{item.userRole} [{item.userId.slice(0, 8)}]</Text> · Cible : {item.entityType} #{item.entityId.slice(0, 8)}
-                </Text>
-                {item.reason && <Text style={styles.auditReason}>Motif : {item.reason}</Text>}
+                <Text style={styles.auditReason}>{item.reason || 'Aucun motif'}</Text>
+                <View style={styles.auditFooter}>
+                  <Text style={styles.auditUser}>Par : {item.userRole} ({item.userId.slice(0, 8)})</Text>
+                  <Text style={styles.auditEntity}>Cible : {item.entityType} #{item.entityId.slice(0, 8)}</Text>
+                </View>
               </View>
             )}
           />
@@ -869,44 +1210,40 @@ export default function AdminScreen() {
 
       {/* TAB 4: SYNC STATUS */}
       {activeTab === 'SYNC_STATUS' && (
-        <ScrollView contentContainerStyle={styles.settingsScrollContent}>
-          <View style={styles.settingsCard}>
-            <Text style={styles.settingsCardTitle}>ÉTAT DE LA SYNCHRONISATION</Text>
-            <Text style={styles.settingsCardSub}>
-              Suivi en temps réel des opérations locales en attente d'envoi vers Supabase.
-            </Text>
-
-            <View style={styles.syncStatsGrid}>
-              <View style={styles.syncStatBox}>
-                <Text style={styles.syncStatLabel}>EN ATTENTE</Text>
-                <Text style={styles.syncStatValueAmber}>{syncSummary.pendingCount}</Text>
+        <ScrollView contentContainerStyle={styles.syncScrollContent}>
+          <View style={styles.syncCard}>
+            <View style={styles.syncHeaderRow}>
+              <View>
+                <Text style={styles.syncCardTitle}>État de Synchronisation Supabase</Text>
+                <Text style={styles.syncCardSub}>
+                  {syncSummary.isOnline ? '🟢 En ligne (Cloud connecté)' : '🔴 Hors-ligne'}
+                </Text>
               </View>
-              <View style={styles.syncStatBox}>
-                <Text style={styles.syncStatLabel}>SYNCHRONISÉES</Text>
-                <Text style={styles.syncStatValueGreen}>{syncSummary.syncedCount}</Text>
-              </View>
-              <View style={styles.syncStatBox}>
-                <Text style={styles.syncStatLabel}>ERREURS</Text>
-                <Text style={styles.syncStatValueRed}>{syncSummary.failedCount}</Text>
-              </View>
+              <TouchableOpacity activeOpacity={0.8} onPress={handleRefresh} style={styles.syncActionBtn}>
+                <Icon name="sync" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.syncActionBtnText}>Actualiser</Text>
+              </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={handleManualSyncTrigger}
-              disabled={isManualSyncing}
-              style={styles.manualSyncBtn}
-            >
-              <Icon name="sync" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.manualSyncBtnText}>
-                {isManualSyncing ? 'Synchronisation...' : 'Relancer la Synchronisation Maintenant'}
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.syncMetricsGrid}>
+              <View style={styles.syncMetricBox}>
+                <Text style={styles.syncMetricLabel}>EN ATTENTE</Text>
+                <Text style={styles.syncMetricYellow}>{syncSummary.pendingCount}</Text>
+              </View>
+              <View style={styles.syncMetricBox}>
+                <Text style={styles.syncMetricLabel}>SYNCHRONISÉS</Text>
+                <Text style={styles.syncMetricGreen}>{syncSummary.syncedCount}</Text>
+              </View>
+              <View style={styles.syncMetricBox}>
+                <Text style={styles.syncMetricLabel}>ÉCHECS</Text>
+                <Text style={styles.syncMetricRed}>{syncSummary.failedCount}</Text>
+              </View>
+            </View>
           </View>
 
           {syncSummary.failedErrors.length > 0 && (
-            <View style={styles.settingsCard}>
-              <Text style={styles.settingsCardTitle}>DERNIÈRES ERREURS ENREGISTRÉES</Text>
+            <View style={styles.errorLogCard}>
+              <Text style={styles.errorLogTitle}>JOURNAL DES DERNIÈRES ERREURS</Text>
               {syncSummary.failedErrors.map((err, idx) => (
                 <Text key={idx} style={styles.errorLogText}>• {err}</Text>
               ))}
@@ -941,7 +1278,7 @@ export default function AdminScreen() {
           <View style={styles.settingsCard}>
             <Text style={styles.settingsCardTitle}>SAUVEGARDE ET RESTAURATION</Text>
             <Text style={styles.settingsCardSub}>
-              Exportez ou restaurez l'intégralité de la base de données locale (responsables, carnets, adhérents, transactions, audit logs).
+              Exportez ou restaurez l'intégralité de la base de données locale (utilisateurs, carnets, adhérents, transactions, audit logs).
             </Text>
             <View style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity activeOpacity={0.8} onPress={handleExportBackup} style={[styles.backupBtn, { flex: 1 }]}>
@@ -957,12 +1294,136 @@ export default function AdminScreen() {
         </ScrollView>
       )}
 
-      {/* Edit Manager Modal */}
+      {/* Create User Modal */}
+      <Modal visible={isCreateUserModalOpen} transparent animationType="fade" onRequestClose={() => setIsCreateUserModalOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>Créer un Nouvel Utilisateur</Text>
+              <Text style={styles.modalSub}>Définissez son rôle et ses accès sur la plateforme.</Text>
+
+              {/* Role Selection */}
+              <Text style={styles.formLabel}>RÔLE SUR LA PLATEFORME *</Text>
+              <View style={styles.rolePickerRow}>
+                <TouchableOpacity
+                  onPress={() => setNewRole('MANAGER')}
+                  style={[styles.roleOption, newRole === 'MANAGER' && styles.roleOptionActive]}
+                >
+                  <Text style={[styles.roleOptionText, newRole === 'MANAGER' && styles.roleOptionTextActive]}>
+                    💼 Gestionnaire
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setNewRole('READ_ONLY')}
+                  style={[styles.roleOption, newRole === 'READ_ONLY' && styles.roleOptionActive]}
+                >
+                  <Text style={[styles.roleOptionText, newRole === 'READ_ONLY' && styles.roleOptionTextActive]}>
+                    👁️ Consultation
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setNewRole('ADMIN')}
+                  style={[styles.roleOption, newRole === 'ADMIN' && styles.roleOptionActive]}
+                >
+                  <Text style={[styles.roleOptionText, newRole === 'ADMIN' && styles.roleOptionTextActive]}>
+                    🛡️ Admin
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>NOM COMPLET *</Text>
+                <TextInput style={styles.formInput} value={newFullName} onChangeText={setNewFullName} placeholder="Ex: Pierre Richard Joseph" />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>TÉLÉPHONE (+509...) *</Text>
+                <TextInput style={styles.formInput} value={newPhone} onChangeText={setNewPhone} placeholder="+509 3X XX XX XX" keyboardType="phone-pad" />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>ZONE / MARCHÉ</Text>
+                <TextInput style={styles.formInput} value={newZone} onChangeText={setNewZone} placeholder="Ex: Marché Salomon" />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>CODE PIN (4 CHIFFRES) *</Text>
+                <TextInput style={styles.formInput} value={newPin} onChangeText={setNewPin} placeholder="4 chiffres" keyboardType="numeric" maxLength={4} />
+              </View>
+
+              {newRole === 'MANAGER' && (
+                <>
+                  <Text style={[styles.formLabel, { marginTop: 8 }]}>CONFIGURATION DU CARNET ASSOCIÉ</Text>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.formLabel}>NOM DU CARNET</Text>
+                    <TextInput style={styles.formInput} value={newBizName} onChangeText={setNewBizName} placeholder="Ex: Sol Mache Salomon 2026" />
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <View style={[styles.formGroup, { flex: 1 }]}>
+                      <Text style={styles.formLabel}>VALEUR PAR MAIN (HTG)</Text>
+                      <TextInput style={styles.formInput} value={newUnitAmount} onChangeText={setNewUnitAmount} keyboardType="numeric" />
+                    </View>
+                    <View style={[styles.formGroup, { flex: 1 }]}>
+                      <Text style={styles.formLabel}>SLOTS PRÉVUS</Text>
+                      <TextInput style={styles.formInput} value={newSlots} onChangeText={setNewSlots} keyboardType="numeric" />
+                    </View>
+                  </View>
+                </>
+              )}
+
+              <View style={styles.modalBtnRow}>
+                <TouchableOpacity onPress={() => setIsCreateUserModalOpen(false)} style={styles.modalCancelBtn}>
+                  <Text style={styles.modalCancelBtnText}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleCreateNewUser} style={styles.modalConfirmBtn}>
+                  <Text style={styles.modalConfirmBtnText}>Créer avec PIN</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit User Modal */}
       <Modal visible={isEditModalOpen} transparent animationType="fade" onRequestClose={() => setIsEditModalOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalTitle}>Modifier le Responsable & Carnet</Text>
+              <Text style={styles.modalTitle}>Modifier l'Utilisateur</Text>
+
+              {/* Role Selection */}
+              <Text style={styles.formLabel}>RÔLE ATTRIBUÉ</Text>
+              <View style={styles.rolePickerRow}>
+                <TouchableOpacity
+                  onPress={() => setEditRole('MANAGER')}
+                  style={[styles.roleOption, editRole === 'MANAGER' && styles.roleOptionActive]}
+                >
+                  <Text style={[styles.roleOptionText, editRole === 'MANAGER' && styles.roleOptionTextActive]}>
+                    💼 Gestionnaire
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setEditRole('READ_ONLY')}
+                  style={[styles.roleOption, editRole === 'READ_ONLY' && styles.roleOptionActive]}
+                >
+                  <Text style={[styles.roleOptionText, editRole === 'READ_ONLY' && styles.roleOptionTextActive]}>
+                    👁️ Consultation
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setEditRole('ADMIN')}
+                  style={[styles.roleOption, editRole === 'ADMIN' && styles.roleOptionActive]}
+                >
+                  <Text style={[styles.roleOptionText, editRole === 'ADMIN' && styles.roleOptionTextActive]}>
+                    🛡️ Admin
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>NOM COMPLET</Text>
                 <TextInput style={styles.formInput} value={editFullName} onChangeText={setEditFullName} placeholder="Nom complet" />
@@ -977,7 +1438,7 @@ export default function AdminScreen() {
               </View>
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>RÉINITIALISER PIN (4 CHIFFRES)</Text>
-                <TextInput style={styles.formInput} value={editPin} onChangeText={setEditPin} placeholder="4 chiffres pour réinitialiser" keyboardType="numeric" maxLength={4} />
+                <TextInput style={styles.formInput} value={editPin} onChangeText={setEditPin} placeholder="Laisser vide ou 4 chiffres" keyboardType="numeric" maxLength={4} />
               </View>
               <View style={styles.modalBtnRow}>
                 <TouchableOpacity onPress={() => setIsEditModalOpen(false)} style={styles.modalCancelBtn}>
@@ -988,6 +1449,46 @@ export default function AdminScreen() {
                 </TouchableOpacity>
               </View>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Super-Admin Transaction Cancellation Modal */}
+      <Modal visible={isCancelTxModalOpen} transparent animationType="fade" onRequestClose={() => setIsCancelTxModalOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Annulation Administrative</Text>
+            <Text style={styles.modalSub}>
+              Opération #{selectedTxToCancel?.id.slice(0, 8)} · {selectedTxToCancel?.clientName || 'Adhérent'} · {formatCurrency(selectedTxToCancel?.amount || 0)}
+            </Text>
+
+            <View style={styles.cancellationWarningBox}>
+              <Icon name="shield" size={16} color="#DC2626" style={{ marginRight: 8 }} />
+              <Text style={styles.cancellationWarningText}>
+                Cette opération ne supprime pas physiquement l'enregistrement. Une écriture d'annulation certifiée est générée et le solde/échéance de l'adhérent est recalculé.
+              </Text>
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>MOTIF OBLIGATOIRE DE L'ANNULATION *</Text>
+              <TextInput
+                style={[styles.formInput, { height: 75, textAlignVertical: 'top', paddingTop: 8 }]}
+                value={cancelTxReason}
+                onChangeText={setCancelTxReason}
+                placeholder="Ex: Erreur de saisie de montant / doublon..."
+                placeholderTextColor="#94A3B8"
+                multiline
+              />
+            </View>
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity onPress={() => setIsCancelTxModalOpen(false)} style={styles.modalCancelBtn}>
+                <Text style={styles.modalCancelBtnText}>Abandonner</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleConfirmCancelTx} style={styles.restoreConfirmBtn}>
+                <Text style={styles.modalConfirmBtnText}>Annuler avec PIN Admin</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1060,321 +1561,694 @@ export default function AdminScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F1F5F9' },
+  container: {
+    flex: 1,
+    backgroundColor: SOL_COLORS.background,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#0F172A',
+    paddingTop: 12,
+    paddingBottom: 14,
+    backgroundColor: SOL_COLORS.secondary,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+    ...SHADOWS.sm,
   },
-  headerLeft: { flex: 1 },
+  headerLeft: {
+    flex: 1,
+  },
   adminBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#DC2626',
-    alignSelf: 'flex-start',
+    backgroundColor: '#334155',
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
+    paddingVertical: 3,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
     marginBottom: 4,
   },
-  adminBadgeText: { fontSize: 9, fontWeight: '900', color: '#FFFFFF', letterSpacing: 0.5 },
-  headerTitle: { fontSize: 18, fontWeight: '900', color: '#FFFFFF' },
-  headerSub: { fontSize: 11, color: '#94A3B8', fontWeight: '500' },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  adminBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: SOL_COLORS.primaryLight,
+    letterSpacing: 0.5,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: -0.3,
+  },
+  headerSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 1,
+    fontWeight: '600',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   pdfExportBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#EFF6FF',
+    backgroundColor: SOL_COLORS.infoLight,
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
+    paddingVertical: 7,
+    borderRadius: 10,
   },
-  pdfExportText: { fontSize: 11, fontWeight: '800', color: '#1D4ED8' },
+  pdfExportText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: SOL_COLORS.info,
+  },
   logoutBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#FEF2F2',
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#334155',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  kpiContainer: { backgroundColor: '#0F172A', paddingBottom: 12 },
-  kpiScroll: { paddingHorizontal: 16, gap: 10 },
+  kpiContainer: {
+    backgroundColor: SOL_COLORS.secondary,
+    paddingBottom: 12,
+  },
+  kpiScroll: {
+    paddingHorizontal: 16,
+    gap: 10,
+  },
   kpiCard: {
     backgroundColor: '#1E293B',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 12,
     minWidth: 140,
     borderWidth: 1,
     borderColor: '#334155',
   },
-  kpiLabel: { fontSize: 9, fontWeight: '800', color: '#94A3B8', letterSpacing: 0.5 },
-  kpiValue: { fontSize: 18, fontWeight: '900', color: '#FFFFFF', marginTop: 2 },
-  kpiValueGreen: { fontSize: 18, fontWeight: '900', color: '#059669', marginTop: 2 },
-  kpiValueAmber: { fontSize: 18, fontWeight: '900', color: '#D97706', marginTop: 2 },
-  kpiValuePrimary: { fontSize: 18, fontWeight: '900', color: SOL_COLORS.primary, marginTop: 2 },
-  kpiSub: { fontSize: 10, color: '#64748B', fontWeight: '600', marginTop: 2 },
-  tabsWrapper: { backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#E2E8F0' },
-  tabsRow: { flexDirection: 'row', paddingHorizontal: 12, paddingVertical: 8, gap: 6 },
+  kpiLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#94A3B8',
+    letterSpacing: 0.3,
+  },
+  kpiValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 4,
+  },
+  kpiGreen: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#34D399',
+    marginTop: 4,
+  },
+  kpiRed: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#F87171',
+    marginTop: 4,
+  },
+  kpiSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  tabBar: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: SOL_COLORS.border,
+  },
+  tabScroll: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 6,
+  },
   tabBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
+    paddingVertical: 7,
+    borderRadius: 12,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
   },
-  tabBtnActive: { backgroundColor: SOL_COLORS.primary },
-  tabBtnText: { fontSize: 11, fontWeight: '800', color: '#64748B' },
-  tabBtnTextActive: { color: '#FFFFFF' },
-  searchSection: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6, backgroundColor: '#FFFFFF' },
+  tabBtnActive: {
+    backgroundColor: SOL_COLORS.primary,
+    borderColor: SOL_COLORS.primary,
+  },
+  tabBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: SOL_COLORS.textSecondary,
+  },
+  tabBtnTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  searchSection: {
+    padding: 14,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: SOL_COLORS.border,
+  },
+  userSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  userSectionTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: SOL_COLORS.textMuted,
+    letterSpacing: 0.5,
+  },
+  userSectionSub: {
+    fontSize: 11,
+    color: SOL_COLORS.textSecondary,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  createUserBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: SOL_COLORS.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    ...SHADOWS.sm,
+  },
+  createUserBtnText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: SOL_COLORS.surfaceSubtle,
     borderRadius: 12,
     paddingHorizontal: 12,
-    height: 40,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    marginBottom: 8,
-  },
-  searchInput: { flex: 1, fontSize: 12, fontWeight: '600', color: SOL_COLORS.textPrimary },
-  filterChipsRow: { gap: 6, paddingBottom: 4 },
-  filterChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: '#F1F5F9' },
-  filterChipActive: { backgroundColor: '#1E293B' },
-  filterChipSuccess: { backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#A7F3D0' },
-  filterChipWarning: { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A' },
-  filterChipDanger: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA' },
-  filterChipText: { fontSize: 11, fontWeight: '700', color: '#64748B' },
-  filterChipTextActive: { color: '#FFFFFF', fontWeight: '800' },
-  listContent: { padding: 16, paddingBottom: 40 },
-  managerCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  managerCardPending: { borderColor: '#F59E0B', backgroundColor: '#FFFDF5' },
-  managerCardSuspended: { borderColor: '#FECACA', backgroundColor: '#FEF2F2' },
-  managerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
-  managerName: { fontSize: 16, fontWeight: '900', color: SOL_COLORS.textPrimary },
-  managerPhone: { fontSize: 12, color: '#64748B', fontWeight: '600', marginTop: 1 },
-  pinBold: { color: '#1D4ED8', fontWeight: '800' },
-  zoneText: { fontSize: 11, color: '#475569', fontWeight: '600', marginTop: 2 },
-  bizInfoText: { fontSize: 11, color: '#64748B', marginTop: 2 },
-  bizBold: { fontWeight: '800', color: SOL_COLORS.primary },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  statusBadgeActive: { backgroundColor: '#ECFDF5' },
-  statusBadgePending: { backgroundColor: '#FFFBEB' },
-  statusBadgeSuspended: { backgroundColor: '#FEF2F2' },
-  statusBadgeText: { fontSize: 9, fontWeight: '900' },
-  statusBadgeTextActive: { color: '#059669' },
-  statusBadgeTextPending: { color: '#D97706' },
-  statusBadgeTextSuspended: { color: '#DC2626' },
-  managerStatsRow: {
-    flexDirection: 'row',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 8,
-    marginBottom: 10,
+    height: 42,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: SOL_COLORS.border,
+    marginBottom: 10,
   },
-  managerStatItem: { flex: 1, alignItems: 'center' },
-  managerStatLabel: { fontSize: 8, fontWeight: '900', color: '#64748B', letterSpacing: 0.5 },
-  managerStatValue: { fontSize: 13, fontWeight: '900', color: SOL_COLORS.textPrimary, marginTop: 1 },
-  managerStatGreen: { fontSize: 13, fontWeight: '900', color: '#059669', marginTop: 1 },
-  managerStatRed: { fontSize: 13, fontWeight: '900', color: '#DC2626', marginTop: 1 },
-  managerActionRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  actionCircleBtn: {
-    width: 32,
-    height: 32,
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: SOL_COLORS.textPrimary,
+  },
+  filterChipsRow: {
+    gap: 6,
+  },
+  filterChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+  },
+  filterChipActive: {
+    backgroundColor: SOL_COLORS.primary,
+    borderColor: SOL_COLORS.primary,
+  },
+  filterChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: SOL_COLORS.textSecondary,
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  filterChipSubtle: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 8,
     backgroundColor: '#F1F5F9',
+  },
+  filterChipSubtleActive: {
+    backgroundColor: '#334155',
+  },
+  filterChipSubtleText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  filterChipSubtleTextActive: {
+    color: '#FFFFFF',
+  },
+  listContent: {
+    padding: 14,
+    paddingBottom: 40,
+  },
+  managerCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    ...SHADOWS.sm,
+  },
+  managerCardPending: { borderColor: '#F59E0B', backgroundColor: '#FFFDF5' },
+  managerCardSuspended: { borderColor: '#FECDD3', backgroundColor: '#FFF1F2' },
+  managerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  avatarCircleSmall: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: SOL_COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarTextSmall: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  managerName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+  },
+  roleBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  roleBadgeAdmin: { backgroundColor: '#EDE9FE' },
+  roleBadgeManager: { backgroundColor: '#DCFCE7' },
+  roleBadgeReadOnly: { backgroundColor: '#F1F5F9' },
+  roleBadgeText: { fontSize: 9, fontWeight: '900' },
+  roleBadgeTextAdmin: { color: '#6D28D9' },
+  roleBadgeTextManager: { color: '#15803D' },
+  roleBadgeTextReadOnly: { color: '#475569' },
+  managerPhone: {
+    fontSize: 12,
+    color: SOL_COLORS.textSecondary,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  pinBold: { color: SOL_COLORS.info, fontWeight: '800' },
+  zoneText: { fontSize: 11, color: SOL_COLORS.textSecondary, fontWeight: '600', marginTop: 2 },
+  bizInfoText: { fontSize: 11, color: SOL_COLORS.textSecondary, marginTop: 2 },
+  bizBold: { fontWeight: '800', color: SOL_COLORS.primaryDark },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  statusBadgeActive: { backgroundColor: SOL_COLORS.successLighter },
+  statusBadgePending: { backgroundColor: SOL_COLORS.accentLighter },
+  statusBadgeSuspended: { backgroundColor: SOL_COLORS.dangerLighter },
+  statusBadgeText: { fontSize: 9, fontWeight: '900' },
+  statusBadgeTextActive: { color: SOL_COLORS.successDark },
+  statusBadgeTextPending: { color: SOL_COLORS.accent },
+  statusBadgeTextSuspended: { color: SOL_COLORS.dangerDark },
+  managerStatsRow: {
+    flexDirection: 'row',
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+  },
+  managerStatItem: { flex: 1, alignItems: 'center' },
+  managerStatLabel: { fontSize: 8, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.3 },
+  managerStatValue: { fontSize: 13, fontWeight: '900', color: SOL_COLORS.textPrimary, marginTop: 2 },
+  managerStatGreen: { fontSize: 13, fontWeight: '900', color: SOL_COLORS.successDark, marginTop: 2 },
+  managerStatRed: { fontSize: 13, fontWeight: '900', color: SOL_COLORS.dangerDark, marginTop: 2 },
+  readOnlyNoticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    padding: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 10,
+  },
+  readOnlyNoticeText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+    flex: 1,
+  },
+  managerActionRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  actionCircleBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: SOL_COLORS.border,
   },
   actionEditBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    height: 32,
-    borderRadius: 8,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    paddingHorizontal: 10,
+    height: 34,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: SOL_COLORS.border,
   },
-  actionEditText: { fontSize: 11, fontWeight: '700', color: '#475569' },
+  actionEditText: { fontSize: 11, fontWeight: '800', color: '#475569' },
   actionApproveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#059669',
+    backgroundColor: SOL_COLORS.successDark,
     paddingHorizontal: 10,
-    height: 32,
-    borderRadius: 8,
+    height: 34,
+    borderRadius: 10,
   },
   actionApproveText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
   actionSuspendBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 8,
-    height: 32,
-    borderRadius: 8,
+    backgroundColor: SOL_COLORS.dangerLighter,
+    paddingHorizontal: 10,
+    height: 34,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: '#FECDD3',
   },
-  actionSuspendText: { fontSize: 11, fontWeight: '800', color: '#DC2626' },
+  actionSuspendText: { fontSize: 11, fontWeight: '800', color: SOL_COLORS.dangerDark },
   actionReactivateBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    height: 32,
-    borderRadius: 8,
+    backgroundColor: SOL_COLORS.successLighter,
+    paddingHorizontal: 10,
+    height: 34,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#A7F3D0',
   },
-  actionReactivateText: { fontSize: 11, fontWeight: '800', color: '#059669' },
+  actionReactivateText: { fontSize: 11, fontWeight: '800', color: SOL_COLORS.successDark },
+  actionReportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 10,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+  },
+  actionReportText: { fontSize: 11, fontWeight: '800', color: '#7C3AED' },
   actionSwitchBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#EEF2FF',
-    paddingHorizontal: 8,
-    height: 32,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 34,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#C7D2FE',
   },
   actionSwitchText: { fontSize: 11, fontWeight: '800', color: '#4338CA' },
+  actionDeleteBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: SOL_COLORS.dangerLighter,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
   txCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: SOL_COLORS.border,
+    ...SHADOWS.sm,
   },
-  txCardReversed: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+  txCardReversed: { backgroundColor: '#FFF1F2', borderColor: '#FECDD3' },
   txLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  txIconBox: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  txIconDeposit: { backgroundColor: '#059669' },
-  txIconPayout: { backgroundColor: '#D97706' },
-  txIconReversal: { backgroundColor: '#DC2626' },
-  txClientName: { fontSize: 14, fontWeight: '800', color: SOL_COLORS.textPrimary },
-  txNote: { fontSize: 11, color: '#64748B', marginTop: 1 },
-  txDate: { fontSize: 10, color: '#94A3B8', marginTop: 2 },
+  txIconBox: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  txIconDeposit: { backgroundColor: SOL_COLORS.successDark },
+  txIconPayout: { backgroundColor: SOL_COLORS.accent },
+  txIconReversal: { backgroundColor: SOL_COLORS.danger },
+  txClientName: { fontSize: 13, fontWeight: '800', color: SOL_COLORS.textPrimary },
+  txCancelledBadge: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  txCancelledBadgeText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#DC2626',
+  },
+  adminCancelTxBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    marginTop: 4,
+  },
+  adminCancelTxBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#DC2626',
+  },
+  cancellationWarningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    marginBottom: 12,
+  },
+  cancellationWarningText: {
+    fontSize: 11,
+    color: '#991B1B',
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 15,
+  },
+  txNote: { fontSize: 11, color: SOL_COLORS.textSecondary, marginTop: 1 },
+  txDate: { fontSize: 10, color: SOL_COLORS.textMuted, marginTop: 1 },
   txAmount: { fontSize: 14, fontWeight: '900' },
-  txAmountDeposit: { color: '#059669' },
-  txAmountPayout: { color: '#D97706' },
-  txAmountReversal: { color: '#DC2626' },
-  txRef: { fontSize: 9, color: '#94A3B8', fontWeight: '700', marginTop: 2 },
+  txAmountDeposit: { color: SOL_COLORS.successDark },
+  txAmountPayout: { color: SOL_COLORS.accent },
+  txAmountReversal: { color: SOL_COLORS.danger },
+  txRef: { fontSize: 9, color: SOL_COLORS.textMuted, marginTop: 2 },
   auditCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 12,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: SOL_COLORS.border,
   },
-  auditTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  auditActionTag: { backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  auditActionText: { fontSize: 10, fontWeight: '800', color: '#334155' },
-  auditDate: { fontSize: 10, color: '#94A3B8', fontWeight: '600' },
-  auditUser: { fontSize: 11, color: '#64748B', marginTop: 2 },
-  auditUserBold: { fontWeight: '700', color: '#1E293B' },
-  auditReason: { fontSize: 11, color: '#0284C7', fontWeight: '600', marginTop: 3 },
-  settingsScrollContent: { padding: 16, paddingBottom: 40 },
+  auditHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  auditActionBadge: { backgroundColor: '#F1F5F9', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  auditActionText: { fontSize: 10, fontWeight: '800', color: SOL_COLORS.textPrimary },
+  auditDate: { fontSize: 10, color: SOL_COLORS.textMuted },
+  auditReason: { fontSize: 12, color: SOL_COLORS.textSecondary, marginBottom: 6 },
+  auditFooter: { flexDirection: 'row', justifyContent: 'space-between' },
+  auditUser: { fontSize: 10, color: SOL_COLORS.textMuted },
+  auditEntity: { fontSize: 10, color: SOL_COLORS.textMuted },
+  syncScrollContent: { padding: 14 },
+  syncCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    ...SHADOWS.sm,
+  },
+  syncHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  syncCardTitle: { fontSize: 15, fontWeight: '800', color: SOL_COLORS.textPrimary },
+  syncCardSub: { fontSize: 12, fontWeight: '600', color: SOL_COLORS.textSecondary, marginTop: 2 },
+  syncActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: SOL_COLORS.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  syncActionBtnText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
+  syncMetricsGrid: { flexDirection: 'row', gap: 10 },
+  syncMetricBox: {
+    flex: 1,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+  },
+  syncMetricLabel: { fontSize: 9, fontWeight: '800', color: SOL_COLORS.textMuted },
+  syncMetricYellow: { fontSize: 16, fontWeight: '900', color: '#D97706', marginTop: 2 },
+  syncMetricGreen: { fontSize: 16, fontWeight: '900', color: '#059669', marginTop: 2 },
+  syncMetricRed: { fontSize: 16, fontWeight: '900', color: '#DC2626', marginTop: 2 },
+  errorLogCard: {
+    backgroundColor: '#FFF1F2',
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  errorLogTitle: { fontSize: 10, fontWeight: '900', color: '#DC2626', letterSpacing: 0.5, marginBottom: 6 },
+  errorLogText: { fontSize: 11, color: '#991B1B', marginTop: 2 },
+  settingsScrollContent: { padding: 14 },
   settingsCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: SOL_COLORS.border,
+    ...SHADOWS.sm,
   },
-  settingsCardTitle: { fontSize: 11, fontWeight: '900', color: '#64748B', letterSpacing: 0.5, marginBottom: 4 },
-  settingsCardSub: { fontSize: 12, color: '#64748B', marginBottom: 12, lineHeight: 16 },
-  settingsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
-  settingsLabel: { fontSize: 11, color: '#64748B', fontWeight: '600' },
-  settingsValue: { fontSize: 13, fontWeight: '800', color: SOL_COLORS.textPrimary },
+  settingsCardTitle: { fontSize: 11, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.5 },
+  settingsCardSub: { fontSize: 12, color: SOL_COLORS.textSecondary, marginTop: 4, lineHeight: 16 },
+  settingsRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 12 },
+  settingsLabel: { fontSize: 10, color: SOL_COLORS.textMuted, fontWeight: '700' },
+  settingsValue: { fontSize: 13, fontWeight: '800', color: SOL_COLORS.textPrimary, marginTop: 2 },
   settingsEditBtn: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: SOL_COLORS.surfaceSubtle,
     paddingVertical: 10,
     borderRadius: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: SOL_COLORS.border,
   },
-  settingsEditBtnText: { fontSize: 12, fontWeight: '800', color: '#334155' },
+  settingsEditBtnText: { fontSize: 12, fontWeight: '800', color: SOL_COLORS.textPrimary },
   backupBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: SOL_COLORS.primary,
     paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
+    borderRadius: 12,
   },
-  backupBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
+  backupBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
   restoreBtn: {
-    backgroundColor: '#334155',
-    paddingVertical: 12,
-    borderRadius: 10,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  restoreBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
-  syncStatsGrid: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  syncStatBox: { flex: 1, backgroundColor: '#F8FAFC', padding: 10, borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
-  syncStatLabel: { fontSize: 9, fontWeight: '800', color: '#64748B' },
-  syncStatValueGreen: { fontSize: 18, fontWeight: '900', color: '#059669', marginTop: 2 },
-  syncStatValueAmber: { fontSize: 18, fontWeight: '900', color: '#D97706', marginTop: 2 },
-  syncStatValueRed: { fontSize: 18, fontWeight: '900', color: '#DC2626', marginTop: 2 },
-  manualSyncBtn: {
-    backgroundColor: '#0284C7',
+    backgroundColor: '#475569',
     paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
+    borderRadius: 12,
   },
-  manualSyncBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
-  errorLogText: { fontSize: 11, color: '#DC2626', fontWeight: '600', marginBottom: 4 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 20, padding: 20, maxHeight: '85%' },
-  modalTitle: { fontSize: 18, fontWeight: '900', color: SOL_COLORS.textPrimary, marginBottom: 4 },
-  modalSub: { fontSize: 12, color: '#64748B', marginBottom: 14 },
-  formGroup: { marginBottom: 12 },
-  formLabel: { fontSize: 10, fontWeight: '800', color: '#64748B', marginBottom: 4 },
-  formInput: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    paddingHorizontal: 12,
+  restoreBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    maxHeight: '90%',
+  },
+  modalTitle: { fontSize: 17, fontWeight: '900', color: SOL_COLORS.textPrimary },
+  modalSub: { fontSize: 12, color: SOL_COLORS.textSecondary, marginTop: 2, marginBottom: 12 },
+  rolePickerRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  roleOption: {
+    flex: 1,
     paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    alignItems: 'center',
+  },
+  roleOptionActive: {
+    backgroundColor: SOL_COLORS.primary,
+    borderColor: SOL_COLORS.primary,
+  },
+  roleOptionText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: SOL_COLORS.textSecondary,
+  },
+  roleOptionTextActive: {
+    color: '#FFFFFF',
+  },
+  formGroup: { marginBottom: 10 },
+  formLabel: { fontSize: 9, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.4, marginBottom: 4 },
+  formInput: {
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    height: 44,
+    paddingHorizontal: 12,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     color: SOL_COLORS.textPrimary,
   },
-  modalBtnRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  modalCancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center' },
-  modalCancelBtnText: { fontSize: 13, fontWeight: '700', color: '#64748B' },
-  modalConfirmBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: SOL_COLORS.primary, alignItems: 'center' },
-  restoreConfirmBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#DC2626', alignItems: 'center' },
-  modalConfirmBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
+  modalBtnRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  modalCancelBtn: {
+    flex: 1,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelBtnText: { fontSize: 12, fontWeight: '800', color: SOL_COLORS.textSecondary },
+  modalConfirmBtn: {
+    flex: 1.5,
+    backgroundColor: SOL_COLORS.primary,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalConfirmBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
+  restoreConfirmBtn: {
+    flex: 1.5,
+    backgroundColor: '#DC2626',
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

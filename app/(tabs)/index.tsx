@@ -17,19 +17,22 @@ import { Header } from '@/components/Header';
 import { MemberCard } from '@/components/MemberCard';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { getDashboardMetrics, getActiveBusinessConfig } from '@/db/businessRepository';
+import { getDashboardMetrics } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { getActiveCollector } from '@/db/sqlite';
 import { generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfService';
+import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
 import { DashboardMetrics, FilterStatus, Member, SortOption } from '@/types';
-import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
+import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
+import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
+import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const { userRole } = useAuth();
   const { triggerSync } = useSync();
+  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     unitAmount: 250,
@@ -68,6 +71,7 @@ export default function DashboardScreen() {
   const [payoutNote, setPayoutNote] = useState('');
   const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -113,6 +117,11 @@ export default function DashboardScreen() {
   };
 
   const handleInitiatePayout = (member: Member) => {
+    if (isReadOnly) {
+      triggerErrorFeedback();
+      Alert.alert('Accès Lecture Seule', 'Le décaissement de la main est réservé aux gestionnaires.');
+      return;
+    }
     triggerMediumImpact();
     setPayoutTargetMember(member);
     setPayoutNote(`Remise de la main #${member.rankOrder || 1} - ${member.fullName}`);
@@ -150,8 +159,6 @@ export default function DashboardScreen() {
       setPayoutTargetMember(null);
     }
   };
-
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   const handleGenerateBusinessReport = async () => {
     triggerMediumImpact();
@@ -213,7 +220,7 @@ export default function DashboardScreen() {
     <SafeAreaView style={styles.container}>
       <Header
         title={metrics.businessName || 'SOL'}
-        subtitle={`${formatCurrency(metrics.unitAmount)}/main • ${metrics.totalMembersCount} enfants • Fin: ${formatDateShort(metrics.endDate)}`}
+        subtitle={`${formatCurrency(metrics.unitAmount)}/main • ${metrics.totalHandsExpected} enfants/mains • Fin: ${formatDateShort(metrics.endDate)}`}
         onRefresh={handleRefresh}
       />
 
@@ -237,179 +244,222 @@ export default function DashboardScreen() {
         }
         ListHeaderComponent={
           <View style={styles.dashboardHeader}>
-            {/* 4 Metrics Synthesis Cards Grid */}
-            <View style={styles.metricsGrid}>
-              {/* 1. Main Unitaire vs Cagnotte Totale */}
-              <View style={[styles.metricCard, styles.metricCardPrimary]}>
-                <View style={styles.metricCardTop}>
-                  <Text style={styles.metricLabel}>VALEUR MAIN / CAGNOTTE</Text>
-                  <Icon name="target" size={16} color="#FFFFFF" />
-                </View>
-                <View style={styles.metricValueRow}>
-                  <Text style={styles.metricValueLight}>
-                    {formatCurrency(metrics.unitAmount)}
-                    <Text style={styles.metricValueLightSub}> / main</Text>
+            {/* 1. Hero Summary Card with Progress & Multi-hands breakdown */}
+            <View style={styles.heroCard}>
+              <View style={styles.heroTopRow}>
+                <View>
+                  <View style={styles.heroPillHeader}>
+                    <Icon name="crown" size={12} color="#FDE68A" style={{ marginRight: 4 }} />
+                    <Text style={styles.heroLabel}>CAGNOTTE D'UNE MAIN (TIRAGE)</Text>
+                  </View>
+                  <Text style={styles.heroAmount}>{formatCurrency(metrics.totalPotAmount)}</Text>
+                  <Text style={styles.heroSubFormula}>
+                    Base : {metrics.totalHandsExpected} mains effectives au cycle × {formatCurrency(metrics.unitAmount)}
                   </Text>
+                </View>
+                <View style={styles.heroUnitBadge}>
+                  <Text style={styles.heroUnitText}>{formatCurrency(metrics.unitAmount)} / main</Text>
+                </View>
+              </View>
+
+              {/* Multi-Hands & Enrolled Stats Pill Row inside Hero */}
+              <View style={styles.heroStatsRow}>
+                <View style={styles.heroStatItem}>
+                  <Text style={styles.heroStatItemLabel}>ENFANTS INSCRITS</Text>
+                  <View style={styles.heroStatItemValRow}>
+                    <Icon name="users" size={12} color="#94A3B8" style={{ marginRight: 4 }} />
+                    <Text style={styles.heroStatItemVal}>{metrics.totalMembersCount}</Text>
+                  </View>
+                </View>
+                <View style={styles.heroStatDivider} />
+                <View style={styles.heroStatItem}>
+                  <Text style={styles.heroStatItemLabel}>PARTS TOTALES</Text>
+                  <View style={styles.heroStatItemValRow}>
+                    <Icon name="crown" size={12} color="#FDE68A" style={{ marginRight: 4 }} />
+                    <Text style={styles.heroStatItemVal}>{metrics.totalHandsExpected} mains</Text>
+                  </View>
+                </View>
+                <View style={styles.heroStatDivider} />
+                <View style={styles.heroStatItem}>
+                  <Text style={styles.heroStatItemLabel}>TOTAL DU CYCLE</Text>
+                  <Text style={styles.heroStatItemValGreen}>
+                    {formatCurrency(metrics.totalHandsExpected * metrics.totalPotAmount)}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.heroProgressSection}>
+                <View style={styles.progressLabelRow}>
+                  <Text style={styles.progressLabel}>
+                    Avancement du Sol ({metrics.handsTouchedCount}/{metrics.totalHandsExpected} mains remises)
+                  </Text>
+                  <Text style={styles.progressPct}>{cycleProgressPct}%</Text>
                 </View>
                 <View style={styles.progressBarBg}>
                   <View style={[styles.progressBarFill, { width: `${cycleProgressPct}%` }]} />
                 </View>
-                <Text style={styles.metricSubLight}>
-                  Cagnotte : {formatCurrency(metrics.totalPotAmount)} ({metrics.handsTouchedCount}/{metrics.totalHandsExpected} touchées)
-                </Text>
               </View>
+            </View>
 
-              {/* 2. Mains Collectées Aujourd'hui */}
+            {/* 2. Enhanced 2x2 Metrics Grid */}
+            <View style={styles.metricsGrid}>
+              {/* Card 1: Collecté aujourd'hui */}
               <View style={styles.metricCard}>
-                <View style={styles.metricCardTop}>
-                  <Text style={styles.metricLabelDark}>COLLECTES AUJOURD'HUI</Text>
-                  <Icon name="cash" size={16} color="#059669" />
+                <View style={styles.metricCardHeader}>
+                  <Text style={styles.metricCardTitle}>AUJOURD'HUI</Text>
+                  <View style={[styles.metricIconBox, { backgroundColor: '#ECFDF5' }]}>
+                    <Icon name="cash" size={13} color={SOL_COLORS.successDark} />
+                  </View>
                 </View>
-                <Text style={[styles.metricValueDark, { color: '#059669' }]}>
-                  {metrics.handsCollectedToday} mains
+                <Text style={[styles.metricCardValue, { color: SOL_COLORS.successDark }]}>
+                  {metrics.handsCollectedToday} main{metrics.handsCollectedToday > 1 ? 's' : ''}
                 </Text>
-                <Text style={styles.metricSubDark}>
-                  {metrics.paidTodayCount} enfants à jour
+                <Text style={styles.metricCardSub}>
+                  {formatCurrency(metrics.handsCollectedToday * metrics.unitAmount)} • {metrics.paidTodayCount}/{members.length} à jour
                 </Text>
               </View>
 
-              {/* 3. Jours Restants */}
+              {/* Card 2: Effectif total & parts */}
               <View style={styles.metricCard}>
-                <View style={styles.metricCardTop}>
-                  <Text style={styles.metricLabelDark}>JOURS RESTANTS</Text>
-                  <Icon name="clock" size={16} color={SOL_COLORS.primary} />
+                <View style={styles.metricCardHeader}>
+                  <Text style={styles.metricCardTitle}>EFFECTIF DU SOL</Text>
+                  <View style={[styles.metricIconBox, { backgroundColor: '#EFF6FF' }]}>
+                    <Icon name="crown" size={13} color={SOL_COLORS.info} />
+                  </View>
                 </View>
-                <Text style={styles.metricValueDark}>{metrics.daysRemaining} j</Text>
-                <Text style={styles.metricSubDark}>
-                  Clôture le {formatDateShort(metrics.endDate)}
+                <Text style={[styles.metricCardValue, { color: SOL_COLORS.primary }]}>
+                  {metrics.totalHandsExpected} mains
+                </Text>
+                <Text style={styles.metricCardSub}>
+                  {metrics.totalMembersCount} enfants inscrits
                 </Text>
               </View>
 
-              {/* 4. Retards de Cotisation */}
-              <View
-                style={[
-                  styles.metricCard,
-                  metrics.overdueMembersCount > 0 && styles.metricCardAlert,
-                ]}
-              >
-                <View style={styles.metricCardTop}>
-                  <Text
-                    style={[
-                      styles.metricLabelDark,
-                      metrics.overdueMembersCount > 0 && { color: '#B91C1C' },
-                    ]}
-                  >
-                    ENFANTS EN RETARD
+              {/* Card 3: Jours restants & Calendrier */}
+              <View style={styles.metricCard}>
+                <View style={styles.metricCardHeader}>
+                  <Text style={styles.metricCardTitle}>CALENDRIER</Text>
+                  <View style={[styles.metricIconBox, { backgroundColor: '#F0F9FF' }]}>
+                    <Icon name="clock" size={13} color="#0284C7" />
+                  </View>
+                </View>
+                <Text style={[styles.metricCardValue, { color: SOL_COLORS.textPrimary }]}>
+                  {metrics.daysRemaining} jours
+                </Text>
+                <Text style={styles.metricCardSub}>
+                  Fin : {formatDateShort(metrics.endDate)}
+                </Text>
+              </View>
+
+              {/* Card 4: Retards */}
+              <View style={[styles.metricCard, metrics.overdueMembersCount > 0 && styles.metricCardAlert]}>
+                <View style={styles.metricCardHeader}>
+                  <Text style={[styles.metricCardTitle, metrics.overdueMembersCount > 0 && { color: SOL_COLORS.dangerDark }]}>
+                    RETARDS
                   </Text>
-                  <Icon
-                    name="alert"
-                    size={16}
-                    color={metrics.overdueMembersCount > 0 ? '#DC2626' : '#94A3B8'}
-                  />
+                  <View style={[styles.metricIconBox, { backgroundColor: metrics.overdueMembersCount > 0 ? '#FFE4E6' : '#F1F5F9' }]}>
+                    <Icon
+                      name="alert"
+                      size={13}
+                      color={metrics.overdueMembersCount > 0 ? SOL_COLORS.danger : SOL_COLORS.textMuted}
+                    />
+                  </View>
                 </View>
                 <Text
                   style={[
-                    styles.metricValueDark,
-                    metrics.overdueMembersCount > 0 && { color: '#DC2626' },
+                    styles.metricCardValue,
+                    metrics.overdueMembersCount > 0 ? { color: SOL_COLORS.dangerDark } : { color: SOL_COLORS.textPrimary },
                   ]}
                 >
-                  {metrics.overdueMembersCount}
+                  {metrics.overdueMembersCount} {metrics.overdueMembersCount > 1 ? 'enfants' : 'enfant'}
                 </Text>
                 <Text
                   style={[
-                    styles.metricSubDark,
-                    metrics.overdueMembersCount > 0 && { color: '#B91C1C' },
+                    styles.metricCardSub,
+                    metrics.overdueMembersCount > 0 && { color: SOL_COLORS.dangerDark },
                   ]}
                 >
-                  {metrics.overdueHandsCount} main{metrics.overdueHandsCount > 1 ? 's' : ''} impayée{metrics.overdueHandsCount > 1 ? 's' : ''}
+                  {metrics.overdueMembersCount > 0
+                    ? `${metrics.overdueHandsCount} main(s) • ${formatCurrency(metrics.overdueHandsCount * metrics.unitAmount)}`
+                    : 'Aucun retard'}
                 </Text>
               </View>
             </View>
 
-            {/* Quick Actions Row */}
+            {/* 3. Quick Action Buttons */}
             <View style={styles.quickActionsRow}>
               <TouchableOpacity
-                activeOpacity={0.7}
+                activeOpacity={0.8}
                 onPress={() => router.push('/collect' as any)}
                 style={styles.quickActionBtn}
               >
-                <View style={[styles.quickActionIconCircle, { backgroundColor: '#ECFDF5' }]}>
-                  <Icon name="cash" size={16} color="#059669" />
+                <View style={[styles.quickActionIconCircle, { backgroundColor: SOL_COLORS.primaryLight }]}>
+                  <Icon name="cash" size={16} color={SOL_COLORS.primaryDark} />
                 </View>
                 <Text style={styles.quickActionLabel}>Encaisser</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                activeOpacity={0.7}
+                activeOpacity={0.8}
                 onPress={() => router.push('/client/new' as any)}
                 style={styles.quickActionBtn}
               >
-                <View style={[styles.quickActionIconCircle, { backgroundColor: '#EFF6FF' }]}>
-                  <Icon name="user" size={16} color="#2563EB" />
+                <View style={[styles.quickActionIconCircle, { backgroundColor: SOL_COLORS.infoLight }]}>
+                  <Icon name="user" size={16} color={SOL_COLORS.info} />
                 </View>
                 <Text style={styles.quickActionLabel}>+ Enfant</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                activeOpacity={0.7}
+                activeOpacity={0.8}
                 onPress={() => router.push('/sol' as any)}
                 style={styles.quickActionBtn}
               >
-                <View style={[styles.quickActionIconCircle, { backgroundColor: '#FEF3C7' }]}>
-                  <Icon name="crown" size={16} color="#D97706" />
+                <View style={[styles.quickActionIconCircle, { backgroundColor: SOL_COLORS.accentLight }]}>
+                  <Icon name="crown" size={16} color={SOL_COLORS.accent} />
                 </View>
-                <Text style={styles.quickActionLabel}>Matrice Sol</Text>
+                <Text style={styles.quickActionLabel}>Cycle Sol</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => router.push('/closure' as any)}
-                style={styles.quickActionBtn}
-              >
-                <View style={[styles.quickActionIconCircle, { backgroundColor: '#F3E8FF' }]}>
-                  <Icon name="shield" size={16} color="#7C3AED" />
-                </View>
-                <Text style={styles.quickActionLabel}>Clôture</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Business Evolution & Performance Report Banner */}
-            <View style={styles.reportBanner}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.reportBannerTitle}>Rapport d'Évolution du Carnet</Text>
-                <Text style={styles.reportBannerSub}>
-                  Générez et imprimez l'état complet du cycle et de vos adhérents en PDF.
-                </Text>
-              </View>
 
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={handleGenerateBusinessReport}
                 disabled={isGeneratingReport}
-                style={styles.reportBannerBtn}
+                style={styles.quickActionBtn}
               >
-                <Icon name="print" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.reportBannerBtnText}>
-                  {isGeneratingReport ? 'Génération...' : 'Imprimer PDF'}
-                </Text>
+                <View style={[styles.quickActionIconCircle, { backgroundColor: '#F3E8FF' }]}>
+                  <Icon name="print" size={16} color="#7C3AED" />
+                </View>
+                <Text style={styles.quickActionLabel}>Rapport PDF</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Sol Turn Hero Banner (Next Beneficiary in Order) */}
+            {/* 4. Sol Turn Hero Banner (Next Beneficiary in Order) */}
             {metrics.currentPayoutBeneficiary && (
               <View style={styles.heroPayoutBanner}>
                 <View style={styles.heroPayoutHeader}>
-                  <Icon name="crown" size={18} color="#1D4ED8" />
-                  <Text style={styles.heroPayoutTitle}>PROCHAINE MAIN À DÉCAISSER (BÉNÉFICIAIRE)</Text>
+                  <View style={styles.heroPayoutBadgePill}>
+                    <Icon name="crown" size={13} color="#D97706" style={{ marginRight: 4 }} />
+                    <Text style={styles.heroPayoutTitle}>PROCHAIN BÉNÉFICIAIRE DE LA MAIN</Text>
+                  </View>
+                  <Text style={styles.heroPayoutUnitPill}>
+                    {formatCurrency(metrics.totalPotAmount)}
+                  </Text>
                 </View>
                 <View style={styles.heroPayoutBody}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.heroBeneficiaryName}>
+                  <View style={styles.heroBeneficiaryAvatarCircle}>
+                    <Text style={styles.heroBeneficiaryAvatarText}>
+                      {getInitials(metrics.currentPayoutBeneficiary.fullName)}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.heroBeneficiaryName} numberOfLines={1}>
                       {metrics.currentPayoutBeneficiary.fullName}
                     </Text>
                     <Text style={styles.heroBeneficiarySub}>
-                      Main #{metrics.currentPayoutBeneficiary.rankOrder || 1} • Cagnotte :{' '}
-                      {formatCurrency(metrics.totalPotAmount)}
+                      {metrics.currentPayoutBeneficiary.handsCount && metrics.currentPayoutBeneficiary.handsCount > 1
+                        ? `${metrics.currentPayoutBeneficiary.handsCount} mains souscrites (Rangs: #${metrics.currentPayoutBeneficiary.payoutRanks || metrics.currentPayoutBeneficiary.payoutRank})`
+                        : `Main #${metrics.currentPayoutBeneficiary.rankOrder || 1}`} • Cagnotte : {formatCurrency(metrics.totalPotAmount)}
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -417,30 +467,30 @@ export default function DashboardScreen() {
                     onPress={() => handleInitiatePayout(metrics.currentPayoutBeneficiary!)}
                     style={styles.heroPayoutBtn}
                   >
-                    <Text style={styles.heroPayoutBtnText}>Donner la Main</Text>
+                    <Text style={styles.heroPayoutBtnText}>Décaisser</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             )}
 
-            {/* Search Input */}
+            {/* 5. Search Bar */}
             <View style={styles.searchBar}>
-              <Icon name="search" size={16} color="#64748B" style={{ marginRight: 8 }} />
+              <Icon name="search" size={16} color={SOL_COLORS.textMuted} style={{ marginRight: 8 }} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Rechercher par nom, téléphone..."
-                placeholderTextColor="#94A3B8"
+                placeholder="Rechercher un adhérent (nom, téléphone)..."
+                placeholderTextColor={SOL_COLORS.textMuted}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
               />
               {searchQuery.length > 0 && (
                 <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <Icon name="close" size={16} color="#64748B" />
+                  <Icon name="close" size={16} color={SOL_COLORS.textSecondary} />
                 </TouchableOpacity>
               )}
             </View>
 
-            {/* Filter Horizontal Chips */}
+            {/* 6. Filter Chips */}
             <View style={styles.filterScroll}>
               <TouchableOpacity
                 onPress={() => handleFilterChange('ALL')}
@@ -465,7 +515,7 @@ export default function DashboardScreen() {
                 style={[styles.filterChip, filter === 'UNPAID_TODAY' && styles.filterChipActive]}
               >
                 <Text style={[styles.filterChipText, filter === 'UNPAID_TODAY' && styles.filterChipTextActive]}>
-                  Non payé ({metrics.unpaidTodayCount})
+                  À encaisser ({metrics.unpaidTodayCount})
                 </Text>
               </TouchableOpacity>
 
@@ -474,7 +524,7 @@ export default function DashboardScreen() {
                 style={[styles.filterChip, filter === 'OVERDUE' && styles.filterChipAlertActive]}
               >
                 <Text style={[styles.filterChipText, filter === 'OVERDUE' && styles.filterChipTextAlertActive]}>
-                  En retard ({metrics.overdueMembersCount})
+                  Retard ({metrics.overdueMembersCount})
                 </Text>
               </TouchableOpacity>
 
@@ -483,41 +533,21 @@ export default function DashboardScreen() {
                 style={[styles.filterChip, filter === 'HAND_RECEIVED' && styles.filterChipActive]}
               >
                 <Text style={[styles.filterChipText, filter === 'HAND_RECEIVED' && styles.filterChipTextActive]}>
-                  Main touchée ({metrics.handsTouchedCount})
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => handleFilterChange('HAND_PENDING')}
-                style={[styles.filterChip, filter === 'HAND_PENDING' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filter === 'HAND_PENDING' && styles.filterChipTextActive]}>
-                  Main en attente ({Math.max(0, metrics.totalMembersCount - metrics.handsTouchedCount)})
+                  Main reçue ({metrics.handsTouchedCount})
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {/* Section Title & Sorting Toggle */}
+            {/* Section Header */}
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>
-                LISTE DES ENFANTS ({members.length})
-              </Text>
+              <Text style={styles.sectionTitle}>LISTE DES ADHÉRENTS ({members.length})</Text>
               <TouchableOpacity
-                onPress={() => {
-                  const nextSort: Record<SortOption, SortOption> = {
-                    PAYOUT_RANK: 'NAME',
-                    NAME: 'BALANCE',
-                    BALANCE: 'OVERDUE',
-                    OVERDUE: 'PAYOUT_RANK',
-                    RECENT: 'PAYOUT_RANK',
-                  };
-                  handleSortChange(nextSort[sort]);
-                }}
+                activeOpacity={0.7}
+                onPress={() => handleSortChange(sort === 'PAYOUT_RANK' ? 'NAME' : 'PAYOUT_RANK')}
                 style={styles.sortToggle}
               >
-                <Icon name="filter" size={12} color="#64748B" style={{ marginRight: 4 }} />
                 <Text style={styles.sortToggleText}>
-                  Tri: {sort === 'PAYOUT_RANK' ? 'Rang' : sort === 'NAME' ? 'Nom' : sort === 'BALANCE' ? 'Cotisé' : 'Retards'}
+                  Tri : {sort === 'PAYOUT_RANK' ? 'Rang # ➔' : 'Nom A-Z ➔'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -525,31 +555,28 @@ export default function DashboardScreen() {
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Icon name="users" size={36} color="#94A3B8" />
+            <Icon name="user" size={44} color={SOL_COLORS.textMuted} />
             <Text style={styles.emptyTitle}>Aucun adhérent trouvé</Text>
             <Text style={styles.emptySubtitle}>
               {searchQuery
                 ? 'Aucun résultat ne correspond à votre recherche.'
-                : 'Ajoutez des enfants pour démarrer le carnet SOL.'}
+                : 'Ajoutez des enfants pour démarrer la collecte et le cycle.'}
             </Text>
           </View>
         }
       />
 
-      {/* Floating Action Button (+ Nouvel Enfant) */}
+      {/* Floating Add Child Button */}
       <TouchableOpacity
         activeOpacity={0.85}
-        onPress={() => {
-          triggerMediumImpact();
-          router.push('/client/new' as any);
-        }}
+        onPress={() => router.push('/client/new' as any)}
         style={styles.fab}
       >
         <Icon name="plus" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-        <Text style={styles.fabText}>Nouvel Enfant</Text>
+        <Text style={styles.fabText}>Ajouter un Enfant</Text>
       </TouchableOpacity>
 
-      {/* Payout Justification Modal */}
+      {/* Payout Hand Modal */}
       <Modal
         visible={isPayoutModalOpen}
         transparent
@@ -560,63 +587,61 @@ export default function DashboardScreen() {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View style={styles.iconCircleCrown}>
-                <Icon name="crown" size={24} color="#1D4ED8" />
+                <Icon name="crown" size={24} color={SOL_COLORS.accent} />
               </View>
-              <Text style={styles.modalTitle}>Remise de la Main (Payout)</Text>
+              <Text style={styles.modalTitle}>Remise de la Main ("Bay Men")</Text>
             </View>
 
             <Text style={styles.modalSub}>
-              Vous allez débloquer la cagnotte complète de{' '}
-              <Text style={styles.modalSubBold}>{formatCurrency(metrics.totalPotAmount)}</Text> pour{' '}
-              <Text style={styles.modalSubBold}>{payoutTargetMember?.fullName}</Text> (Main #{payoutTargetMember?.rankOrder || 1}).
+              Vous êtes sur le point de décaisser la cagnotte complète de{' '}
+              <Text style={styles.modalSubBold}>{formatCurrency(metrics.totalPotAmount)}</Text> pour :
             </Text>
 
+            {payoutTargetMember && (
+              <View style={styles.targetBeneficiaryBox}>
+                <Text style={styles.targetBeneficiaryName}>{payoutTargetMember.fullName}</Text>
+                <Text style={styles.targetBeneficiaryRank}>
+                  Main #{payoutTargetMember.rankOrder || 1} • {payoutTargetMember.phoneNumber}
+                </Text>
+              </View>
+            )}
+
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>NOTE / JUSTIFICATION DU DÉCAISSEMENT (OBLIGATOIRE)</Text>
+              <Text style={styles.inputLabel}>MOTIF / JUSTIFICATION :</Text>
               <TextInput
                 style={styles.textArea}
-                multiline
-                numberOfLines={3}
-                placeholder="Ex: Remise de main effectuée en mains propres au marché."
-                placeholderTextColor="#94A3B8"
                 value={payoutNote}
                 onChangeText={setPayoutNote}
+                placeholder="Ex: Remise de la main cycle #1"
+                placeholderTextColor={SOL_COLORS.textMuted}
+                multiline
+                numberOfLines={2}
               />
-            </View>
-
-            <View style={styles.modalWarningBox}>
-              <Icon name="shield" size={14} color="#0284C7" style={{ marginRight: 6 }} />
-              <Text style={styles.modalWarningText}>
-                L'adhérent restera sur le tableau de bord et continuera d'être exigible pour les cotisations restantes.
-              </Text>
             </View>
 
             <View style={styles.modalBtnRow}>
               <TouchableOpacity
-                activeOpacity={0.8}
                 onPress={() => setIsPayoutModalOpen(false)}
                 style={styles.modalCancelBtn}
               >
                 <Text style={styles.modalCancelBtnText}>Annuler</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
-                activeOpacity={0.8}
                 onPress={handleConfirmPayoutDetails}
                 style={styles.modalConfirmBtn}
               >
-                <Text style={styles.modalConfirmBtnText}>Valider (Code PIN)</Text>
+                <Text style={styles.modalConfirmBtnText}>Valider avec PIN</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* 4-Digit PIN Security Modal */}
+      {/* Sensitive PIN Security Modal */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Validation Sécurisée de la Main"
-        subtitle={`Saisissez votre code PIN gestionnaire pour autoriser le décaissement de ${formatCurrency(metrics.totalPotAmount)}.`}
+        title="Validation du Décaissement"
+        subtitle={`Saisissez votre code PIN pour confirmer la remise de ${formatCurrency(metrics.totalPotAmount)}.`}
         onSuccess={handlePinSuccessPayout}
         onCancel={() => setIsPinModalOpen(false)}
       />
@@ -630,161 +655,276 @@ const styles = StyleSheet.create({
     backgroundColor: SOL_COLORS.background,
   },
   listContent: {
-    padding: 16,
-    paddingBottom: 85,
+    paddingHorizontal: 16,
+    paddingBottom: 90,
   },
   dashboardHeader: {
-    marginBottom: 8,
+    paddingTop: 12,
+  },
+  heroCard: {
+    backgroundColor: SOL_COLORS.secondary,
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 12,
+    ...SHADOWS.md,
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  heroPillHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  heroLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#CBD5E1',
+    letterSpacing: 0.5,
+  },
+  heroAmount: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 2,
+    letterSpacing: -0.5,
+  },
+  heroSubFormula: {
+    fontSize: 11,
+    color: '#93C5FD',
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  heroUnitBadge: {
+    backgroundColor: SOL_COLORS.secondaryLight,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  heroUnitText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: SOL_COLORS.primaryLight,
+  },
+  heroStatsRow: {
+    flexDirection: 'row',
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 10,
+    marginTop: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  heroStatItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  heroStatItemLabel: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#94A3B8',
+    letterSpacing: 0.3,
+  },
+  heroStatItemValRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  heroStatItemVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#F1F5F9',
+  },
+  heroStatItemValGreen: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#34D399',
+    marginTop: 2,
+  },
+  heroStatDivider: {
+    width: 1,
+    height: 22,
+    backgroundColor: '#334155',
+  },
+  heroProgressSection: {
+    marginTop: 14,
+  },
+  progressLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: '#CBD5E1',
+    fontWeight: '600',
+  },
+  progressPct: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: SOL_COLORS.primaryLight,
+  },
+  progressBarBg: {
+    height: 8,
+    backgroundColor: '#1E293B',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#10B981',
+    borderRadius: 4,
   },
   metricsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginBottom: 10,
-  },
-  quickActionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
-  },
-  quickActionBtn: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  quickActionIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  quickActionLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
+    marginBottom: 12,
   },
   metricCard: {
-    width: '48%',
+    width: '48.3%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  metricCardPrimary: {
-    backgroundColor: SOL_COLORS.secondary,
-    borderColor: '#334155',
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    ...SHADOWS.sm,
   },
   metricCardAlert: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
+    borderColor: '#FECDD3',
+    backgroundColor: '#FFF1F2',
   },
-  metricCardTop: {
+  metricCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 4,
   },
-  metricLabel: {
+  metricIconBox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  metricCardTitle: {
     fontSize: 9,
     fontWeight: '900',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
-  },
-  metricLabelDark: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  metricValueLight: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  metricValueLightSub: {
-    fontSize: 12,
-    color: '#94A3B8',
-  },
-  metricValueDark: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  metricValueRow: {
-    marginBottom: 4,
-  },
-  progressBarBg: {
-    height: 4,
-    backgroundColor: '#334155',
-    borderRadius: 2,
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#34D399',
-    borderRadius: 2,
-  },
-  metricSubLight: {
-    fontSize: 10,
-    color: '#34D399',
-    fontWeight: '700',
-  },
-  metricSubDark: {
-    fontSize: 10,
     color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  metricCardValue: {
+    fontSize: 16,
+    fontWeight: '900',
     marginTop: 2,
   },
-  heroPayoutBanner: {
-    backgroundColor: '#EFF6FF',
+  metricCardSub: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: SOL_COLORS.textMuted,
+    marginTop: 2,
+  },
+  quickActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  quickActionBtn: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    ...SHADOWS.sm,
+  },
+  quickActionIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  quickActionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+  },
+  heroPayoutBanner: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 18,
     padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    marginBottom: 12,
+    ...SHADOWS.sm,
   },
   heroPayoutHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  heroPayoutBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   heroPayoutTitle: {
     fontSize: 10,
     fontWeight: '900',
-    color: '#1D4ED8',
-    letterSpacing: 0.5,
+    color: '#B45309',
+    letterSpacing: 0.3,
+  },
+  heroPayoutUnitPill: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#92400E',
+    backgroundColor: '#FDE68A',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
   },
   heroPayoutBody: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  heroBeneficiaryAvatarCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#D97706',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroBeneficiaryAvatarText: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
   heroBeneficiaryName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '800',
-    color: '#1E3A8A',
+    color: SOL_COLORS.textPrimary,
   },
   heroBeneficiarySub: {
-    fontSize: 12,
-    color: '#3B82F6',
-    fontWeight: '600',
+    fontSize: 11,
+    color: '#92400E',
     marginTop: 2,
+    fontWeight: '700',
   },
   heroPayoutBtn: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#D97706',
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 10,
+    borderRadius: 12,
   },
   heroPayoutBtnText: {
     color: '#FFFFFF',
@@ -798,14 +938,15 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 14,
     height: 46,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
     marginBottom: 10,
+    ...SHADOWS.sm,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
     color: SOL_COLORS.textPrimary,
   },
   filterScroll: {
@@ -818,22 +959,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
   },
   filterChipActive: {
     backgroundColor: SOL_COLORS.primary,
     borderColor: SOL_COLORS.primaryDark,
   },
   filterChipAlertActive: {
-    backgroundColor: '#DC2626',
-    borderColor: '#B91C1C',
+    backgroundColor: SOL_COLORS.danger,
+    borderColor: SOL_COLORS.dangerDark,
   },
   filterChipText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#475569',
+    color: SOL_COLORS.textSecondary,
   },
   filterChipTextActive: {
     color: '#FFFFFF',
@@ -852,7 +993,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 11,
     fontWeight: '900',
-    color: '#64748B',
+    color: SOL_COLORS.textMuted,
     letterSpacing: 0.5,
   },
   sortToggle: {
@@ -861,7 +1002,7 @@ const styles = StyleSheet.create({
   },
   sortToggleText: {
     fontSize: 11,
-    color: '#64748B',
+    color: SOL_COLORS.primaryDark,
     fontWeight: '700',
   },
   emptyContainer: {
@@ -884,39 +1025,36 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    bottom: 20,
-    right: 20,
+    bottom: 18,
+    right: 18,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: SOL_COLORS.primary,
     paddingVertical: 14,
-    paddingHorizontal: 18,
-    borderRadius: 28,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
+    paddingHorizontal: 20,
+    borderRadius: 30,
+    ...SHADOWS.lg,
   },
   fabText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
+    letterSpacing: 0.2,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   modalCard: {
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 380,
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
-    padding: 20,
-    elevation: 6,
+    padding: 22,
+    ...SHADOWS.lg,
   },
   modalHeader: {
     alignItems: 'center',
@@ -926,7 +1064,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: SOL_COLORS.accentLight,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 6,
@@ -938,14 +1076,32 @@ const styles = StyleSheet.create({
   },
   modalSub: {
     fontSize: 13,
-    color: '#475569',
+    color: SOL_COLORS.textSecondary,
     textAlign: 'center',
     marginVertical: 8,
     lineHeight: 18,
   },
   modalSubBold: {
     fontWeight: '900',
-    color: '#1D4ED8',
+    color: SOL_COLORS.primaryDark,
+  },
+  targetBeneficiaryBox: {
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderRadius: 12,
+    padding: 12,
+    marginVertical: 6,
+    alignItems: 'center',
+  },
+  targetBeneficiaryName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+  },
+  targetBeneficiaryRank: {
+    fontSize: 12,
+    color: SOL_COLORS.textSecondary,
+    marginTop: 2,
+    fontWeight: '600',
   },
   inputGroup: {
     marginVertical: 10,
@@ -953,102 +1109,50 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#64748B',
+    color: SOL_COLORS.textSecondary,
     marginBottom: 6,
     letterSpacing: 0.5,
   },
   textArea: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: SOL_COLORS.surfaceSubtle,
     borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
     padding: 12,
     fontSize: 13,
     fontWeight: '600',
     color: SOL_COLORS.textPrimary,
     textAlignVertical: 'top',
-    minHeight: 70,
-  },
-  modalWarningBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F9FF',
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    marginBottom: 14,
-  },
-  modalWarningText: {
-    flex: 1,
-    fontSize: 11,
-    color: '#0369A1',
-    fontWeight: '600',
-    lineHeight: 15,
+    minHeight: 60,
   },
   modalBtnRow: {
     flexDirection: 'row',
     gap: 10,
+    marginTop: 10,
   },
   modalCancelBtn: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F1F5F9',
+    borderRadius: 14,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
   },
   modalCancelBtnText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#64748B',
+    color: SOL_COLORS.textSecondary,
   },
   modalConfirmBtn: {
     flex: 2,
     alignItems: 'center',
     justifyContent: 'center',
     height: 48,
-    borderRadius: 12,
-    backgroundColor: '#2563EB',
+    borderRadius: 14,
+    backgroundColor: SOL_COLORS.primary,
   },
   modalConfirmBtnText: {
     fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  reportBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#0F172A',
-    borderRadius: 14,
-    padding: 12,
-    marginTop: 10,
-    marginBottom: 10,
-  },
-  reportBannerTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  reportBannerSub: {
-    fontSize: 10,
-    color: '#94A3B8',
-    fontWeight: '600',
-    marginTop: 2,
-    lineHeight: 14,
-    paddingRight: 6,
-  },
-  reportBannerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1D4ED8',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 8,
-  },
-  reportBannerBtnText: {
-    fontSize: 11,
     fontWeight: '800',
     color: '#FFFFFF',
   },

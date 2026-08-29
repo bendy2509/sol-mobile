@@ -2,11 +2,10 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Member } from '@/types';
-import { Badge } from './Badge';
 import { Icon } from './Icon';
 import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
+import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 
 interface MemberCardProps {
   member: Member;
@@ -51,7 +50,7 @@ export const MemberCard: React.FC<MemberCardProps> = ({
 
   return (
     <TouchableOpacity
-      activeOpacity={0.85}
+      activeOpacity={0.88}
       onPress={handleCardPress}
       style={[
         styles.card,
@@ -69,13 +68,25 @@ export const MemberCard: React.FC<MemberCardProps> = ({
             <Text style={styles.fullName} numberOfLines={1}>
               {member.fullName}
             </Text>
-            {member.rankOrder && (
-              <View style={styles.rankPill}>
-                <Text style={styles.rankPillText}>Main #{member.rankOrder}</Text>
+            {member.handsCount && member.handsCount > 1 ? (
+              <View style={styles.multiHandsBadge}>
+                <Icon name="crown" size={11} color="#D97706" style={{ marginRight: 3 }} />
+                <Text style={styles.multiHandsBadgeText}>{member.handsCount} mains</Text>
               </View>
+            ) : member.rankOrder ? (
+              <View style={[styles.rankPill, member.hasReceivedHand && styles.rankPillReceived]}>
+                <Text style={[styles.rankPillText, member.hasReceivedHand && styles.rankPillTextReceived]}>
+                  Main #{member.rankOrder}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.phone}>{member.phoneNumber}</Text>
+            {member.handsCount && member.handsCount > 1 && member.payoutRanks && (
+              <Text style={styles.payoutRanksText}>Rangs : #{member.payoutRanks}</Text>
             )}
           </View>
-          <Text style={styles.phone}>{member.phoneNumber}</Text>
         </View>
       </View>
 
@@ -83,15 +94,24 @@ export const MemberCard: React.FC<MemberCardProps> = ({
       <View style={styles.handStatusRow}>
         {member.hasReceivedHand ? (
           <View style={styles.handReceivedBadge}>
-            <Icon name="check" size={12} color="#047857" style={{ marginRight: 4 }} />
+            <Icon name="check" size={12} color={SOL_COLORS.successDark} style={{ marginRight: 4 }} />
             <Text style={styles.handReceivedText}>
-              Main touchée {member.handReceivedDate ? `le ${formatDateShort(member.handReceivedDate)}` : ''}
+              {member.handsCount > 1
+                ? `Toutes les mains reçues (${member.handsCount}/${member.handsCount})`
+                : `Main reçue ${member.handReceivedDate ? `le ${formatDateShort(member.handReceivedDate)}` : ''}`}
+            </Text>
+          </View>
+        ) : member.handsCount > 1 && (member.receivedHandsCount || 0) > 0 ? (
+          <View style={styles.handPartialBadge}>
+            <Icon name="check" size={12} color="#0284C7" style={{ marginRight: 4 }} />
+            <Text style={styles.handPartialText}>
+              {member.receivedHandsCount}/{member.handsCount} main(s) perçue(s)
             </Text>
           </View>
         ) : (
           <View style={styles.handPendingBadge}>
-            <Icon name="clock" size={12} color="#475569" style={{ marginRight: 4 }} />
-            <Text style={styles.handPendingText}>Main en attente de tour</Text>
+            <Icon name="clock" size={12} color={SOL_COLORS.textSecondary} style={{ marginRight: 4 }} />
+            <Text style={styles.handPendingText}>En attente de son tour</Text>
           </View>
         )}
 
@@ -107,33 +127,33 @@ export const MemberCard: React.FC<MemberCardProps> = ({
         <View style={styles.statusBox}>
           {member.paymentStatusToday === 'PAID_IN_ADVANCE' ? (
             <View style={styles.badgeAdvance}>
-              <Icon name="check" size={12} color="#059669" style={{ marginRight: 4 }} />
+              <Icon name="check" size={12} color={SOL_COLORS.primaryDark} style={{ marginRight: 4 }} />
               <Text style={styles.badgeAdvanceText}>
-                Couvert jusqu'au {formatDateShort(member.paidUntilDate)}
+                Couvert : {formatDateShort(member.paidUntilDate)}
               </Text>
             </View>
           ) : member.paymentStatusToday === 'PAID_TODAY' ? (
             <View style={styles.badgePaid}>
-              <Icon name="check" size={12} color="#059669" style={{ marginRight: 4 }} />
-              <Text style={styles.badgePaidText}>Payé aujourd'hui</Text>
+              <Icon name="check" size={12} color={SOL_COLORS.successDark} style={{ marginRight: 4 }} />
+              <Text style={styles.badgePaidText}>À jour aujourd'hui</Text>
             </View>
           ) : member.paymentStatusToday === 'OVERDUE' ? (
             <View style={styles.badgeOverdue}>
-              <Icon name="alert" size={12} color="#DC2626" style={{ marginRight: 4 }} />
+              <Icon name="alert" size={12} color={SOL_COLORS.dangerDark} style={{ marginRight: 4 }} />
               <Text style={styles.badgeOverdueText}>
-                En retard ({member.overdueRoundsCount} main{member.overdueRoundsCount > 1 ? 's' : ''})
+                Retard ({member.overdueRoundsCount} main{member.overdueRoundsCount > 1 ? 's' : ''})
               </Text>
             </View>
           ) : (
             <View style={styles.badgeUnpaid}>
-              <Icon name="clock" size={12} color="#D97706" style={{ marginRight: 4 }} />
-              <Text style={styles.badgeUnpaidText}>Non payé aujourd'hui</Text>
+              <Icon name="clock" size={12} color={SOL_COLORS.accent} style={{ marginRight: 4 }} />
+              <Text style={styles.badgeUnpaidText}>À encaisser</Text>
             </View>
           )}
         </View>
 
         <View style={styles.financialBox}>
-          <Text style={styles.balanceLabel}>Total cotisé :</Text>
+          <Text style={styles.balanceLabel}>Total cotisé</Text>
           <Text style={styles.balanceAmount}>{formatCurrency(member.totalPaidAmount || member.currentBalance)}</Text>
         </View>
       </View>
@@ -142,30 +162,41 @@ export const MemberCard: React.FC<MemberCardProps> = ({
       <View style={styles.actionRow}>
         {/* Quick Collect Action */}
         <TouchableOpacity
-          activeOpacity={0.7}
+          activeOpacity={0.8}
           onPress={handleCollectPress}
           style={[styles.actionBtn, styles.collectBtn, isCovered && styles.collectBtnCovered]}
         >
           <Icon
             name={isCovered ? 'plus' : 'collect'}
             size={14}
-            color={isCovered ? '#059669' : '#FFFFFF'}
+            color={isCovered ? SOL_COLORS.primaryDark : '#FFFFFF'}
             style={{ marginRight: 6 }}
           />
           <Text style={[styles.actionBtnText, isCovered && styles.collectBtnTextCovered]}>
-            {isCovered ? 'Avance (Ajouter)' : 'Encaisser'}
+            {isCovered ? 'Ajouter avance' : member.handsCount > 1 ? `Encaisser (${member.handsCount} mains)` : 'Encaisser cotisation'}
           </Text>
         </TouchableOpacity>
 
         {/* Payout Hand Action */}
-        {!member.hasReceivedHand && (
+        {member.hasReceivedHand ? (
+          <View style={[styles.actionBtn, styles.payoutBtnDisabled]}>
+            <Icon name="check" size={14} color="#059669" style={{ marginRight: 6 }} />
+            <Text style={styles.payoutBtnDisabledText}>
+              {member.handsCount > 1 ? `${member.handsCount}/${member.handsCount} mains remises` : 'Main déjà remise'}
+            </Text>
+          </View>
+        ) : (
           <TouchableOpacity
-            activeOpacity={0.7}
+            activeOpacity={0.8}
             onPress={handlePayoutPress}
             style={[styles.actionBtn, styles.payoutBtn]}
           >
             <Icon name="crown" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.actionBtnText}>Donner la Main</Text>
+            <Text style={styles.actionBtnText}>
+              {member.handsCount > 1
+                ? `Décaisser (${(member.receivedHandsCount || 0) + 1}/${member.handsCount})`
+                : 'Décaisser'}
+            </Text>
           </TouchableOpacity>
         )}
       </View>
@@ -176,26 +207,22 @@ export const MemberCard: React.FC<MemberCardProps> = ({
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
+    borderRadius: 20,
+    padding: 16,
     marginBottom: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    ...SHADOWS.sm,
   },
   cardHighlightTurn: {
     borderColor: '#3B82F6',
-    backgroundColor: '#F0F7FF',
-    borderWidth: 2,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
   },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   avatar: {
     width: 44,
@@ -204,15 +231,15 @@ const styles = StyleSheet.create({
     backgroundColor: SOL_COLORS.secondary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: 12,
   },
   avatarHandReceived: {
-    backgroundColor: '#059669',
+    backgroundColor: SOL_COLORS.primary,
   },
   avatarText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '900',
+    fontWeight: '800',
   },
   nameContainer: {
     flex: 1,
@@ -227,160 +254,195 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: SOL_COLORS.textPrimary,
     flex: 1,
-    marginRight: 6,
+    marginRight: 8,
   },
   rankPill: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: SOL_COLORS.infoLighter,
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingVertical: 3,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#BFDBFE',
+  },
+  rankPillReceived: {
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderColor: SOL_COLORS.border,
   },
   rankPillText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#1D4ED8',
+    color: SOL_COLORS.info,
+  },
+  rankPillTextReceived: {
+    color: SOL_COLORS.textSecondary,
+  },
+  multiHandsBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  multiHandsBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#D97706',
+  },
+  payoutRanksText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0284C7',
   },
   phone: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 13,
+    color: SOL_COLORS.textSecondary,
     marginTop: 2,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   handStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 12,
+    gap: 8,
   },
   handReceivedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
+    backgroundColor: SOL_COLORS.successLighter,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   handReceivedText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#047857',
+    fontSize: 12,
+    fontWeight: '700',
+    color: SOL_COLORS.successDark,
+  },
+  handPartialBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  handPartialText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0369A1',
   },
   handPendingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   handPendingText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
+    color: SOL_COLORS.textSecondary,
   },
   advanceBadge: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: SOL_COLORS.primaryLight,
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   advanceBadgeText: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#16A34A',
+    color: SOL_COLORS.primaryDark,
   },
   middleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: '#F1F5F9',
-    marginBottom: 10,
+    borderColor: SOL_COLORS.borderLight,
+    marginBottom: 12,
   },
   statusBox: {
     flex: 1,
   },
-  badgePaid: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-  },
-  badgePaidText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-  },
   badgeAdvance: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ECFDF5',
+    backgroundColor: SOL_COLORS.primaryLight,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
     alignSelf: 'flex-start',
   },
   badgeAdvanceText: {
     fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
+    fontWeight: '700',
+    color: SOL_COLORS.primaryDark,
+  },
+  badgePaid: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: SOL_COLORS.successLighter,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  badgePaidText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: SOL_COLORS.successDark,
   },
   badgeOverdue: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: SOL_COLORS.dangerLighter,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
     alignSelf: 'flex-start',
   },
   badgeOverdueText: {
     fontSize: 11,
-    fontWeight: '800',
-    color: '#DC2626',
+    fontWeight: '700',
+    color: SOL_COLORS.dangerDark,
   },
   badgeUnpaid: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF3C7',
+    backgroundColor: SOL_COLORS.accentLighter,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
     alignSelf: 'flex-start',
   },
   badgeUnpaidText: {
     fontSize: 11,
-    fontWeight: '800',
-    color: '#D97706',
+    fontWeight: '700',
+    color: SOL_COLORS.accent,
   },
   financialBox: {
     alignItems: 'flex-end',
   },
   balanceLabel: {
-    fontSize: 10,
-    color: '#64748B',
+    fontSize: 11,
     fontWeight: '600',
+    color: SOL_COLORS.textMuted,
   },
   balanceAmount: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '900',
-    color: SOL_COLORS.primary,
+    color: SOL_COLORS.textPrimary,
+    marginTop: 2,
   },
   actionRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
   actionBtn: {
@@ -389,25 +451,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
-    borderRadius: 12,
+    borderRadius: 14,
   },
   collectBtn: {
     backgroundColor: SOL_COLORS.primary,
   },
   collectBtnCovered: {
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1.5,
-    borderColor: '#A7F3D0',
-  },
-  collectBtnTextCovered: {
-    color: '#047857',
+    backgroundColor: SOL_COLORS.primaryLight,
+    borderWidth: 1,
+    borderColor: '#99F6E4',
   },
   payoutBtn: {
-    backgroundColor: '#2563EB',
+    backgroundColor: SOL_COLORS.accent,
+  },
+  payoutBtnDisabled: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  payoutBtnDisabledText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#059669',
   },
   actionBtnText: {
-    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  collectBtnTextCovered: {
+    color: SOL_COLORS.primaryDark,
   },
 });

@@ -28,14 +28,20 @@ import { formatCurrency, formatDate, formatDateShort, getInitials } from '@/lib/
 import { arePhoneNumbersEqual, extractRaw8Digits, normalizePhoneNumber } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
-import { calculateCoverageDate, calculateContributionAmount } from '@/services/financialService';
+import {
+  calculateCoverageDate,
+  calculateContributionAmount,
+  calculateCycleContributionLimits,
+  calculateCycleTotalHands,
+} from '@/services/financialService';
 import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfService';
 
 export default function CollectScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ clientId?: string }>();
-  const { activeCollector } = useAuth();
+  const { activeCollector, userRole } = useAuth();
   const { triggerSync } = useSync();
+  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -74,22 +80,44 @@ export default function CollectScreen() {
     init();
   }, [params.clientId]);
 
+  const totalCycleHands = calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
+  const currentPaidHands = selectedClient?.paidHandsCount || 0;
+  const memberHandsCount = Math.max(1, selectedClient?.handsCount || 1);
+  const limits = calculateCycleContributionLimits({
+    currentPaidHands,
+    totalCycleHands,
+    memberHandsCount,
+    unitAmount,
+  });
+
+  const presetHands = memberHandsCount > 1
+    ? [1, 2, memberHandsCount, memberHandsCount * 2]
+    : [1, 2, 3, 5];
+
   const handleSelectClient = (client: Client) => {
     triggerLightImpact();
     setSelectedClient(client);
-    setHandsCount(1);
+    const clientMemberHands = Math.max(1, client.handsCount || 1);
+    const clientLimits = calculateCycleContributionLimits({
+      currentPaidHands: client.paidHandsCount || 0,
+      totalCycleHands,
+      memberHandsCount: clientMemberHands,
+      unitAmount: client.dailyAmount || unitAmount,
+    });
+    setHandsCount(clientLimits.remainingHands > 0 ? (clientMemberHands > 1 ? clientMemberHands : 1) : 0);
     setIsClientModalOpen(false);
     setSearchQuery('');
   };
 
   const handleSelectHandsCount = (count: number) => {
     triggerLightImpact();
-    setHandsCount(Math.max(1, count));
+    const clamped = Math.min(limits.remainingHands, Math.max(1, count));
+    setHandsCount(clamped);
   };
 
   const handleIncrement = () => {
     triggerLightImpact();
-    if (handsCount < 50) {
+    if (handsCount < limits.remainingHands) {
       setHandsCount(handsCount + 1);
     }
   };
@@ -105,7 +133,7 @@ export default function CollectScreen() {
   const todayStr = new Date().toISOString().split('T')[0];
   const coveragePreview = calculateCoverageDate({
     todayStr,
-    handsCovered: handsCount,
+    handsCovered: handsCount > 0 ? handsCount : 1,
     frequency: business?.frequency || 'DAILY',
     currentPaidUntilDate: selectedClient?.paidUntilDate,
   });
@@ -113,14 +141,35 @@ export default function CollectScreen() {
   const previewDateStr = coveragePreview.paidUntilDate;
 
   const handleOpenPinValidation = () => {
+    if (isReadOnly) {
+      triggerErrorFeedback();
+      Alert.alert('Accès Lecture Seule', "L'encaissement est réservé aux gestionnaires.");
+      return;
+    }
     if (!selectedClient) {
       triggerErrorFeedback();
       Alert.alert('Aucun adhérent', 'Veuillez sélectionner un enfant adhérent.');
       return;
     }
+    if (limits.isCycleCompleted) {
+      triggerErrorFeedback();
+      Alert.alert(
+        'Plafond du cycle atteint',
+        `${selectedClient.fullName} a déjà complété toutes ses cotisations pour ce cycle (${currentPaidHands}/${limits.maxAllowedHands} mains - ${formatCurrency(limits.maxPotAmount)}).`
+      );
+      return;
+    }
     if (handsCount <= 0 || totalAmount <= 0) {
       triggerErrorFeedback();
       Alert.alert('Nombre de mains invalide', 'Veuillez sélectionner au moins 1 main.');
+      return;
+    }
+    if (handsCount > limits.remainingHands) {
+      triggerErrorFeedback();
+      Alert.alert(
+        'Dépassement du plafond',
+        `Cet adhérent ne peut cotiser que ${limits.remainingHands} main(s) restante(s) maximum pour ce cycle.`
+      );
       return;
     }
     triggerMediumImpact();
@@ -202,8 +251,6 @@ export default function CollectScreen() {
     );
   });
 
-  const presetHands = [1, 2, 3, 4, 5, 10];
-
   return (
     <SafeAreaView style={styles.container}>
       <Header
@@ -265,10 +312,17 @@ export default function CollectScreen() {
                 <Text style={styles.clientPhone}>{selectedClient.phoneNumber}</Text>
 
                 <View style={styles.clientBadgesRow}>
-                  <View style={styles.rankPill}>
-                    <Icon name="crown" size={11} color="#1D4ED8" style={{ marginRight: 3 }} />
-                    <Text style={styles.rankPillText}>Main #{selectedClient.payoutRank || 1}</Text>
-                  </View>
+                  {selectedClient.handsCount && selectedClient.handsCount > 1 ? (
+                    <View style={styles.multiHandsBadge}>
+                      <Icon name="crown" size={11} color="#D97706" style={{ marginRight: 4 }} />
+                      <Text style={styles.multiHandsBadgeText}>{selectedClient.handsCount} mains (#{selectedClient.payoutRanks || selectedClient.payoutRank})</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.rankPill}>
+                      <Icon name="crown" size={11} color="#1D4ED8" style={{ marginRight: 3 }} />
+                      <Text style={styles.rankPillText}>Main #{selectedClient.payoutRank || 1}</Text>
+                    </View>
+                  )}
 
                   <View style={styles.balancePill}>
                     <Text style={styles.balancePillText}>
@@ -367,21 +421,36 @@ export default function CollectScreen() {
           <View style={styles.coverageBadge}>
             <Icon name="calendar" size={14} color="#065F46" style={{ marginRight: 6 }} />
             <Text style={styles.coverageBadgeText}>
-              Avance : Couvre jusqu'au {formatDateShort(previewDateStr)}
+              {limits.isCycleCompleted
+                ? `Plafond atteint (${currentPaidHands}/${limits.maxAllowedHands} mains cotisées)`
+                : `Avance : Couvre jusqu'au ${formatDateShort(previewDateStr)}`}
             </Text>
           </View>
         </View>
+
+        {limits.isCycleCompleted && (
+          <View style={styles.cycleCompletedBanner}>
+            <Icon name="crown" size={16} color="#059669" style={{ marginRight: 8 }} />
+            <Text style={styles.cycleCompletedText}>
+              Cycle complété : Cet adhérent a cotisé la totalité des {limits.maxAllowedHands} mains ({formatCurrency(limits.maxPotAmount)}). Aucun versement supplémentaire n'est requis.
+            </Text>
+          </View>
+        )}
 
         {/* Main Action Button */}
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={handleOpenPinValidation}
-          disabled={isProcessing}
-          style={styles.submitBtn}
+          disabled={isProcessing || limits.isCycleCompleted}
+          style={[styles.submitBtn, limits.isCycleCompleted && styles.submitBtnDisabled]}
         >
           <Icon name="shield" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
           <Text style={styles.submitBtnText}>
-            {isProcessing ? 'Traitement en cours...' : `Valider l'Encaissement (${formatCurrency(totalAmount)})`}
+            {limits.isCycleCompleted
+              ? 'Cycle Complété (Plafond Atteint)'
+              : isProcessing
+              ? 'Traitement en cours...'
+              : `Valider l'Encaissement (${formatCurrency(totalAmount)})`}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -715,6 +784,19 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#1D4ED8',
   },
+  multiHandsBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  multiHandsBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#D97706',
+  },
   balancePill: {
     backgroundColor: '#ECFDF5',
     paddingHorizontal: 8,
@@ -887,6 +969,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#34D399',
   },
+  cycleCompletedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    marginBottom: 12,
+  },
+  cycleCompletedText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#065F46',
+    fontWeight: '700',
+    lineHeight: 16,
+  },
   submitBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -899,6 +998,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 3,
+  },
+  submitBtnDisabled: {
+    backgroundColor: '#94A3B8',
+    shadowOpacity: 0,
+    elevation: 0,
   },
   submitBtnText: {
     fontSize: 15,

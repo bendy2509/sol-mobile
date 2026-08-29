@@ -5,11 +5,10 @@ import {
   Modal,
   TouchableOpacity,
   StyleSheet,
-  Platform,
 } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { Icon } from '@/components/Icon';
-import { SOL_COLORS } from '@/constants/Colors';
+import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 import { triggerLightImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 
 interface PinVerificationModalProps {
@@ -92,10 +91,10 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.iconCircle}>
-              <Icon name="shield" size={24} color="#FFFFFF" />
+              <Icon name="shield" size={22} color="#FFFFFF" />
             </View>
             <TouchableOpacity onPress={onCancel} style={styles.closeBtn}>
-              <Icon name="close" size={18} color="#64748B" />
+              <Icon name="close" size={16} color={SOL_COLORS.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -119,27 +118,32 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             })}
           </View>
 
-          {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
+          {errorMessage && (
+            <View style={styles.errorContainer}>
+              <Icon name="alert" size={14} color={SOL_COLORS.danger} style={{ marginRight: 6 }} />
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
+          )}
 
-          {/* Tactile Keypad */}
-          <View style={styles.keypadGrid}>
-            {numpadKeys.map((row, rowIndex) => (
-              <View key={`row-${rowIndex}`} style={styles.keypadRow}>
-                {row.map((k) => {
-                  const isAction = k === 'C' || k === '⌫';
+          {/* Keypad */}
+          <View style={styles.keypad}>
+            {numpadKeys.map((row, rIdx) => (
+              <View key={rIdx} style={styles.keypadRow}>
+                {row.map((key) => {
+                  const isAction = key === 'C' || key === '⌫';
                   return (
                     <TouchableOpacity
-                      key={k}
-                      activeOpacity={0.6}
+                      key={key}
+                      activeOpacity={0.7}
                       onPress={() => {
-                        if (k === 'C') handleClear();
-                        else if (k === '⌫') handleBackspace();
-                        else handleDigit(k);
+                        if (key === 'C') handleClear();
+                        else if (key === '⌫') handleBackspace();
+                        else handleDigit(key);
                       }}
-                      style={[styles.keyButton, isAction && styles.actionKeyButton]}
+                      style={[styles.keyBtn, isAction && styles.keyBtnAction]}
                     >
-                      <Text style={[styles.keyText, isAction && styles.actionKeyText]}>
-                        {k}
+                      <Text style={[styles.keyText, isAction && styles.keyTextAction]}>
+                        {key}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -147,11 +151,6 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
               </View>
             ))}
           </View>
-
-          {/* Cancel Button */}
-          <TouchableOpacity activeOpacity={0.7} onPress={onCancel} style={styles.cancelBtn}>
-            <Text style={styles.cancelBtnText}>Annuler</Text>
-          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -161,30 +160,26 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   card: {
     width: '100%',
-    maxWidth: 380,
+    maxWidth: 360,
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
-    padding: 22,
+    padding: 24,
     alignItems: 'center',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
+    ...SHADOWS.lg,
   },
   header: {
     width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 14,
   },
   iconCircle: {
     width: 44,
@@ -193,100 +188,98 @@ const styles = StyleSheet.create({
     backgroundColor: SOL_COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    ...SHADOWS.sm,
   },
   closeBtn: {
-    padding: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     fontSize: 18,
     fontWeight: '900',
     color: SOL_COLORS.textPrimary,
     textAlign: 'center',
-    marginTop: 4,
+    letterSpacing: -0.3,
   },
   subtitle: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 13,
+    color: SOL_COLORS.textSecondary,
     textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-    paddingHorizontal: 10,
-    fontWeight: '600',
+    marginTop: 6,
+    marginBottom: 20,
+    lineHeight: 18,
   },
   dotsRow: {
     flexDirection: 'row',
-    gap: 18,
-    marginBottom: 12,
+    gap: 14,
+    marginBottom: 16,
   },
   dot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     borderWidth: 2,
-    borderColor: '#94A3B8',
+    borderColor: SOL_COLORS.borderStrong,
     backgroundColor: '#FFFFFF',
   },
   dotFilled: {
     backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primary,
-    transform: [{ scale: 1.25 }],
+    borderColor: SOL_COLORS.primaryDark,
   },
   dotError: {
-    borderColor: '#EF4444',
+    borderColor: SOL_COLORS.danger,
+    backgroundColor: SOL_COLORS.dangerLight,
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: SOL_COLORS.dangerLighter,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    marginBottom: 14,
   },
   errorText: {
-    color: '#DC2626',
+    color: SOL_COLORS.dangerDark,
     fontSize: 12,
-    fontWeight: '800',
-    marginBottom: 8,
+    fontWeight: '700',
   },
-  keypadGrid: {
+  keypad: {
     width: '100%',
-    marginTop: 6,
-    marginBottom: 6,
+    gap: 10,
+    marginTop: 4,
   },
   keypadRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    gap: 10,
   },
-  keyButton: {
+  keyBtn: {
     flex: 1,
     height: 52,
-    marginHorizontal: 4,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 16,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 1,
   },
-  actionKeyButton: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#94A3B8',
+  keyBtnAction: {
+    backgroundColor: '#FFFFFF',
+    borderColor: SOL_COLORS.borderStrong,
   },
   keyText: {
-    fontSize: 22,
-    fontWeight: '900',
+    fontSize: 20,
+    fontWeight: '800',
     color: SOL_COLORS.textPrimary,
   },
-  actionKeyText: {
+  keyTextAction: {
     fontSize: 16,
-    color: '#64748B',
-  },
-  cancelBtn: {
-    marginTop: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-  },
-  cancelBtnText: {
-    fontSize: 14,
+    color: SOL_COLORS.textSecondary,
     fontWeight: '700',
-    color: '#64748B',
   },
 });

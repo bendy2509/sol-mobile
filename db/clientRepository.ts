@@ -67,6 +67,9 @@ export async function getAllClients(options?: {
     daily_amount: number;
     current_balance: number;
     payout_rank: number | null;
+    payout_ranks: string | null;
+    hands_count: number | null;
+    received_hands_count: number | null;
     has_received_hand: number | null;
     has_received_payout: number | null;
     hand_received_date: string | null;
@@ -81,7 +84,15 @@ export async function getAllClients(options?: {
   const todayStr = new Date().toISOString().split('T')[0];
 
   return rows.map((r) => {
-    const hasHand = Boolean(r.has_received_hand || r.has_received_payout);
+    const handsCount = Math.max(1, Number(r.hands_count || 1));
+    const receivedHandsCount = Number(
+      r.received_hands_count !== null && r.received_hands_count !== undefined
+        ? r.received_hands_count
+        : r.has_received_hand || r.has_received_payout
+        ? handsCount
+        : 0
+    );
+    const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
     const balance = Number(r.current_balance || 0);
     const totalPaid = Number(r.total_paid_amount || balance);
     const paidHands = Number(r.paid_hands_count || 0);
@@ -97,6 +108,9 @@ export async function getAllClients(options?: {
       currentBalance: balance,
       payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
       rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
+      payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
+      handsCount,
+      receivedHandsCount,
       hasReceivedHand: hasHand,
       hasReceivedPayout: hasHand,
       handReceivedDate: r.hand_received_date || undefined,
@@ -126,6 +140,9 @@ export async function getClientById(id: string): Promise<Client | null> {
     daily_amount: number;
     current_balance: number;
     payout_rank: number | null;
+    payout_ranks: string | null;
+    hands_count: number | null;
+    received_hands_count: number | null;
     has_received_hand: number | null;
     has_received_payout: number | null;
     hand_received_date: string | null;
@@ -140,7 +157,15 @@ export async function getClientById(id: string): Promise<Client | null> {
   if (!r) return null;
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const hasHand = Boolean(r.has_received_hand || r.has_received_payout);
+  const handsCount = Math.max(1, Number(r.hands_count || 1));
+  const receivedHandsCount = Number(
+    r.received_hands_count !== null && r.received_hands_count !== undefined
+      ? r.received_hands_count
+      : r.has_received_hand || r.has_received_payout
+      ? handsCount
+      : 0
+  );
+  const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
   const balance = Number(r.current_balance || 0);
   const totalPaid = Number(r.total_paid_amount || balance);
   const paidHands = Number(r.paid_hands_count || 0);
@@ -156,6 +181,9 @@ export async function getClientById(id: string): Promise<Client | null> {
     currentBalance: balance,
     payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
     rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
+    payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
+    handsCount,
+    receivedHandsCount,
     hasReceivedHand: hasHand,
     hasReceivedPayout: hasHand,
     handReceivedDate: r.hand_received_date || undefined,
@@ -185,6 +213,9 @@ export async function getClientByQrToken(qrCodeToken: string): Promise<Client | 
     daily_amount: number;
     current_balance: number;
     payout_rank: number | null;
+    payout_ranks: string | null;
+    hands_count: number | null;
+    received_hands_count: number | null;
     has_received_hand: number | null;
     has_received_payout: number | null;
     hand_received_date: string | null;
@@ -199,7 +230,15 @@ export async function getClientByQrToken(qrCodeToken: string): Promise<Client | 
   if (!r) return null;
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const hasHand = Boolean(r.has_received_hand || r.has_received_payout);
+  const handsCount = Math.max(1, Number(r.hands_count || 1));
+  const receivedHandsCount = Number(
+    r.received_hands_count !== null && r.received_hands_count !== undefined
+      ? r.received_hands_count
+      : r.has_received_hand || r.has_received_payout
+      ? handsCount
+      : 0
+  );
+  const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
   const balance = Number(r.current_balance || 0);
   const totalPaid = Number(r.total_paid_amount || balance);
   const paidHands = Number(r.paid_hands_count || 0);
@@ -215,6 +254,9 @@ export async function getClientByQrToken(qrCodeToken: string): Promise<Client | 
     currentBalance: balance,
     payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
     rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
+    payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
+    handsCount,
+    receivedHandsCount,
     hasReceivedHand: hasHand,
     hasReceivedPayout: hasHand,
     handReceivedDate: r.hand_received_date || undefined,
@@ -236,9 +278,11 @@ export async function createClient(data: {
   phoneNumber: string;
   type: ClientType;
   dailyAmount: number;
+  handsCount?: number;
+  payoutRank?: number;
+  payoutRanks?: string | number[];
   initialDeposit?: number;
   initialBalance?: number;
-  payoutRank?: number;
   businessId?: string;
   collectorId?: string;
 }): Promise<Client> {
@@ -247,11 +291,27 @@ export async function createClient(data: {
   const activeBusiness = await getActiveBusinessConfig();
   const businessId = data.businessId || activeBusiness?.id || null;
 
-  const countRow = await db.getFirstAsync<{ count: number }>(
-    `SELECT count(*) as count FROM clients WHERE collector_id = ?`,
+  const totalHandsRow = await db.getFirstAsync<{ total: number }>(
+    `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
     [collectorId]
   );
-  const payoutRank = data.payoutRank || (countRow?.count || 0) + 1;
+  const currentTotalHands = Number(totalHandsRow?.total || 0);
+  const startingRank = currentTotalHands + 1;
+  const handsCount = Math.max(1, Number(data.handsCount) || 1);
+  const payoutRank = data.payoutRank || startingRank;
+
+  let payoutRanksStr: string;
+  if (Array.isArray(data.payoutRanks)) {
+    payoutRanksStr = data.payoutRanks.join(',');
+  } else if (data.payoutRanks) {
+    payoutRanksStr = String(data.payoutRanks);
+  } else {
+    const ranks = [];
+    for (let i = 0; i < handsCount; i++) {
+      ranks.push(payoutRank + i);
+    }
+    payoutRanksStr = ranks.join(',');
+  }
 
   const id = uuidv4();
   const shortId = id.replace(/-/g, '').substring(0, 8).toUpperCase();
@@ -269,8 +329,8 @@ export async function createClient(data: {
   }
 
   await db.runAsync(
-    `INSERT INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, has_received_hand, has_received_payout, hand_received_date, total_paid_amount, paid_hands_count, paid_until_date, qr_code_token, created_at, sync_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, ?, ?, ?, ?, ?, 'PENDING')`,
+    `INSERT INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, payout_ranks, hands_count, received_hands_count, has_received_hand, has_received_payout, hand_received_date, total_paid_amount, paid_hands_count, paid_until_date, qr_code_token, created_at, sync_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, ?, ?, ?, ?, 'PENDING')`,
     [
       id,
       businessId,
@@ -281,6 +341,8 @@ export async function createClient(data: {
       data.dailyAmount,
       initialBalance,
       payoutRank,
+      payoutRanksStr,
+      handsCount,
       initialBalance,
       initialHandsCount,
       todayStr,
@@ -318,6 +380,9 @@ export async function createClient(data: {
     currentBalance: initialBalance,
     payoutRank,
     rankOrder: payoutRank,
+    payoutRanks: payoutRanksStr || undefined,
+    handsCount,
+    receivedHandsCount: 0,
     hasReceivedHand: false,
     hasReceivedPayout: false,
     handReceivedDate: undefined,
@@ -348,6 +413,8 @@ export async function updateClientDetails(
     fullName?: string;
     phoneNumber?: string;
     payoutRank?: number;
+    payoutRanks?: string | number[];
+    handsCount?: number;
   }
 ): Promise<void> {
   const db = await getDatabase();
@@ -373,6 +440,15 @@ export async function updateClientDetails(
   if (data.payoutRank !== undefined) {
     fields.push('payout_rank = ?');
     params.push(data.payoutRank);
+  }
+  if (data.payoutRanks !== undefined) {
+    const ranksStr = Array.isArray(data.payoutRanks) ? data.payoutRanks.join(',') : data.payoutRanks;
+    fields.push('payout_ranks = ?');
+    params.push(ranksStr);
+  }
+  if (data.handsCount !== undefined) {
+    fields.push('hands_count = ?');
+    params.push(Math.max(1, Number(data.handsCount) || 1));
   }
 
   if (fields.length === 0) return;

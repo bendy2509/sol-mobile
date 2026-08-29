@@ -120,6 +120,8 @@ export async function getSolGroupMembers(solGroupId: string): Promise<SolGroupMe
         currentBalance: balance,
         payoutRank: m.payout_rank,
         rankOrder: m.payout_rank,
+        handsCount: 1,
+        receivedHandsCount: 0,
         hasReceivedHand: false,
         hasReceivedPayout: false,
         handReceivedDate: undefined,

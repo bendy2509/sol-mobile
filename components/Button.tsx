@@ -8,13 +8,13 @@ import {
   TextStyle,
   StyleProp,
 } from 'react-native';
-import { SOL_COLORS } from '@/constants/Colors';
+import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 import { triggerMediumImpact } from '@/lib/haptics';
 
 interface ButtonProps {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'danger' | 'outline';
+  variant?: 'primary' | 'secondary' | 'danger' | 'outline' | 'subtle';
   size?: 'small' | 'medium' | 'large';
   disabled?: boolean;
   loading?: boolean;
@@ -53,6 +53,7 @@ export const Button: React.FC<ButtonProps> = ({
     else if (variant === 'secondary') s.push(styles.secondaryContainer);
     else if (variant === 'danger') s.push(styles.dangerContainer);
     else if (variant === 'outline') s.push(styles.outlineContainer);
+    else if (variant === 'subtle') s.push(styles.subtleContainer);
 
     if (disabled || loading) s.push(styles.disabledContainer);
 
@@ -67,6 +68,7 @@ export const Button: React.FC<ButtonProps> = ({
     else s.push(styles.largeText);
 
     if (variant === 'outline') s.push(styles.outlineText);
+    else if (variant === 'subtle') s.push(styles.subtleText);
     else s.push(styles.whiteText);
 
     return s;
@@ -96,54 +98,53 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 14,
+    borderRadius: 16,
     gap: 8,
   },
   smallContainer: {
     paddingVertical: 8,
     paddingHorizontal: 14,
+    borderRadius: 12,
   },
   mediumContainer: {
     paddingVertical: 12,
-    paddingHorizontal: 18,
+    paddingHorizontal: 20,
+    borderRadius: 14,
   },
   largeContainer: {
-    height: 56,
-    paddingHorizontal: 20,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
+    height: 54,
+    paddingHorizontal: 22,
+    borderRadius: 16,
+    ...SHADOWS.sm,
   },
   primaryContainer: {
     backgroundColor: SOL_COLORS.primary,
-    borderWidth: 1.5,
-    borderColor: SOL_COLORS.primaryDark,
   },
   secondaryContainer: {
     backgroundColor: SOL_COLORS.secondary,
-    borderWidth: 1.5,
-    borderColor: '#334155',
   },
   dangerContainer: {
     backgroundColor: SOL_COLORS.danger,
-    borderWidth: 1.5,
-    borderColor: '#B91C1C',
   },
   outlineContainer: {
     backgroundColor: 'transparent',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: SOL_COLORS.primary,
   },
+  subtleContainer: {
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+  },
   disabledContainer: {
-    backgroundColor: '#94A3B8',
-    borderColor: '#94A3B8',
+    backgroundColor: '#CBD5E1',
+    borderColor: '#CBD5E1',
     elevation: 0,
     shadowOpacity: 0,
   },
   baseText: {
     fontWeight: '800',
+    letterSpacing: 0.2,
   },
   smallText: {
     fontSize: 13,
@@ -152,12 +153,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   largeText: {
-    fontSize: 17,
+    fontSize: 16,
   },
   whiteText: {
     color: '#FFFFFF',
   },
   outlineText: {
     color: SOL_COLORS.primary,
+  },
+  subtleText: {
+    color: SOL_COLORS.textPrimary,
   },
 });

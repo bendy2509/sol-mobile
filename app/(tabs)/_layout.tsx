@@ -3,10 +3,10 @@ import { Tabs, Redirect } from 'expo-router';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { Icon } from '@/components/Icon';
-import { SOL_COLORS } from '@/constants/Colors';
+import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 
 export default function TabLayout() {
-  const { isAuthenticated, isPendingApproval, isLoading, userRole } = useAuth();
+  const { isAuthenticated, isPendingApproval, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -28,19 +28,20 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: SOL_COLORS.primary,
-        tabBarInactiveTintColor: '#94A3B8',
+        tabBarInactiveTintColor: SOL_COLORS.textMuted,
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
-          borderTopWidth: 1.5,
-          borderTopColor: '#E2E8F0',
-          height: 64,
-          paddingBottom: 8,
+          borderTopWidth: 1,
+          borderTopColor: SOL_COLORS.border,
+          height: 66,
+          paddingBottom: 10,
           paddingTop: 8,
+          ...SHADOWS.sm,
         },
         tabBarLabelStyle: {
           fontSize: 11,
-          fontWeight: '800',
-          letterSpacing: 0.2,
+          fontWeight: '700',
+          letterSpacing: 0.1,
         },
         headerShown: false,
       }}
@@ -48,42 +49,45 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Tableau de bord',
+          title: 'Accueil',
           tabBarIcon: ({ color, focused }) => (
-            <Icon
-              name="dashboard"
-              size={20}
-              color={color}
-              style={focused ? styles.iconActive : undefined}
-            />
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
+              <Icon
+                name="dashboard"
+                size={20}
+                color={focused ? SOL_COLORS.primaryDark : color}
+              />
+            </View>
           ),
         }}
       />
       <Tabs.Screen
         name="collect"
         options={{
-          title: 'Collecte',
+          title: 'Cotisation',
           tabBarIcon: ({ color, focused }) => (
-            <Icon
-              name="collect"
-              size={20}
-              color={color}
-              style={focused ? styles.iconActive : undefined}
-            />
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
+              <Icon
+                name="collect"
+                size={20}
+                color={focused ? SOL_COLORS.primaryDark : color}
+              />
+            </View>
           ),
         }}
       />
       <Tabs.Screen
         name="sol"
         options={{
-          title: 'Sol (ROSCA)',
+          title: 'Cycle SOL',
           tabBarIcon: ({ color, focused }) => (
-            <Icon
-              name="sol"
-              size={20}
-              color={color}
-              style={focused ? styles.iconActive : undefined}
-            />
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
+              <Icon
+                name="sol"
+                size={20}
+                color={focused ? SOL_COLORS.primaryDark : color}
+              />
+            </View>
           ),
         }}
       />
@@ -92,12 +96,13 @@ export default function TabLayout() {
         options={{
           title: 'Historique',
           tabBarIcon: ({ color, focused }) => (
-            <Icon
-              name="history"
-              size={20}
-              color={color}
-              style={focused ? styles.iconActive : undefined}
-            />
+            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
+              <Icon
+                name="history"
+                size={20}
+                color={focused ? SOL_COLORS.primaryDark : color}
+              />
+            </View>
           ),
         }}
       />
@@ -114,11 +119,18 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: SOL_COLORS.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  iconActive: {
-    transform: [{ scale: 1.1 }],
+  iconWrap: {
+    width: 36,
+    height: 30,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconWrapActive: {
+    backgroundColor: SOL_COLORS.primaryLight,
   },
 });

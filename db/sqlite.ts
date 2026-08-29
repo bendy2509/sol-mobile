@@ -46,6 +46,12 @@ class WebSQLiteAdapter {
       const saved = await AsyncStorage.getItem('SOL_WEB_DB_STORE');
       if (saved) {
         this.data = JSON.parse(saved);
+        if (Array.isArray(this.data.clients)) {
+          this.data.clients.forEach((c) => {
+            if (!c.hands_count || c.hands_count < 1) c.hands_count = 1;
+            if (c.received_hands_count === undefined || c.received_hands_count === null) c.received_hands_count = 0;
+          });
+        }
       }
     } catch {}
   }
@@ -90,29 +96,54 @@ class WebSQLiteAdapter {
           this.data.business_configs.push(item);
         }
       } else if (tableName === 'clients') {
-        const [
-          id, business_id, collector_id, full_name, phone_number, type,
-          daily_amount, current_balance, payout_rank, has_received_hand,
-          hand_received_date, total_paid_amount, paid_hands_count, paid_until_date,
-          qr_code_token, created_at
-        ] = params;
-        const existingIdx = this.data.clients.findIndex((c) => c.id === id || c.qr_code_token === qr_code_token);
-        const item = {
-          id, business_id, collector_id, full_name, phone_number, type: type || 'SABOTAY',
-          daily_amount: Number(daily_amount), current_balance: Number(current_balance),
-          payout_rank: payout_rank !== null && payout_rank !== undefined ? Number(payout_rank) : null,
-          has_received_payout: has_received_hand ? 1 : 0,
-          has_received_hand: has_received_hand ? 1 : 0,
-          hand_received_date: hand_received_date || null,
-          total_paid_amount: Number(total_paid_amount || current_balance || 0),
-          paid_hands_count: Number(paid_hands_count || 0),
-          paid_until_date: paid_until_date || null,
-          qr_code_token, created_at, sync_status: 'PENDING'
+        const columnsMatch = cleanSql.match(/INSERT (?:OR REPLACE )?INTO\s+clients\s*\(([^)]+)\)/i);
+        const columnNames = columnsMatch
+          ? columnsMatch[1].split(',').map((c) => c.trim().toLowerCase())
+          : [];
+
+        let clientObj: any = {
+          sync_status: 'PENDING',
+          hands_count: 1,
+          received_hands_count: 0,
+          has_received_payout: 0,
+          has_received_hand: 0,
+          hand_received_date: null,
+          total_paid_amount: 0,
+          paid_hands_count: 0,
+          current_balance: 0,
         };
-        if (existingIdx >= 0) {
-          this.data.clients[existingIdx] = item;
+
+        if (columnNames.length > 0 && columnNames.length === params.length) {
+          columnNames.forEach((col, idx) => {
+            clientObj[col] = params[idx];
+          });
         } else {
-          this.data.clients.push(item);
+          const [
+            id, business_id, collector_id, full_name, phone_number, type,
+            daily_amount, current_balance, payout_rank, payout_ranks, hands_count
+          ] = params;
+          clientObj = {
+            ...clientObj,
+            id, business_id, collector_id, full_name, phone_number, type,
+            daily_amount, current_balance, payout_rank, payout_ranks, hands_count
+          };
+        }
+
+        clientObj.hands_count = Math.max(1, Number(clientObj.hands_count || 1));
+        clientObj.daily_amount = Number(clientObj.daily_amount || 0);
+        clientObj.current_balance = Number(clientObj.current_balance || 0);
+        clientObj.payout_rank = clientObj.payout_rank !== null && clientObj.payout_rank !== undefined ? Number(clientObj.payout_rank) : null;
+        clientObj.payout_ranks = clientObj.payout_ranks || (clientObj.payout_rank ? String(clientObj.payout_rank) : null);
+        clientObj.total_paid_amount = Number(clientObj.total_paid_amount || clientObj.current_balance || 0);
+        clientObj.paid_hands_count = Number(clientObj.paid_hands_count || 0);
+        clientObj.has_received_hand = clientObj.has_received_hand ? 1 : 0;
+        clientObj.has_received_payout = clientObj.has_received_payout ? 1 : 0;
+
+        const existingIdx = this.data.clients.findIndex((c) => c.id === clientObj.id || (clientObj.qr_code_token && c.qr_code_token === clientObj.qr_code_token));
+        if (existingIdx >= 0) {
+          this.data.clients[existingIdx] = { ...this.data.clients[existingIdx], ...clientObj };
+        } else {
+          this.data.clients.push(clientObj);
         }
       } else if (tableName === 'transactions') {
         const [id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local] = params;
@@ -247,11 +278,39 @@ class WebSQLiteAdapter {
     }
 
     if (upperSql.includes('FROM CLIENTS')) {
+      if (cleanSql.includes('count(*) as count') && (cleanSql.includes('SUM(COALESCE(hands_count, 1))') || cleanSql.includes('total_hands'))) {
+        let filtered = this.data.clients;
+        if (cleanSql.includes('WHERE collector_id = ?')) {
+          filtered = filtered.filter((c) => c.collector_id === params[0]);
+        }
+        const total = filtered.reduce((sum, c) => sum + Math.max(1, Number(c.hands_count || 1)), 0);
+        return [{ count: filtered.length, total, total_hands: total }] as any;
+      }
+      if (cleanSql.includes('SUM(COALESCE(hands_count, 1))') || cleanSql.includes('SUM(hands_count)')) {
+        let filtered = this.data.clients;
+        if (cleanSql.includes('WHERE collector_id = ?')) {
+          filtered = filtered.filter((c) => c.collector_id === params[0]);
+        }
+        const total = filtered.reduce((sum, c) => sum + Math.max(1, Number(c.hands_count || 1)), 0);
+        return [{ total, total_hands: total }] as any;
+      }
+      if (cleanSql.includes('count(*) as count')) {
+        let filtered = this.data.clients;
+        if (cleanSql.includes('WHERE collector_id = ?')) {
+          filtered = filtered.filter((c) => c.collector_id === params[0]);
+        }
+        return [{ count: filtered.length }] as any;
+      }
       let result = [...this.data.clients];
       if (cleanSql.includes('WHERE id = ?')) {
         result = result.filter((c) => c.id === params[0]);
+      } else if (cleanSql.includes('WHERE collector_id = ?')) {
+        result = result.filter((c) => c.collector_id === params[0]);
       } else if (cleanSql.includes('qr_code_token = ? OR id = ?')) {
         result = result.filter((c) => c.qr_code_token === params[0] || c.id === params[1]);
+      }
+      if (cleanSql.includes('ORDER BY payout_rank ASC')) {
+        result.sort((a, b) => (Number(a.payout_rank) || 0) - (Number(b.payout_rank) || 0));
       }
       return result as any;
     }
@@ -377,6 +436,14 @@ async function runMigrations(db: UniversalSQLiteDatabase): Promise<void> {
     await safeAddColumn(db, 'clients', 'total_paid_amount', 'total_paid_amount REAL DEFAULT 0');
     await safeAddColumn(db, 'clients', 'paid_hands_count', 'paid_hands_count INTEGER DEFAULT 0');
     await safeAddColumn(db, 'clients', 'paid_until_date', 'paid_until_date TEXT');
+    await safeAddColumn(db, 'clients', 'hands_count', 'hands_count INTEGER DEFAULT 1');
+    await safeAddColumn(db, 'clients', 'received_hands_count', 'received_hands_count INTEGER DEFAULT 0');
+    await safeAddColumn(db, 'clients', 'payout_ranks', 'payout_ranks TEXT');
+
+    try {
+      await db.runAsync(`UPDATE clients SET hands_count = 1 WHERE hands_count IS NULL OR hands_count < 1;`);
+      await db.runAsync(`UPDATE clients SET received_hands_count = 0 WHERE received_hands_count IS NULL;`);
+    } catch {}
 
     // 2. Transactions migrations
     await safeAddColumn(db, 'transactions', 'business_id', 'business_id TEXT');
@@ -455,6 +522,9 @@ async function initDatabaseInternal(db: any): Promise<void> {
       daily_amount REAL DEFAULT 0,
       current_balance REAL DEFAULT 0,
       payout_rank INTEGER,
+      payout_ranks TEXT,
+      hands_count INTEGER DEFAULT 1,
+      received_hands_count INTEGER DEFAULT 0,
       has_received_payout INTEGER DEFAULT 0,
       has_received_hand INTEGER DEFAULT 0,
       hand_received_date TEXT,
@@ -868,19 +938,6 @@ export async function isCollectorPhoneTaken(phone: string, excludeCollectorId?: 
       (arePhoneNumbersEqual(c.phone_number, phone) ||
         (raw8.length >= 8 && extractRaw8Digits(c.phone_number) === raw8) ||
         normalizePhoneNumber(c.phone_number) === normalized)
-  );
-}
-
-export async function isCollectorPinTaken(pin: string, excludeCollectorId?: string): Promise<boolean> {
-  const db = await getDatabase();
-  const hashed = hashPin(pin);
-
-  const rows = await db.getAllAsync<{ id: string; pin_hash: string }>(`SELECT id, pin_hash FROM collectors`);
-
-  return rows.some(
-    (c) =>
-      c.id !== excludeCollectorId &&
-      (c.pin_hash === hashed || c.pin_hash === pin.trim())
   );
 }
 

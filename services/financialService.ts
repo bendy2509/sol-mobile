@@ -38,6 +38,64 @@ export function calculateContributionAmount(handsCount: number, unitAmount: numb
   return count * unit;
 }
 
+/**
+ * Calculates the total effective hands in a Sol/Sabotay cycle across all enrolled children.
+ * Formula: Total Hands = Sum of each member's subscribed hands (e.g. 5 members x 1 hand + 1 member x 3 hands = 8 hands).
+ */
+export function calculateCycleTotalHands(
+  clients: Array<{ handsCount?: number | null; hands_count?: number | null }>
+): number {
+  if (!clients || clients.length === 0) return 0;
+  return clients.reduce(
+    (sum, c) => sum + Math.max(1, Number(c?.handsCount || c?.hands_count || 1)),
+    0
+  );
+}
+
+/**
+ * Calculates remaining hands and contribution limits for a member in a cycle.
+ * For a member with K hands in an N-hand cycle, max allowed hands is K * N.
+ */
+export function calculateCycleContributionLimits(params: {
+  currentPaidHands: number;
+  totalSlots?: number;
+  totalCycleHands?: number;
+  memberHandsCount?: number;
+  unitAmount: number;
+}): {
+  maxAllowedHands: number;
+  maxPotAmount: number;
+  remainingHands: number;
+  remainingAmount: number;
+  isCycleCompleted: boolean;
+  memberHandsCount: number;
+  totalCycleHands: number;
+} {
+  const memberHandsCount = Math.max(1, Number(params.memberHandsCount) || 1);
+  const totalCycleHands = Math.max(
+    1,
+    Number(params.totalCycleHands || params.totalSlots) || 10
+  );
+  const unit = Math.max(0, Number(params.unitAmount) || 0);
+  const currentHands = Math.max(0, Number(params.currentPaidHands) || 0);
+
+  const maxAllowedHands = memberHandsCount * totalCycleHands;
+  const maxPotAmount = maxAllowedHands * unit;
+  const remainingHands = Math.max(0, maxAllowedHands - currentHands);
+  const remainingAmount = remainingHands * unit;
+  const isCycleCompleted = remainingHands <= 0;
+
+  return {
+    maxAllowedHands,
+    maxPotAmount,
+    remainingHands,
+    remainingAmount,
+    isCycleCompleted,
+    memberHandsCount,
+    totalCycleHands,
+  };
+}
+
 function parseYMD(dateStr: string): Date {
   const clean = dateStr.split('T')[0];
   const [y, m, d] = clean.split('-').map(Number);
@@ -181,21 +239,24 @@ export function reconstructClientFinancialTimeline(params: {
   unitAmount: number;
   frequency: PaymentFrequency | Frequency;
   cycleStartDate: string;
+  handsCount?: number;
 }): {
   currentBalance: number;
   totalPaidAmount: number;
   paidHandsCount: number;
+  receivedHandsCount: number;
   hasReceivedHand: boolean;
   handReceivedDate: string | null;
   paidUntilDate: string;
 } {
-  const { transactions, unitAmount, frequency, cycleStartDate } = params;
+  const { transactions, unitAmount, frequency, cycleStartDate, handsCount } = params;
   const unit = Math.max(1, Number(unitAmount) || 250);
+  const totalSubscribedHands = Math.max(1, Number(handsCount) || 1);
 
   let currentBalance = 0;
   let totalPaidAmount = 0;
   let paidHandsCount = 0;
-  let hasReceivedHand = false;
+  let receivedHandsCount = 0;
   let handReceivedDate: string | null = null;
   let currentPaidUntilDate: string | null = null;
 
@@ -249,15 +310,18 @@ export function reconstructClientFinancialTimeline(params: {
       currentPaidUntilDate = cov.paidUntilDate;
     } else if (isPayout) {
       currentBalance = Math.max(0, currentBalance - tx.amount);
-      hasReceivedHand = true;
+      receivedHandsCount += 1;
       handReceivedDate = tx.createdAtLocal.split('T')[0];
     }
   }
+
+  const hasReceivedHand = receivedHandsCount >= totalSubscribedHands;
 
   return {
     currentBalance,
     totalPaidAmount,
     paidHandsCount,
+    receivedHandsCount,
     hasReceivedHand,
     handReceivedDate,
     paidUntilDate: currentPaidUntilDate || cycleStartDate,
@@ -356,3 +420,46 @@ export function calculateClientPaymentStatus(params: {
     nextDueDate,
   };
 }
+
+/**
+ * Asserts whether a member is eligible to receive their payout hand in the current cycle.
+ * For a member with K hands, they can receive up to K payouts.
+ * Throws an explicit error if the member has already received all their subscribed hands.
+ */
+export function assertPayoutEligibility(member: {
+  hasReceivedHand?: boolean | number;
+  hasReceivedPayout?: boolean | number;
+  handsCount?: number;
+  hands_count?: number;
+  receivedHandsCount?: number;
+  received_hands_count?: number;
+  fullName?: string;
+}): void {
+  const totalHands = Math.max(1, Number(member.handsCount || member.hands_count || 1));
+  const receivedHands = Math.max(
+    0,
+    Number(
+      member.receivedHandsCount !== undefined
+        ? member.receivedHandsCount
+        : member.received_hands_count !== undefined
+        ? member.received_hands_count
+        : member.hasReceivedHand || member.hasReceivedPayout
+        ? totalHands
+        : 0
+    )
+  );
+
+  const isCompleted =
+    receivedHands >= totalHands ||
+    member.hasReceivedHand === true ||
+    member.hasReceivedHand === 1 ||
+    member.hasReceivedPayout === true ||
+    member.hasReceivedPayout === 1;
+
+  if (isCompleted) {
+    throw new Error(
+      `Action interdite : L'adhérent ${member.fullName || ''} a déjà reçu l'intégralité de ses mains (${receivedHands}/${totalHands}) pour ce cycle de SOL.`
+    );
+  }
+}
+

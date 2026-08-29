@@ -5,12 +5,15 @@ import {
   SyncStatus,
   Transaction,
   TransactionType,
+  UserRole,
 } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { getActiveBusinessConfig } from './businessRepository';
 import {
   calculateCoverageDate,
   calculateHandsCount,
+  calculateCycleContributionLimits,
+  calculateCycleTotalHands,
   reconstructClientFinancialTimeline,
 } from '@/services/financialService';
 import { recordAuditLog } from '@/services/auditService';
@@ -75,9 +78,12 @@ export async function createTransaction(data: {
       paid_until_date: string | null;
       full_name: string;
       phone_number: string;
+      hands_count?: number;
+      received_hands_count?: number;
       has_received_hand?: number;
+      has_received_payout?: number;
     }>(
-      `SELECT current_balance, total_paid_amount, paid_hands_count, paid_until_date, full_name, phone_number, has_received_hand 
+      `SELECT current_balance, total_paid_amount, paid_hands_count, paid_until_date, full_name, phone_number, hands_count, received_hands_count, has_received_hand, has_received_payout 
        FROM clients WHERE id = ?`,
       [clientId]
     );
@@ -107,13 +113,48 @@ export async function createTransaction(data: {
     const currentBalance = Number(client.current_balance || 0);
     const currentTotalPaid = Number(client.total_paid_amount || currentBalance);
     const currentPaidHands = Number(client.paid_hands_count || 0);
+    const memberHandsCount = Math.max(1, Number(client.hands_count || 1));
+    const currentReceivedHands = Number(
+      client.received_hands_count !== null && client.received_hands_count !== undefined
+        ? client.received_hands_count
+        : client.has_received_hand || client.has_received_payout
+        ? memberHandsCount
+        : 0
+    );
 
     let newBalance = currentBalance;
     let newTotalPaid = currentTotalPaid;
     let newPaidHands = currentPaidHands;
     let newPaidUntilDate = client.paid_until_date || todayStr;
+    let newReceivedHands = currentReceivedHands;
+    let isFullyReceived = currentReceivedHands >= memberHandsCount ? 1 : 0;
 
     if (isContribution) {
+      const allClientsRows = await db.getAllAsync<{ hands_count: number | null }>(
+        `SELECT hands_count FROM clients WHERE collector_id = ?`,
+        [collectorId]
+      );
+      const totalCycleHands = calculateCycleTotalHands(allClientsRows) || (activeBusiness?.totalSlots || 10);
+
+      const limits = calculateCycleContributionLimits({
+        currentPaidHands,
+        totalCycleHands,
+        memberHandsCount,
+        unitAmount,
+      });
+
+      if (limits.isCycleCompleted) {
+        throw new Error(
+          `Plafond du cycle atteint. ${client.full_name} a déjà complété toutes ses cotisations (${currentPaidHands}/${limits.maxAllowedHands} mains - ${limits.maxPotAmount} HTG).`
+        );
+      }
+
+      if (calculatedHandsCovered > limits.remainingHands) {
+        throw new Error(
+          `Dépassement du montant total du cycle. ${client.full_name} a déjà cotisé ${currentPaidHands}/${limits.maxAllowedHands} mains. Il ne peut cotiser que ${limits.remainingHands} main(s) restante(s) maximum (${limits.remainingAmount} HTG).`
+        );
+      }
+
       newBalance = currentBalance + amount;
       newTotalPaid = currentTotalPaid + amount;
       newPaidHands = currentPaidHands + calculatedHandsCovered;
@@ -127,7 +168,14 @@ export async function createTransaction(data: {
       });
       newPaidUntilDate = coverage.paidUntilDate;
     } else if (isPayout) {
+      if (currentReceivedHands >= memberHandsCount) {
+        throw new Error(
+          `Action interdite : L'adhérent ${client.full_name} a déjà reçu l'intégralité de ses mains (${currentReceivedHands}/${memberHandsCount}) pour ce cycle.`
+        );
+      }
       newBalance = Math.max(0, currentBalance - amount);
+      newReceivedHands = currentReceivedHands + 1;
+      isFullyReceived = newReceivedHands >= memberHandsCount ? 1 : 0;
     }
 
     let persistedType: TransactionType = 'SOL_CONTRIBUTION';
@@ -168,13 +216,13 @@ export async function createTransaction(data: {
         [newBalance, newTotalPaid, newPaidHands, newPaidUntilDate, clientId]
       );
 
-      // 3. If payout, flag hand as received but KEEP client in cycle
+      // 3. If payout, update received hands count
       if (isPayout) {
         await db.runAsync(
           `UPDATE clients 
-           SET has_received_hand = 1, has_received_payout = 1, hand_received_date = ?, sync_status = 'PENDING' 
+           SET received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, sync_status = 'PENDING' 
            WHERE id = ?`,
-          [todayStr, clientId]
+          [newReceivedHands, isFullyReceived, isFullyReceived, todayStr, clientId]
         );
       }
     });
@@ -428,6 +476,8 @@ export async function reverseTransaction(params: {
   transactionId: string;
   reason: string;
   collectorId?: string;
+  userRole?: UserRole;
+  adminId?: string;
 }): Promise<Transaction> {
   const { transactionId, reason } = params;
   if (!reason || reason.trim().length === 0) {
@@ -472,15 +522,24 @@ export async function reverseTransaction(params: {
     t.id === original.id ? { ...t, isReversed: true } : t
   );
 
+  // Fetch client details for hands_count
+  const clientRow = await db.getFirstAsync<{ hands_count: number | null }>(
+    `SELECT hands_count FROM clients WHERE id = ?`,
+    [original.client_id]
+  );
+  const handsCount = Math.max(1, Number(clientRow?.hands_count || 1));
+
   // Compute exact reconstructed timeline
   const reconstructed = reconstructClientFinancialTimeline({
     transactions: updatedTxsList,
     unitAmount: activeBusiness?.contributionAmount || 250,
     frequency: activeBusiness?.frequency || 'DAILY',
     cycleStartDate: activeBusiness?.startDate || now.split('T')[0],
+    handsCount,
   });
 
-  const reversalNote = `ANNULATION [Réf #${original.id.slice(0, 8)}] : ${reason.trim()}`;
+  const actorLabel = params.userRole === 'ADMIN' ? 'ADMIN' : 'GESTIONNAIRE';
+  const reversalNote = `ANNULATION ${actorLabel} [Réf #${original.id.slice(0, 8)}] : ${reason.trim()}`;
 
   await db.withTransactionAsync(async () => {
     // 1. Mark original transaction as reversed
@@ -498,7 +557,7 @@ export async function reverseTransaction(params: {
       [
         reversalId,
         original.client_id,
-        collectorId,
+        params.adminId || collectorId,
         original.sol_group_id,
         original.business_id,
         original.amount,
@@ -512,13 +571,14 @@ export async function reverseTransaction(params: {
     await db.runAsync(
       `UPDATE clients 
        SET current_balance = ?, total_paid_amount = ?, paid_hands_count = ?, 
-           has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, 
+           received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, 
            paid_until_date = ?, sync_status = 'PENDING' 
        WHERE id = ?`,
       [
         reconstructed.currentBalance,
         reconstructed.totalPaidAmount,
         reconstructed.paidHandsCount,
+        reconstructed.receivedHandsCount,
         reconstructed.hasReceivedHand ? 1 : 0,
         reconstructed.hasReceivedHand ? 1 : 0,
         reconstructed.handReceivedDate,
@@ -529,14 +589,14 @@ export async function reverseTransaction(params: {
   });
 
   // 4. Record to Audit Logs
-  recordAuditLog({
-    userId: collectorId,
-    userRole: 'COLLECTOR',
-    action: 'REVERSE_CONTRIBUTION',
+  await recordAuditLog({
+    userId: params.adminId || params.collectorId || collectorId,
+    userRole: params.userRole || 'MANAGER',
+    action: 'REVERSE_TRANSACTION',
     entityType: 'TRANSACTION',
     entityId: reversalId,
     oldData: { originalId: original.id, amount: original.amount, type: original.type },
-    newData: { reconstructed },
+    newData: { reconstructed, reversalId, cancelledTxId: original.id },
     reason: reason.trim(),
   }).catch(() => {});
 
@@ -544,7 +604,7 @@ export async function reverseTransaction(params: {
     id: reversalId,
     clientId: original.client_id,
     memberId: original.client_id,
-    collectorId,
+    collectorId: params.adminId || collectorId,
     businessId: original.business_id || undefined,
     solGroupId: original.sol_group_id || undefined,
     amount: original.amount,

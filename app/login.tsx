@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  Platform,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,26 +14,20 @@ import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { Icon } from '@/components/Icon';
 import { triggerLightImpact, triggerMediumImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
-import { normalizePhoneNumber } from '@/lib/phoneUtils';
+import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 
 export default function LoginScreen() {
   const router = useRouter();
   const { loginWithPin } = useAuth();
 
-  // Active focus target: either typing phone number or security PIN
   const [activeField, setActiveField] = useState<'PHONE' | 'PIN'>('PHONE');
-
-  // Digits state (managed exclusively via our custom in-app keypad)
-  const [phoneDigits, setPhoneDigits] = useState('37123456'); // Default demo phone digits
+  const [phoneDigits, setPhoneDigits] = useState('37123456');
   const [pin, setPin] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Full normalized phone string
   const fullPhone = `+509${phoneDigits}`;
 
-  // Formatter for Haitian 8-digit numbers: XX XX XX XX
   const formatPhoneDisplay = (digits: string) => {
     if (!digits) return '';
     const parts: string[] = [];
@@ -83,13 +76,12 @@ export default function LoginScreen() {
       }
     } else {
       triggerErrorFeedback();
-      setErrorMessage(res.error || 'Identifiants invalides.');
+      setErrorMessage(res.error || 'Numéro de téléphone ou code PIN incorrect.');
       setPin('');
       setActiveField('PIN');
     }
   };
 
-  // Tactile Numpad Handlers (100% in-app custom keyboard)
   const handleDigit = (digit: string) => {
     triggerLightImpact();
     setErrorMessage(null);
@@ -99,7 +91,6 @@ export default function LoginScreen() {
         const newPhone = phoneDigits + digit;
         setPhoneDigits(newPhone);
         if (newPhone.length === 8) {
-          // Automatically advance to PIN entry once 8 phone digits are entered
           triggerMediumImpact();
           setActiveField('PIN');
         }
@@ -127,7 +118,6 @@ export default function LoginScreen() {
       if (pin.length > 0) {
         setPin(pin.slice(0, -1));
       } else {
-        // If PIN is empty, pressing backspace returns focus to phone
         setActiveField('PHONE');
       }
     }
@@ -160,15 +150,15 @@ export default function LoginScreen() {
         {/* Brand Header */}
         <View style={styles.header}>
           <View style={styles.logoCircle}>
-            <Icon name="shield" size={28} color="#FFFFFF" />
+            <Icon name="shield" size={26} color="#FFFFFF" />
           </View>
           <Text style={styles.appName}>SOL MOBILE</Text>
-          <Text style={styles.appTagline}>Plateforme d'Épargne & Tontine Sécurisée</Text>
+          <Text style={styles.appTagline}>Tontine & Épargne Sécurisée en Haïti</Text>
         </View>
 
-        {/* Unified Input Card with Active Field Selection */}
+        {/* Inputs Card */}
         <View style={styles.inputCard}>
-          {/* 1. Phone Number Field (Tactile Selectable) */}
+          {/* Phone Field */}
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => {
@@ -181,11 +171,11 @@ export default function LoginScreen() {
             ]}
           >
             <View style={styles.fieldHeaderRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={styles.fieldTitleRow}>
                 <Icon
                   name="phone"
                   size={14}
-                  color={activeField === 'PHONE' ? SOL_COLORS.primary : '#64748B'}
+                  color={activeField === 'PHONE' ? SOL_COLORS.primary : SOL_COLORS.textSecondary}
                   style={{ marginRight: 6 }}
                 />
                 <Text
@@ -194,19 +184,20 @@ export default function LoginScreen() {
                     activeField === 'PHONE' && styles.fieldLabelActive,
                   ]}
                 >
-                  1. NUMÉRO DE TÉLÉPHONE
+                  NUMÉRO DE TÉLÉPHONE
                 </Text>
               </View>
               {activeField === 'PHONE' && (
                 <View style={styles.activeBadge}>
-                  <Text style={styles.activeBadgeText}>SAISIE ACTIVE</Text>
+                  <Text style={styles.activeBadgeText}>ACTIF</Text>
                 </View>
               )}
             </View>
 
             <View style={styles.phoneDisplayRow}>
               <View style={styles.countryCodeBadge}>
-                <Text style={styles.countryCodeText}>🇭🇹 +509</Text>
+                <Text style={styles.countryPillFlagText}>HT</Text>
+                <Text style={styles.countryCodeText}>+509</Text>
               </View>
               <View style={styles.phoneNumberBox}>
                 <Text
@@ -222,7 +213,7 @@ export default function LoginScreen() {
             </View>
           </TouchableOpacity>
 
-          {/* 2. Security PIN Field (Tactile Selectable) */}
+          {/* PIN Field */}
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => {
@@ -236,11 +227,11 @@ export default function LoginScreen() {
             ]}
           >
             <View style={styles.fieldHeaderRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={styles.fieldTitleRow}>
                 <Icon
                   name="shield"
                   size={14}
-                  color={activeField === 'PIN' ? SOL_COLORS.primary : '#64748B'}
+                  color={activeField === 'PIN' ? SOL_COLORS.primary : SOL_COLORS.textSecondary}
                   style={{ marginRight: 6 }}
                 />
                 <Text
@@ -249,12 +240,12 @@ export default function LoginScreen() {
                     activeField === 'PIN' && styles.fieldLabelActive,
                   ]}
                 >
-                  2. CODE PIN (4 CHIFFRES)
+                  CODE PIN PERSONNEL (4 CHIFFRES)
                 </Text>
               </View>
               {activeField === 'PIN' && (
                 <View style={styles.activeBadge}>
-                  <Text style={styles.activeBadgeText}>SAISIE ACTIVE</Text>
+                  <Text style={styles.activeBadgeText}>ACTIF</Text>
                 </View>
               )}
             </View>
@@ -277,16 +268,16 @@ export default function LoginScreen() {
             </View>
           </TouchableOpacity>
 
-          {/* Error Message Feedback */}
+          {/* Error Message */}
           {errorMessage && (
             <View style={styles.errorContainer}>
-              <Icon name="alert" size={14} color="#DC2626" style={{ marginRight: 6 }} />
+              <Icon name="alert" size={14} color={SOL_COLORS.danger} style={{ marginRight: 6 }} />
               <Text style={styles.errorText}>{errorMessage}</Text>
             </View>
           )}
         </View>
 
-        {/* Dedicated Tactile In-App Security Keypad */}
+        {/* Numpad Section */}
         <View style={styles.keypadSection}>
           <View style={styles.keypadGrid}>
             {numpadKeys.map((row, rowIndex) => (
@@ -296,7 +287,7 @@ export default function LoginScreen() {
                   return (
                     <TouchableOpacity
                       key={k}
-                      activeOpacity={0.5}
+                      activeOpacity={0.6}
                       disabled={isSubmitting}
                       onPress={() => {
                         if (k === 'C') handleClear();
@@ -318,9 +309,9 @@ export default function LoginScreen() {
             ))}
           </View>
 
-          {/* Action Trigger Button */}
+          {/* Submit / Advance Button */}
           <TouchableOpacity
-            activeOpacity={0.85}
+            activeOpacity={0.8}
             disabled={isSubmitting}
             onPress={() => {
               if (activeField === 'PHONE') {
@@ -342,13 +333,13 @@ export default function LoginScreen() {
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <Text style={styles.submitButtonText}>
-                {activeField === 'PHONE' ? 'Suivant : Saisir PIN ➔' : 'Se Connecter'}
+                {activeField === 'PHONE' ? 'Continuer vers le code PIN ➔' : 'Se Connecter'}
               </Text>
             )}
           </TouchableOpacity>
         </View>
 
-        {/* Footer Link */}
+        {/* Footer */}
         <View style={styles.footer}>
           <TouchableOpacity
             activeOpacity={0.7}
@@ -369,18 +360,18 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: SOL_COLORS.background,
   },
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'space-between',
     paddingHorizontal: 18,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   header: {
     alignItems: 'center',
-    marginTop: 2,
-    marginBottom: 8,
+    marginTop: 4,
+    marginBottom: 10,
   },
   logoCircle: {
     width: 48,
@@ -389,46 +380,38 @@ const styles = StyleSheet.create({
     backgroundColor: SOL_COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
+    marginBottom: 6,
+    ...SHADOWS.sm,
   },
   appName: {
     fontSize: 22,
     fontWeight: '900',
-    color: SOL_COLORS.primary,
-    letterSpacing: 0.5,
+    color: SOL_COLORS.textPrimary,
+    letterSpacing: -0.5,
   },
   appTagline: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 1,
+    fontSize: 12,
+    color: SOL_COLORS.textSecondary,
+    marginTop: 2,
     fontWeight: '600',
   },
   inputCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    ...SHADOWS.sm,
   },
   fieldContainer: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 2,
-    borderColor: '#E2E8F0',
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: SOL_COLORS.border,
   },
   fieldContainerActive: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#F0FDFA',
     borderColor: SOL_COLORS.primary,
   },
   fieldHeaderRow: {
@@ -437,41 +420,62 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 6,
   },
+  fieldTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   fieldLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontWeight: '800',
+    color: SOL_COLORS.textSecondary,
+    letterSpacing: 0.3,
   },
   fieldLabelActive: {
-    color: SOL_COLORS.primary,
+    color: SOL_COLORS.primaryDark,
   },
   activeBadge: {
-    backgroundColor: SOL_COLORS.primary,
+    backgroundColor: SOL_COLORS.primaryLight,
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 6,
   },
   activeBadgeText: {
-    color: '#FFFFFF',
     fontSize: 9,
     fontWeight: '900',
+    color: SOL_COLORS.primaryDark,
   },
   phoneDisplayRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 2,
   },
   countryCodeBadge: {
-    backgroundColor: '#E2E8F0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 8,
     paddingVertical: 6,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
     marginRight: 8,
   },
-  countryCodeText: {
-    fontSize: 13,
+  countryPillFlagText: {
+    fontSize: 9,
     fontWeight: '900',
-    color: '#1E293B',
+    color: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    marginRight: 4,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  countryCodeText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
   },
   phoneNumberBox: {
     flex: 1,
@@ -479,24 +483,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   phoneNumberText: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '900',
-    color: '#0F172A',
+    color: SOL_COLORS.textPrimary,
     letterSpacing: 1.5,
   },
   phoneNumberPlaceholder: {
-    color: '#94A3B8',
+    color: SOL_COLORS.textMuted,
+    letterSpacing: 2,
   },
   cursorBlink: {
     width: 2,
-    height: 18,
+    height: 20,
     backgroundColor: SOL_COLORS.primary,
     marginLeft: 4,
   },
   pinDotsContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 16,
     paddingVertical: 6,
   },
@@ -505,105 +510,104 @@ const styles = StyleSheet.create({
     height: 16,
     borderRadius: 8,
     borderWidth: 2,
-    borderColor: '#94A3B8',
+    borderColor: SOL_COLORS.borderStrong,
     backgroundColor: '#FFFFFF',
   },
   pinDotFilled: {
     backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primary,
-    transform: [{ scale: 1.25 }],
+    borderColor: SOL_COLORS.primaryDark,
   },
   pinDotCurrent: {
     borderColor: SOL_COLORS.primary,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: SOL_COLORS.primaryLight,
   },
   pinDotError: {
-    borderColor: '#DC2626',
-    backgroundColor: '#FEF2F2',
+    borderColor: SOL_COLORS.danger,
+    backgroundColor: SOL_COLORS.dangerLight,
   },
   errorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    backgroundColor: '#FEF2F2',
-    padding: 6,
-    borderRadius: 8,
+    backgroundColor: SOL_COLORS.dangerLighter,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginTop: 10,
   },
   errorText: {
-    color: '#DC2626',
-    fontSize: 11,
-    fontWeight: '800',
+    color: SOL_COLORS.dangerDark,
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
   },
   keypadSection: {
-    width: '100%',
-    marginTop: 6,
+    marginTop: 10,
   },
   keypadGrid: {
-    width: '100%',
+    gap: 8,
   },
   keypadRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    gap: 8,
   },
   keyButton: {
     flex: 1,
     height: 48,
-    marginHorizontal: 3,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    elevation: 1,
+    ...SHADOWS.sm,
   },
   actionKeyButton: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#94A3B8',
+    backgroundColor: SOL_COLORS.surfaceSubtle,
   },
   keyText: {
     fontSize: 20,
-    fontWeight: '900',
+    fontWeight: '800',
     color: SOL_COLORS.textPrimary,
   },
   actionKeyText: {
     fontSize: 16,
-    color: '#475569',
+    color: SOL_COLORS.textSecondary,
+    fontWeight: '700',
   },
   submitButton: {
+    height: 52,
     backgroundColor: SOL_COLORS.primary,
-    height: 46,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 4,
-    elevation: 2,
+    marginTop: 12,
+    ...SHADOWS.sm,
   },
   submitButtonDisabled: {
-    opacity: 0.6,
+    backgroundColor: SOL_COLORS.textMuted,
   },
   submitButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
   footer: {
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 8,
+    marginBottom: 4,
   },
   registerLink: {
     paddingVertical: 6,
   },
   registerLinkText: {
-    fontSize: 12,
-    color: '#64748B',
+    fontSize: 13,
+    color: SOL_COLORS.textSecondary,
     fontWeight: '600',
   },
   registerLinkHighlight: {
-    color: SOL_COLORS.primary,
-    fontWeight: '900',
+    color: SOL_COLORS.primaryDark,
+    fontWeight: '800',
   },
 });

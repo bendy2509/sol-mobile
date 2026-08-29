@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'MANAGER' | 'COLLECTOR';
+export type UserRole = 'ADMIN' | 'MANAGER' | 'READ_ONLY' | 'COLLECTOR' | 'USER';
 
 export type UserStatus = 'PENDING_APPROVAL' | 'ACTIVE' | 'SUSPENDED';
 
@@ -108,10 +108,14 @@ export interface MemberChild {
   fullName: string;
   phoneNumber: string;
   rankOrder?: number; // Position/Rang de passage
-  hasReceivedHand: boolean; // Main déjà touchée (Oui/Non)
-  handReceivedDate?: string; // Date de remise de la main
+  payoutRank?: number | null;
+  payoutRanks?: string | number[]; // Rangs assignés pour les différentes mains (ex: "1, 4, 7")
+  handsCount: number; // Nombre de mains/parts souscrites (défaut: 1)
+  receivedHandsCount: number; // Nombre de mains déjà perçues (défaut: 0)
+  hasReceivedHand: boolean; // Toutes les mains reçues (true si receivedHandsCount >= handsCount)
+  handReceivedDate?: string; // Date de remise de la dernière main
   totalPaidAmount: number; // Total cotisé en HTG
-  paidHandsCount: number; // Nombre total de mains payées
+  paidHandsCount: number; // Nombre total de cotisations unitaires versées
   paidUntilDate: string; // Date jusqu'à laquelle les cotisations sont couvertes (YYYY-MM-DD)
   qrCodeToken: string;
   createdAt: string;
@@ -123,7 +127,6 @@ export interface Member extends MemberChild {
   type: BusinessType;
   dailyAmount: number;
   currentBalance: number;
-  payoutRank?: number | null;
   hasReceivedPayout: boolean;
   paymentStatusToday: MemberPaymentStatus;
   overdueRoundsCount: number;
@@ -198,9 +201,12 @@ export interface CashClosure {
 export type AuditLogAction =
   | 'CREATE_CONTRIBUTION'
   | 'REVERSE_CONTRIBUTION'
+  | 'REVERSE_TRANSACTION'
   | 'CREATE_PAYOUT'
   | 'PAYOUT_OUT_OF_ORDER'
   | 'UPDATE_PAYOUT_ORDER'
+  | 'CREATE_CLIENT'
+  | 'DELETE_CLIENT'
   | 'CREATE_BOOK'
   | 'UPDATE_BOOK'
   | 'CLOSE_DAY'

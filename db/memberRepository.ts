@@ -30,6 +30,9 @@ export async function getMembersWithPaymentStatus(options?: {
       daily_amount,
       current_balance,
       payout_rank,
+      payout_ranks,
+      hands_count,
+      received_hands_count,
       has_received_hand,
       has_received_payout,
       hand_received_date,
@@ -60,6 +63,9 @@ export async function getMembersWithPaymentStatus(options?: {
     daily_amount: number;
     current_balance: number;
     payout_rank: number | null;
+    payout_ranks: string | null;
+    hands_count: number | null;
+    received_hands_count: number | null;
     has_received_hand: number | null;
     has_received_payout: number | null;
     hand_received_date: string | null;
@@ -89,11 +95,19 @@ export async function getMembersWithPaymentStatus(options?: {
       [r.id]
     );
 
+    const handsCount = Math.max(1, Number(r.hands_count || 1));
+    const receivedHandsCount = Number(
+      r.received_hands_count !== null && r.received_hands_count !== undefined
+        ? r.received_hands_count
+        : r.has_received_hand || r.has_received_payout
+        ? handsCount
+        : 0
+    );
+    const hasReceived = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
     const balance = Number(r.current_balance || 0);
     const totalPaid = Number(r.total_paid_amount || balance);
     const paidHands = Number(r.paid_hands_count || Math.floor(balance / (unitAmount || 1)));
     const paidUntil = r.paid_until_date || null;
-    const hasReceived = Boolean(r.has_received_hand || r.has_received_payout);
 
     const calculated = calculateClientPaymentStatus({
       todayStr,
@@ -118,6 +132,9 @@ export async function getMembersWithPaymentStatus(options?: {
       currentBalance: balance,
       payoutRank: r.payout_rank !== null && r.payout_rank !== undefined ? Number(r.payout_rank) : null,
       rankOrder: r.payout_rank !== null && r.payout_rank !== undefined ? Number(r.payout_rank) : undefined,
+      payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
+      handsCount,
+      receivedHandsCount,
       hasReceivedHand: hasReceived,
       hasReceivedPayout: hasReceived,
       handReceivedDate: r.hand_received_date || undefined,
@@ -140,46 +157,41 @@ export async function getMembersWithPaymentStatus(options?: {
   if (options?.filter && options.filter !== 'ALL') {
     switch (options.filter) {
       case 'PAID_TODAY':
-        filtered = filtered.filter(
-          (m) => m.paymentStatusToday === 'PAID_TODAY' || m.paymentStatusToday === 'PAID_IN_ADVANCE'
-        );
+        filtered = members.filter((m) => m.paymentStatusToday === 'PAID_TODAY');
         break;
       case 'UNPAID_TODAY':
-        filtered = filtered.filter((m) => m.paymentStatusToday === 'UNPAID_TODAY');
+        filtered = members.filter((m) => m.paymentStatusToday === 'UNPAID_TODAY');
         break;
       case 'OVERDUE':
-        filtered = filtered.filter((m) => m.paymentStatusToday === 'OVERDUE');
+        filtered = members.filter((m) => m.paymentStatusToday === 'OVERDUE');
         break;
       case 'HAND_RECEIVED':
-        filtered = filtered.filter((m) => m.hasReceivedHand);
+        filtered = members.filter((m) => m.hasReceivedHand);
         break;
       case 'HAND_PENDING':
-        filtered = filtered.filter((m) => !m.hasReceivedHand);
+        filtered = members.filter((m) => !m.hasReceivedHand);
         break;
       case 'UPCOMING_PAYOUT':
-        filtered = filtered.filter((m) => !m.hasReceivedHand && m.payoutRank !== null);
+        filtered = members.filter((m) => !m.hasReceivedHand);
         break;
     }
   }
 
   // Apply Sorting
-  const sort = options?.sort || 'PAYOUT_RANK';
   filtered.sort((a, b) => {
-    switch (sort) {
+    switch (options?.sort) {
+      case 'PAYOUT_RANK':
+        return (a.payoutRank || 999) - (b.payoutRank || 999);
       case 'NAME':
         return a.fullName.localeCompare(b.fullName);
-      case 'PAYOUT_RANK': {
-        const rankA = a.payoutRank ?? 9999;
-        const rankB = b.payoutRank ?? 9999;
-        return rankA - rankB;
-      }
       case 'BALANCE':
         return b.currentBalance - a.currentBalance;
       case 'OVERDUE':
         return b.overdueRoundsCount - a.overdueRoundsCount;
       case 'RECENT':
-      default:
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      default:
+        return 0;
     }
   });
 
@@ -193,6 +205,33 @@ export async function payoutMemberHand(
   businessId?: string
 ): Promise<Transaction> {
   const db = await getDatabase();
+
+  const client = await db.getFirstAsync<{
+    hands_count: number | null;
+    received_hands_count: number | null;
+    has_received_hand: number | null;
+    has_received_payout: number | null;
+    full_name: string;
+  }>(
+    `SELECT hands_count, received_hands_count, has_received_hand, has_received_payout, full_name FROM clients WHERE id = ?`,
+    [memberId]
+  );
+
+  const totalHands = Math.max(1, Number(client?.hands_count || 1));
+  const currentReceived = Number(
+    client?.received_hands_count !== null && client?.received_hands_count !== undefined
+      ? client.received_hands_count
+      : client?.has_received_hand || client?.has_received_payout
+      ? totalHands
+      : 0
+  );
+
+  if (currentReceived >= totalHands) {
+    throw new Error(
+      `Action interdite : L'adhérent ${client?.full_name || ''} a déjà reçu l'intégralité de ses mains (${currentReceived}/${totalHands}) pour ce cycle.`
+    );
+  }
+
   const collectorId = await getActiveCollectorId();
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -203,15 +242,18 @@ export async function payoutMemberHand(
     type: 'HAND_PAYOUT',
     collectorId,
     paymentMethod: 'CASH',
-    note: note || 'Remise de la main complète du SOL',
+    note: note || `Remise de la main (${currentReceived + 1}/${totalHands}) pour ${client?.full_name}`,
   });
 
-  // Flag hand received on client record but KEEP client in cycle
+  const newReceivedCount = currentReceived + 1;
+  const isFullyCompleted = newReceivedCount >= totalHands ? 1 : 0;
+
+  // Flag updated received count on client record
   await db.runAsync(
     `UPDATE clients 
-     SET has_received_hand = 1, has_received_payout = 1, hand_received_date = ?, sync_status = 'PENDING' 
+     SET received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, sync_status = 'PENDING' 
      WHERE id = ?`,
-    [todayStr, memberId]
+    [newReceivedCount, isFullyCompleted, isFullyCompleted, todayStr, memberId]
   );
 
   return tx;
