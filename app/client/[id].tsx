@@ -106,6 +106,14 @@ export default function ClientDetailScreen() {
     : 0;
   const isFullyReceived = currentReceivedHands >= memberHandsCount || Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
 
+  const totalHandsTouched = allClients.reduce(
+    (sum, m) => sum + (m.receivedHandsCount !== undefined ? m.receivedHandsCount : m.hasReceivedHand || m.hasReceivedPayout ? Math.max(1, m.handsCount || 1) : 0),
+    0
+  );
+  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((totalHandsTouched / totalCycleHands) * 100)) : 0;
+  const memberPayoutProgressPct = memberHandsCount > 0 ? Math.min(100, Math.round((currentReceivedHands / memberHandsCount) * 100)) : 0;
+  const memberContributionProgressPct = maxAllowedHands > 0 ? Math.min(100, Math.round(((client?.paidHandsCount || 0) / maxAllowedHands) * 100)) : 0;
+
   const pendingRankClients = allClients
     .filter((c) => !c.hasReceivedHand && !c.hasReceivedPayout && c.payoutRank)
     .sort((a, b) => (a.payoutRank || 999) - (b.payoutRank || 999));
@@ -546,6 +554,17 @@ Reçu archivé avec succès sur SOL Mobile.`;
             </View>
           </View>
 
+          {/* Cotisation Progress Bar */}
+          <View style={styles.clientProgressBarSection}>
+            <View style={styles.clientProgressBarLabelRow}>
+              <Text style={styles.clientProgressBarLabel}>Progression des cotisations ({memberContributionProgressPct}%)</Text>
+              <Text style={styles.clientProgressBarCount}>{client.paidHandsCount || 0}/{maxAllowedHands} dues</Text>
+            </View>
+            <View style={styles.clientProgressBarBg}>
+              <View style={[styles.clientProgressBarFill, { width: `${memberContributionProgressPct}%` }]} />
+            </View>
+          </View>
+
           {/* Quick Metrics based on effective cycle hands count */}
           <View style={styles.metricsRow}>
             <View style={styles.metricItem}>
@@ -614,8 +633,39 @@ Reçu archivé avec succès sur SOL Mobile.`;
             <View style={styles.multiHandsSpecRow}>
               <Text style={styles.multiHandsSpecLabel}>Tirages déjà perçus :</Text>
               <Text style={isFullyReceived ? styles.multiHandsSpecValueGreen : styles.multiHandsSpecValuePrimary}>
-                {currentReceivedHands} / {memberHandsCount} main{memberHandsCount > 1 ? 's' : ''} remise{memberHandsCount > 1 ? 's' : ''}
+                {currentReceivedHands} / {memberHandsCount} main{memberHandsCount > 1 ? 's' : ''} remise{memberHandsCount > 1 ? 's' : ''} ({memberPayoutProgressPct}%)
               </Text>
+            </View>
+
+            {/* Member Payout Progress Bar */}
+            <View style={styles.specProgressBarContainer}>
+              <View style={styles.specProgressBarBg}>
+                <View
+                  style={[
+                    styles.specProgressBarFillAmber,
+                    { width: `${memberPayoutProgressPct}%` },
+                  ]}
+                />
+              </View>
+            </View>
+
+            <View style={[styles.multiHandsSpecRow, { marginTop: 10 }]}>
+              <Text style={styles.multiHandsSpecLabel}>Mains données au total :</Text>
+              <Text style={styles.multiHandsSpecValueBold}>
+                {totalHandsTouched} / {totalCycleHands} mains ({cycleProgressPct}%)
+              </Text>
+            </View>
+
+            {/* Global Cycle Progress Bar */}
+            <View style={styles.specProgressBarContainer}>
+              <View style={styles.specProgressBarBg}>
+                <View
+                  style={[
+                    styles.specProgressBarFillGreen,
+                    { width: `${cycleProgressPct}%` },
+                  ]}
+                />
+              </View>
             </View>
           </View>
         </View>
@@ -1233,4 +1283,55 @@ const styles = StyleSheet.create({
   modalPayoutConfirmBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
   modalDangerBtn: { flex: 1.5, paddingVertical: 12, borderRadius: 14, backgroundColor: SOL_COLORS.danger, alignItems: 'center' },
   modalDangerBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
+  clientProgressBarSection: {
+    marginTop: 10,
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+  clientProgressBarLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  clientProgressBarLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: SOL_COLORS.textSecondary,
+  },
+  clientProgressBarCount: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: SOL_COLORS.primaryDark,
+  },
+  clientProgressBarBg: {
+    height: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  clientProgressBarFill: {
+    height: '100%',
+    backgroundColor: SOL_COLORS.primary,
+    borderRadius: 3,
+  },
+  specProgressBarContainer: {
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  specProgressBarBg: {
+    height: 6,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  specProgressBarFillAmber: {
+    height: '100%',
+    backgroundColor: '#D97706',
+    borderRadius: 3,
+  },
+  specProgressBarFillGreen: {
+    height: '100%',
+    backgroundColor: '#10B981',
+    borderRadius: 3,
+  },
 });

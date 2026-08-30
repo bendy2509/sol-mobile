@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
   Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 
 import { Header } from '@/components/Header';
 import { Badge } from '@/components/Badge';
@@ -33,6 +33,7 @@ import {
   calculateContributionAmount,
   calculateCycleContributionLimits,
   calculateCycleTotalHands,
+  calculateHandsCovered,
 } from '@/services/financialService';
 import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfService';
 
@@ -59,8 +60,8 @@ export default function CollectScreen() {
   const unitAmount = selectedClient?.dailyAmount || business?.contributionAmount || 250;
   const totalAmount = calculateContributionAmount(handsCount, unitAmount);
 
-  useEffect(() => {
-    async function init() {
+  const loadData = useCallback(async () => {
+    try {
       const [biz, list] = await Promise.all([
         getActiveBusinessConfig(),
         getAllClients(),
@@ -68,43 +69,75 @@ export default function CollectScreen() {
       setBusiness(biz);
       setAllClients(list);
 
-      if (params.clientId) {
-        const found = await getClientById(params.clientId);
+      const targetId = params.clientId || selectedClient?.id;
+      if (targetId) {
+        const found = list.find((c) => c.id === targetId) || (await getClientById(targetId));
         if (found) {
           setSelectedClient(found);
         }
-      } else if (list.length > 0) {
+      } else if (list.length > 0 && !selectedClient) {
         setSelectedClient(list[0]);
       }
+    } catch (err) {
+      console.warn('Error loading collect data:', err);
     }
-    init();
-  }, [params.clientId]);
+  }, [params.clientId, selectedClient?.id]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
 
   const totalCycleHands = calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
-  const currentPaidHands = selectedClient?.paidHandsCount || 0;
+  const clientUnitAmount = selectedClient?.dailyAmount || business?.contributionAmount || 250;
+  const clientBalance = Number(selectedClient?.currentBalance || 0);
+  const clientTotalPaid = Number(selectedClient?.totalPaidAmount || clientBalance);
+  const currentPaidHands = Math.max(
+    Number(selectedClient?.paidHandsCount || 0),
+    calculateHandsCovered(clientBalance, clientUnitAmount),
+    calculateHandsCovered(clientTotalPaid, clientUnitAmount)
+  );
   const memberHandsCount = Math.max(1, selectedClient?.handsCount || 1);
   const limits = calculateCycleContributionLimits({
     currentPaidHands,
     totalCycleHands,
     memberHandsCount,
-    unitAmount,
+    unitAmount: clientUnitAmount,
   });
 
-  const presetHands = memberHandsCount > 1
-    ? [1, 2, memberHandsCount, memberHandsCount * 2]
-    : [1, 2, 3, 5];
+  const presetRounds = [
+    { label: memberHandsCount > 1 ? `1 Tour (${memberHandsCount}m)` : '1 Main', hands: memberHandsCount },
+    { label: memberHandsCount > 1 ? `2 Tours (${memberHandsCount * 2}m)` : '2 Mains', hands: memberHandsCount * 2 },
+    { label: memberHandsCount > 1 ? `3 Tours (${memberHandsCount * 3}m)` : '3 Mains', hands: memberHandsCount * 3 },
+    ...(limits.remainingHands > memberHandsCount * 3
+      ? [{ label: 'Solde total', hands: limits.remainingHands }]
+      : []),
+  ];
 
   const handleSelectClient = (client: Client) => {
     triggerLightImpact();
     setSelectedClient(client);
     const clientMemberHands = Math.max(1, client.handsCount || 1);
+    const clientUnit = client.dailyAmount || unitAmount || 250;
+    const clientBal = Number(client.currentBalance || 0);
+    const clientTot = Number(client.totalPaidAmount || clientBal);
+    const clientPaid = Math.max(
+      Number(client.paidHandsCount || 0),
+      calculateHandsCovered(clientBal, clientUnit),
+      calculateHandsCovered(clientTot, clientUnit)
+    );
     const clientLimits = calculateCycleContributionLimits({
-      currentPaidHands: client.paidHandsCount || 0,
+      currentPaidHands: clientPaid,
       totalCycleHands,
       memberHandsCount: clientMemberHands,
-      unitAmount: client.dailyAmount || unitAmount,
+      unitAmount: clientUnit,
     });
-    setHandsCount(clientLimits.remainingHands > 0 ? (clientMemberHands > 1 ? clientMemberHands : 1) : 0);
+    setHandsCount(clientLimits.remainingHands > 0 ? (clientMemberHands > 1 ? Math.min(clientLimits.remainingHands, clientMemberHands) : 1) : 0);
     setIsClientModalOpen(false);
     setSearchQuery('');
   };
@@ -330,6 +363,29 @@ export default function CollectScreen() {
                     </Text>
                   </View>
                 </View>
+
+                {/* Remaining Hands Ceiling & Progress Bar */}
+                <View style={styles.clientContributionSummaryRow}>
+                  <View style={styles.clientProgressBarHeader}>
+                    <Text style={styles.clientContributionSummaryText}>
+                      Cotisé : <Text style={styles.clientContributionSummaryBold}>{currentPaidHands}/{limits.maxAllowedHands} mains</Text>
+                    </Text>
+                    <Text style={limits.remainingHands === 0 ? styles.clientContributionSummaryGreen : styles.clientContributionSummaryOrange}>
+                      {limits.remainingHands === 0 ? 'Complété' : `Reste : ${limits.remainingHands} main(s)`}
+                    </Text>
+                  </View>
+                  <View style={styles.clientProgressBarTrack}>
+                    <View
+                      style={[
+                        styles.clientProgressBarFill,
+                        {
+                          width: `${Math.min(100, Math.round((currentPaidHands / limits.maxAllowedHands) * 100))}%`,
+                          backgroundColor: limits.isCycleCompleted ? SOL_COLORS.successDark : SOL_COLORS.primary,
+                        },
+                      ]}
+                    />
+                  </View>
+                </View>
               </View>
             </TouchableOpacity>
           ) : (
@@ -349,7 +405,9 @@ export default function CollectScreen() {
           <View style={styles.handsSectionHeader}>
             <Text style={styles.sectionLabel}>NOMBRE DE MAIN(S) À PAYER</Text>
             <Text style={styles.handsCountLiveBadge}>
-              {handsCount} main{handsCount > 1 ? 's' : ''} sélectionnée{handsCount > 1 ? 's' : ''}
+              {limits.isCycleCompleted
+                ? 'Cycle Complété'
+                : `${handsCount} main${handsCount > 1 ? 's' : ''} sur ${limits.remainingHands} restante${limits.remainingHands > 1 ? 's' : ''}`}
             </Text>
           </View>
 
@@ -358,8 +416,8 @@ export default function CollectScreen() {
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={handleDecrement}
-              style={[styles.stepperBtn, handsCount <= 1 && styles.stepperBtnDisabled]}
-              disabled={handsCount <= 1}
+              style={[styles.stepperBtn, (handsCount <= 1 || limits.isCycleCompleted) && styles.stepperBtnDisabled]}
+              disabled={handsCount <= 1 || limits.isCycleCompleted}
             >
               <Text style={styles.stepperBtnSymbol}>−</Text>
             </TouchableOpacity>
@@ -372,7 +430,8 @@ export default function CollectScreen() {
             <TouchableOpacity
               activeOpacity={0.7}
               onPress={handleIncrement}
-              style={styles.stepperBtn}
+              style={[styles.stepperBtn, (handsCount >= limits.remainingHands || limits.isCycleCompleted) && styles.stepperBtnDisabled]}
+              disabled={handsCount >= limits.remainingHands || limits.isCycleCompleted}
             >
               <Text style={styles.stepperBtnSymbol}>+</Text>
             </TouchableOpacity>
@@ -380,25 +439,40 @@ export default function CollectScreen() {
 
           {/* Preset Buttons Grid */}
           <View style={styles.presetGrid}>
-            {presetHands.map((num) => {
-              const isSelected = handsCount === num;
-              const calcAmount = num * unitAmount;
+            {presetRounds.map((preset) => {
+              const isSelected = handsCount === preset.hands;
+              const isExceeding = preset.hands > limits.remainingHands;
+              const calcAmount = preset.hands * unitAmount;
 
               return (
                 <TouchableOpacity
-                  key={num}
+                  key={preset.label}
                   activeOpacity={0.7}
-                  onPress={() => handleSelectHandsCount(num)}
+                  onPress={() => !isExceeding && handleSelectHandsCount(preset.hands)}
+                  disabled={isExceeding || limits.isCycleCompleted}
                   style={[
                     styles.presetCard,
                     isSelected && styles.presetCardSelected,
+                    isExceeding && styles.presetCardDisabled,
                   ]}
                 >
-                  <Text style={[styles.presetCardHands, isSelected && styles.presetCardHandsSelected]}>
-                    {num} Main{num > 1 ? 's' : ''}
+                  <Text
+                    style={[
+                      styles.presetCardHands,
+                      isSelected && styles.presetCardHandsSelected,
+                      isExceeding && styles.presetCardHandsDisabled,
+                    ]}
+                  >
+                    {preset.label}
                   </Text>
-                  <Text style={[styles.presetCardAmount, isSelected && styles.presetCardAmountSelected]}>
-                    {formatCurrency(calcAmount)}
+                  <Text
+                    style={[
+                      styles.presetCardAmount,
+                      isSelected && styles.presetCardAmountSelected,
+                      isExceeding && styles.presetCardAmountDisabled,
+                    ]}
+                  >
+                    {isExceeding ? `Max: ${limits.remainingHands}` : formatCurrency(calcAmount)}
                   </Text>
                 </TouchableOpacity>
               );
@@ -413,8 +487,14 @@ export default function CollectScreen() {
 
           <View style={styles.formulaRow}>
             <Text style={styles.formulaText}>
-              <Text style={styles.formulaBold}>{handsCount} main{handsCount > 1 ? 's' : ''}</Text> × {formatCurrency(unitAmount)} = {formatCurrency(totalAmount)}
+              <Text style={styles.formulaBold}>{handsCount} main{handsCount > 1 ? 's' : ''} couverte{handsCount > 1 ? 's' : ''}</Text> × {formatCurrency(unitAmount)} = {formatCurrency(totalAmount)}
             </Text>
+            {memberHandsCount > 1 && (
+              <Text style={styles.formulaSubText}>
+                Soit {Math.floor(handsCount / memberHandsCount)} tour{Math.floor(handsCount / memberHandsCount) > 1 ? 's' : ''}
+                {handsCount % memberHandsCount > 0 ? ` + ${handsCount % memberHandsCount} main(s)` : ''} pour {selectedClient?.fullName} ({memberHandsCount} mains/tour)
+              </Text>
+            )}
           </View>
 
           {/* Coverage Preview Pill */}
@@ -423,7 +503,7 @@ export default function CollectScreen() {
             <Text style={styles.coverageBadgeText}>
               {limits.isCycleCompleted
                 ? `Plafond atteint (${currentPaidHands}/${limits.maxAllowedHands} mains cotisées)`
-                : `Avance : Couvre jusqu'au ${formatDateShort(previewDateStr)}`}
+                : `Avance : Couvre jusqu'au ${formatDateShort(previewDateStr)} (${limits.remainingHands - handsCount} restante(s) après)`}
             </Text>
           </View>
         </View>
@@ -432,7 +512,7 @@ export default function CollectScreen() {
           <View style={styles.cycleCompletedBanner}>
             <Icon name="crown" size={16} color="#059669" style={{ marginRight: 8 }} />
             <Text style={styles.cycleCompletedText}>
-              Cycle complété : Cet adhérent a cotisé la totalité des {limits.maxAllowedHands} mains ({formatCurrency(limits.maxPotAmount)}). Aucun versement supplémentaire n'est requis.
+              Cycle complété : Cet adhérent a cotisé la totalité des {limits.maxAllowedHands} mains ({formatCurrency(limits.maxPotAmount)}). Aucun versement supplémentaire n'est autorisé.
             </Text>
           </View>
         )}
@@ -450,7 +530,7 @@ export default function CollectScreen() {
               ? 'Cycle Complété (Plafond Atteint)'
               : isProcessing
               ? 'Traitement en cours...'
-              : `Valider l'Encaissement (${formatCurrency(totalAmount)})`}
+              : `Encaisser ${formatCurrency(totalAmount)} (${handsCount} main${handsCount > 1 ? 's' : ''})`}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -502,6 +582,23 @@ export default function CollectScreen() {
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
             renderItem={({ item }) => {
               const isSelected = selectedClient?.id === item.id;
+              const itemHandsCount = Math.max(1, item.handsCount || 1);
+              const itemUnit = item.dailyAmount || unitAmount || 250;
+              const itemBalance = Number(item.currentBalance || 0);
+              const itemTotalPaid = Number(item.totalPaidAmount || itemBalance);
+              const itemPaidHands = Math.max(
+                Number(item.paidHandsCount || 0),
+                calculateHandsCovered(itemBalance, itemUnit),
+                calculateHandsCovered(itemTotalPaid, itemUnit)
+              );
+              const itemLimits = calculateCycleContributionLimits({
+                currentPaidHands: itemPaidHands,
+                totalCycleHands,
+                memberHandsCount: itemHandsCount,
+                unitAmount: itemUnit,
+              });
+              const itemPct = Math.min(100, Math.round((itemPaidHands / itemLimits.maxAllowedHands) * 100));
+
               return (
                 <TouchableOpacity
                   activeOpacity={0.7}
@@ -517,7 +614,14 @@ export default function CollectScreen() {
                     </View>
 
                     <View style={{ marginLeft: 12, flex: 1 }}>
-                      <Text style={styles.clientOptionName}>{item.fullName}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Text style={styles.clientOptionName}>{item.fullName}</Text>
+                        {itemLimits.isCycleCompleted && (
+                          <View style={styles.modalCompletedBadge}>
+                            <Text style={styles.modalCompletedBadgeText}>Complété</Text>
+                          </View>
+                        )}
+                      </View>
                       <Text style={styles.clientOptionPhone}>{item.phoneNumber}</Text>
 
                       <View style={styles.clientOptionSubRow}>
@@ -529,6 +633,27 @@ export default function CollectScreen() {
                             • Couvert : {formatDateShort(item.paidUntilDate)}
                           </Text>
                         )}
+                      </View>
+
+                      {/* Modal Item Progress Bar */}
+                      <View style={styles.modalItemProgressContainer}>
+                        <View style={styles.modalItemProgressHeader}>
+                          <Text style={styles.modalItemProgressText}>
+                            Cotisé : {itemPaidHands}/{itemLimits.maxAllowedHands} • Reste : {itemLimits.remainingHands} main(s)
+                          </Text>
+                          <Text style={styles.modalItemProgressPct}>{itemPct}%</Text>
+                        </View>
+                        <View style={styles.modalItemProgressBarTrack}>
+                          <View
+                            style={[
+                              styles.modalItemProgressBarFill,
+                              {
+                                width: `${itemPct}%`,
+                                backgroundColor: itemLimits.isCycleCompleted ? SOL_COLORS.successDark : SOL_COLORS.primary,
+                              },
+                            ]}
+                          />
+                        </View>
                       </View>
                     </View>
                   </View>
@@ -906,6 +1031,11 @@ const styles = StyleSheet.create({
     backgroundColor: SOL_COLORS.primary,
     borderColor: SOL_COLORS.primary,
   },
+  presetCardDisabled: {
+    backgroundColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
+    opacity: 0.45,
+  },
   presetCardHands: {
     fontSize: 13,
     fontWeight: '800',
@@ -913,6 +1043,9 @@ const styles = StyleSheet.create({
   },
   presetCardHandsSelected: {
     color: '#FFFFFF',
+  },
+  presetCardHandsDisabled: {
+    color: '#94A3B8',
   },
   presetCardAmount: {
     fontSize: 11,
@@ -922,6 +1055,93 @@ const styles = StyleSheet.create({
   },
   presetCardAmountSelected: {
     color: '#E0E7FF',
+  },
+  presetCardAmountDisabled: {
+    color: '#94A3B8',
+  },
+  clientContributionSummaryRow: {
+    marginTop: 6,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  clientProgressBarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  clientProgressBarTrack: {
+    height: 6,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  clientProgressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  clientContributionSummaryText: {
+    fontSize: 11,
+    color: SOL_COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  clientContributionSummaryBold: {
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+  },
+  clientContributionSummaryGreen: {
+    fontWeight: '800',
+    color: SOL_COLORS.successDark,
+    fontSize: 11,
+  },
+  clientContributionSummaryOrange: {
+    fontWeight: '800',
+    color: '#D97706',
+    fontSize: 11,
+  },
+  modalCompletedBadge: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  modalCompletedBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  modalItemProgressContainer: {
+    marginTop: 5,
+  },
+  modalItemProgressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 3,
+  },
+  modalItemProgressText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  modalItemProgressPct: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+  },
+  modalItemProgressBarTrack: {
+    height: 4,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  modalItemProgressBarFill: {
+    height: '100%',
+    borderRadius: 2,
   },
   amountDisplayCard: {
     backgroundColor: '#0F172A',
@@ -953,6 +1173,13 @@ const styles = StyleSheet.create({
   formulaBold: {
     fontWeight: '900',
     color: '#FFFFFF',
+  },
+  formulaSubText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '600',
+    marginTop: 3,
+    textAlign: 'center',
   },
   coverageBadge: {
     flexDirection: 'row',

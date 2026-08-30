@@ -51,7 +51,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           onSuccess();
         } else {
           triggerErrorFeedback();
-          setErrorMessage('Code PIN incorrect.');
+          setErrorMessage('Code PIN incorrect. Veuillez réessayer.');
           setPin('');
         }
       }
@@ -72,18 +72,19 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
     setErrorMessage(null);
   };
 
-  const numpadKeys = [
+  // Keypad layout — 'DEL' replaces emoji ⌫
+  const numpadKeys: string[][] = [
     ['1', '2', '3'],
     ['4', '5', '6'],
     ['7', '8', '9'],
-    ['C', '0', '⌫'],
+    ['C', '0', 'DEL'],
   ];
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="slide"
       onRequestClose={onCancel}
     >
       <View style={styles.overlay}>
@@ -93,7 +94,12 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             <View style={styles.iconCircle}>
               <Icon name="shield" size={22} color="#FFFFFF" />
             </View>
-            <TouchableOpacity onPress={onCancel} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={onCancel}
+              style={styles.closeBtn}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel="Fermer"
+            >
               <Icon name="close" size={16} color={SOL_COLORS.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -101,7 +107,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
 
-          {/* 4 Dots Display */}
+          {/* 4 Dots PIN Display */}
           <View style={styles.dotsRow}>
             {[0, 1, 2, 3].map((index) => {
               const isFilled = index < pin.length;
@@ -130,21 +136,26 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             {numpadKeys.map((row, rIdx) => (
               <View key={rIdx} style={styles.keypadRow}>
                 {row.map((key) => {
-                  const isAction = key === 'C' || key === '⌫';
+                  const isAction = key === 'C' || key === 'DEL';
                   return (
                     <TouchableOpacity
                       key={key}
-                      activeOpacity={0.7}
+                      activeOpacity={0.65}
                       onPress={() => {
                         if (key === 'C') handleClear();
-                        else if (key === '⌫') handleBackspace();
+                        else if (key === 'DEL') handleBackspace();
                         else handleDigit(key);
                       }}
                       style={[styles.keyBtn, isAction && styles.keyBtnAction]}
+                      accessibilityLabel={key === 'DEL' ? 'Supprimer' : key === 'C' ? 'Effacer' : key}
                     >
-                      <Text style={[styles.keyText, isAction && styles.keyTextAction]}>
-                        {key}
-                      </Text>
+                      {key === 'DEL' ? (
+                        <Icon name="arrow-left" size={18} color={SOL_COLORS.textSecondary} />
+                      ) : key === 'C' ? (
+                        <Text style={[styles.keyText, styles.keyTextAction]}>C</Text>
+                      ) : (
+                        <Text style={styles.keyText}>{key}</Text>
+                      )}
                     </TouchableOpacity>
                   );
                 })}
@@ -160,17 +171,18 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.80)',
+    justifyContent: 'flex-end',
     alignItems: 'center',
-    padding: 20,
   },
   card: {
     width: '100%',
-    maxWidth: 360,
     backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 36,
     alignItems: 'center',
     ...SHADOWS.lg,
   },
@@ -179,21 +191,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    marginBottom: 16,
   },
   iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: SOL_COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
     ...SHADOWS.sm,
   },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: SOL_COLORS.surfaceSubtle,
     alignItems: 'center',
     justifyContent: 'center',
@@ -210,18 +222,19 @@ const styles = StyleSheet.create({
     color: SOL_COLORS.textSecondary,
     textAlign: 'center',
     marginTop: 6,
-    marginBottom: 20,
-    lineHeight: 18,
+    marginBottom: 24,
+    lineHeight: 19,
+    paddingHorizontal: 8,
   },
   dotsRow: {
     flexDirection: 'row',
-    gap: 14,
+    gap: 16,
     marginBottom: 16,
   },
   dot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     borderWidth: 2,
     borderColor: SOL_COLORS.borderStrong,
     backgroundColor: '#FFFFFF',
@@ -239,9 +252,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: SOL_COLORS.dangerLighter,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 10,
-    marginBottom: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.dangerLight,
   },
   errorText: {
     color: SOL_COLORS.dangerDark,
@@ -250,17 +265,17 @@ const styles = StyleSheet.create({
   },
   keypad: {
     width: '100%',
-    gap: 10,
+    gap: 12,
     marginTop: 4,
   },
   keypadRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 12,
   },
   keyBtn: {
     flex: 1,
-    height: 52,
+    height: 58,
     borderRadius: 16,
     backgroundColor: SOL_COLORS.surfaceSubtle,
     borderWidth: 1,
@@ -273,12 +288,12 @@ const styles = StyleSheet.create({
     borderColor: SOL_COLORS.borderStrong,
   },
   keyText: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
     color: SOL_COLORS.textPrimary,
   },
   keyTextAction: {
-    fontSize: 16,
+    fontSize: 17,
     color: SOL_COLORS.textSecondary,
     fontWeight: '700',
   },

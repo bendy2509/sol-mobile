@@ -55,6 +55,7 @@ export const MemberCard: React.FC<MemberCardProps> = ({
       style={[
         styles.card,
         isPayoutTurn && !member.hasReceivedHand && styles.cardHighlightTurn,
+        member.handsCount > 1 && styles.cardMultiHands,
       ]}
     >
       {/* Top Row: Avatar + Name + Hand Rank */}
@@ -90,34 +91,56 @@ export const MemberCard: React.FC<MemberCardProps> = ({
         </View>
       </View>
 
-      {/* Hand Status Indicator Banner */}
-      <View style={styles.handStatusRow}>
-        {member.hasReceivedHand ? (
-          <View style={styles.handReceivedBadge}>
-            <Icon name="check" size={12} color={SOL_COLORS.successDark} style={{ marginRight: 4 }} />
-            <Text style={styles.handReceivedText}>
-              {member.handsCount > 1
-                ? `Toutes les mains reçues (${member.handsCount}/${member.handsCount})`
-                : `Main reçue ${member.handReceivedDate ? `le ${formatDateShort(member.handReceivedDate)}` : ''}`}
-            </Text>
-          </View>
-        ) : member.handsCount > 1 && (member.receivedHandsCount || 0) > 0 ? (
-          <View style={styles.handPartialBadge}>
-            <Icon name="check" size={12} color="#0284C7" style={{ marginRight: 4 }} />
-            <Text style={styles.handPartialText}>
-              {member.receivedHandsCount}/{member.handsCount} main(s) perçue(s)
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.handPendingBadge}>
-            <Icon name="clock" size={12} color={SOL_COLORS.textSecondary} style={{ marginRight: 4 }} />
-            <Text style={styles.handPendingText}>En attente de son tour</Text>
-          </View>
-        )}
+      {/* Hand Status Indicator Banner & Progress */}
+      <View style={styles.handStatusContainer}>
+        <View style={styles.handStatusRow}>
+          {member.hasReceivedHand ? (
+            <View style={styles.handReceivedBadge}>
+              <Icon name="check" size={12} color={SOL_COLORS.successDark} style={{ marginRight: 4 }} />
+              <Text style={styles.handReceivedText}>
+                {member.handsCount > 1
+                  ? `Toutes les mains reçues (${member.handsCount}/${member.handsCount})`
+                  : `Main reçue ${member.handReceivedDate ? `le ${formatDateShort(member.handReceivedDate)}` : ''}`}
+              </Text>
+            </View>
+          ) : member.handsCount > 1 && (member.receivedHandsCount || 0) > 0 ? (
+            <View style={styles.handPartialBadge}>
+              <Icon name="check" size={12} color="#0284C7" style={{ marginRight: 4 }} />
+              <Text style={styles.handPartialText}>
+                {member.receivedHandsCount}/{member.handsCount} main(s) perçue(s)
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.handPendingBadge}>
+              <Icon name="clock" size={12} color={SOL_COLORS.textSecondary} style={{ marginRight: 4 }} />
+              <Text style={styles.handPendingText}>En attente de son tour</Text>
+            </View>
+          )}
 
-        {member.handsCoveredAhead > 0 && (
-          <View style={styles.advanceBadge}>
-            <Text style={styles.advanceBadgeText}>+{member.handsCoveredAhead} j d'avance</Text>
+          {member.handsCoveredAhead > 0 && (
+            <View style={styles.advanceBadge}>
+              <Text style={styles.advanceBadgeText}>+{member.handsCoveredAhead} j d'avance</Text>
+            </View>
+          )}
+        </View>
+
+        {member.handsCount > 1 && (
+          <View style={styles.memberProgressBarBg}>
+            <View
+              style={[
+                styles.memberProgressBarFill,
+                {
+                  width: `${Math.min(
+                    100,
+                    Math.round(
+                      ((member.receivedHandsCount || (member.hasReceivedHand ? member.handsCount : 0)) /
+                        member.handsCount) *
+                        100
+                    )
+                  )}%`,
+                },
+              ]}
+            />
           </View>
         )}
       </View>
@@ -219,6 +242,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     borderWidth: 1.5,
   },
+  cardMultiHands: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#D97706',
+  },
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -300,12 +327,26 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '500',
   },
+  handStatusContainer: {
+    marginBottom: 12,
+  },
   handStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
     gap: 8,
+  },
+  memberProgressBarBg: {
+    height: 4,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 2,
+    marginTop: 6,
+    overflow: 'hidden',
+  },
+  memberProgressBarFill: {
+    height: '100%',
+    backgroundColor: '#0284C7',
+    borderRadius: 2,
   },
   handReceivedBadge: {
     flexDirection: 'row',
@@ -430,7 +471,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   balanceLabel: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     color: SOL_COLORS.textMuted,
   },
@@ -450,7 +491,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 14,
   },
   collectBtn: {

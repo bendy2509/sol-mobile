@@ -22,7 +22,7 @@ import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberReposi
 import { BusinessConfig, Member } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { getFrequencyLabel } from '@/lib/dateCalculations';
-import { calculatePot } from '@/services/financialService';
+import { calculatePot, calculateCycleTotalHands } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
 
@@ -81,9 +81,10 @@ export default function SolMatrixScreen() {
     setIsPinModalOpen(true);
   };
 
+  const totalHandsCount = calculateCycleTotalHands(members) || (business?.totalSlots || 10);
   const potValue = calculatePot(
     business?.contributionAmount || 250,
-    business?.totalSlots || members.length || 10
+    totalHandsCount
   );
 
   const handlePinSuccessPayout = async () => {
@@ -110,8 +111,11 @@ export default function SolMatrixScreen() {
     }
   };
 
-  const totalPaidOut = members.filter((m) => m.hasReceivedHand || m.hasReceivedPayout).length;
-  const currentRound = Math.min(members.length || 1, totalPaidOut + 1);
+  const totalHandsTouched = members.reduce(
+    (sum, m) => sum + (m.receivedHandsCount || (m.hasReceivedHand ? m.handsCount || 1 : 0)),
+    0
+  );
+  const currentRound = Math.min(totalHandsCount, totalHandsTouched + 1);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -151,10 +155,10 @@ export default function SolMatrixScreen() {
           <View style={styles.progressSection}>
             <View style={styles.progressTextRow}>
               <Text style={styles.progressLabel}>
-                Tour actuel : <Text style={styles.progressBold}>Main #{currentRound}</Text> sur {business?.totalSlots || members.length}
+                Mains données : <Text style={styles.progressBold}>{totalHandsTouched} sur {totalHandsCount} mains</Text>
               </Text>
               <Text style={styles.progressPct}>
-                {Math.round((totalPaidOut / (business?.totalSlots || members.length || 1)) * 100)}%
+                {Math.round((totalHandsTouched / (totalHandsCount || 1)) * 100)}%
               </Text>
             </View>
             <View style={styles.progressBar}>
@@ -164,7 +168,7 @@ export default function SolMatrixScreen() {
                   {
                     width: `${Math.min(
                       100,
-                      (totalPaidOut / (business?.totalSlots || members.length || 1)) * 100
+                      (totalHandsTouched / (totalHandsCount || 1)) * 100
                     )}%`,
                   },
                 ]}

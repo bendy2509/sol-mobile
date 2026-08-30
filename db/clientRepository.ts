@@ -25,6 +25,9 @@ export async function getAllClients(options?: {
       daily_amount,
       current_balance,
       payout_rank,
+      payout_ranks,
+      hands_count,
+      received_hands_count,
       has_received_hand,
       has_received_payout,
       hand_received_date,
@@ -93,9 +96,14 @@ export async function getAllClients(options?: {
         : 0
     );
     const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
+    const unitAmount = Number(r.daily_amount || 250);
     const balance = Number(r.current_balance || 0);
     const totalPaid = Number(r.total_paid_amount || balance);
-    const paidHands = Number(r.paid_hands_count || 0);
+    const paidHands = Math.max(
+      Number(r.paid_hands_count || 0),
+      Math.floor(balance / (unitAmount || 1)),
+      Math.floor(totalPaid / (unitAmount || 1))
+    );
 
     return {
       id: r.id,
@@ -104,7 +112,7 @@ export async function getAllClients(options?: {
       fullName: r.full_name,
       phoneNumber: r.phone_number,
       type: (r.type as any) || 'SABOTAY',
-      dailyAmount: Number(r.daily_amount || 250),
+      dailyAmount: unitAmount,
       currentBalance: balance,
       payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
       rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
@@ -166,9 +174,14 @@ export async function getClientById(id: string): Promise<Client | null> {
       : 0
   );
   const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
+  const unitAmount = Number(r.daily_amount || 250);
   const balance = Number(r.current_balance || 0);
   const totalPaid = Number(r.total_paid_amount || balance);
-  const paidHands = Number(r.paid_hands_count || 0);
+  const paidHands = Math.max(
+    Number(r.paid_hands_count || 0),
+    Math.floor(balance / (unitAmount || 1)),
+    Math.floor(totalPaid / (unitAmount || 1))
+  );
 
   return {
     id: r.id,
@@ -177,7 +190,7 @@ export async function getClientById(id: string): Promise<Client | null> {
     fullName: r.full_name,
     phoneNumber: r.phone_number,
     type: (r.type as any) || 'SABOTAY',
-    dailyAmount: Number(r.daily_amount || 250),
+    dailyAmount: unitAmount,
     currentBalance: balance,
     payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
     rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
@@ -239,9 +252,14 @@ export async function getClientByQrToken(qrCodeToken: string): Promise<Client | 
       : 0
   );
   const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
+  const unitAmount = Number(r.daily_amount || 250);
   const balance = Number(r.current_balance || 0);
   const totalPaid = Number(r.total_paid_amount || balance);
-  const paidHands = Number(r.paid_hands_count || 0);
+  const paidHands = Math.max(
+    Number(r.paid_hands_count || 0),
+    Math.floor(balance / (unitAmount || 1)),
+    Math.floor(totalPaid / (unitAmount || 1))
+  );
 
   return {
     id: r.id,
@@ -366,6 +384,16 @@ export async function createClient(data: {
         initialHandsCount,
         now,
       ]
+    );
+  }
+
+  // Update business total_slots if active business exists
+  if (activeBusiness) {
+    const newTotalHands = currentTotalHands + handsCount;
+    const newTotalSlots = Math.max(activeBusiness.totalSlots, newTotalHands);
+    await db.runAsync(
+      `UPDATE business_configs SET total_slots = ? WHERE id = ?`,
+      [newTotalSlots, activeBusiness.id]
     );
   }
 

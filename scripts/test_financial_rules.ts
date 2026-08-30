@@ -1,7 +1,11 @@
 import {
   calculatePot,
+  calculatePotAmount,
   calculateHandsCount,
+  calculateHandsCovered,
   calculateContributionAmount,
+  calculateMemberDuePerRound,
+  calculateMemberTotalCyclePot,
   calculateCycleContributionLimits,
   calculateCoverageDate,
   reconstructClientFinancialTimeline,
@@ -482,6 +486,97 @@ const multiTimelineReversed = reconstructClientFinancialTimeline({
 });
 assert(multiTimelineReversed.receivedHandsCount === 1, 'After reversing 2nd payout, receivedHandsCount = 1');
 assert(multiTimelineReversed.hasReceivedHand === false, 'hasReceivedHand remains false (1/3)');
+
+// 14. USER SCENARIO: 13-HANDS CYCLE CONTRIBUTION CEILINGS (NO OVERPAYMENT ALLOWED)
+// Single-hand member in 13-hand cycle: max is 13 hands
+const singleIn13Cycle = calculateCycleContributionLimits({
+  currentPaidHands: 5,
+  totalCycleHands: 13,
+  memberHandsCount: 1,
+  unitAmount: 250,
+});
+assert(singleIn13Cycle.maxAllowedHands === 13, 'Single-hand child in 13-hand cycle: max allowed hands = 13');
+assert(singleIn13Cycle.remainingHands === 8, 'Single-hand child with 5 paid hands: exactly 8 remaining hands');
+assert(singleIn13Cycle.remainingAmount === 2000, 'Single-hand child with 5 paid hands: remaining amount = 8 * 250 = 2,000 HTG');
+assert(singleIn13Cycle.isCycleCompleted === false, 'Single-hand child with 5/13 paid: cycle is not completed');
+
+// After paying the remaining 8 hands:
+const singleIn13CycleCompleted = calculateCycleContributionLimits({
+  currentPaidHands: 13,
+  totalCycleHands: 13,
+  memberHandsCount: 1,
+  unitAmount: 250,
+});
+assert(singleIn13CycleCompleted.remainingHands === 0, 'Single-hand child with 13/13 paid: 0 remaining hands');
+assert(singleIn13CycleCompleted.remainingAmount === 0, 'Single-hand child with 13/13 paid: 0 HTG remaining');
+assert(singleIn13CycleCompleted.isCycleCompleted === true, 'Single-hand child with 13/13 paid: cycle is completed');
+
+// 3-hand member in 13-hand cycle: max is 3 * 13 = 39 hands
+const tripleIn13Cycle = calculateCycleContributionLimits({
+  currentPaidHands: 15,
+  totalCycleHands: 13,
+  memberHandsCount: 3,
+  unitAmount: 250,
+});
+assert(tripleIn13Cycle.maxAllowedHands === 39, '3-hand child in 13-hand cycle: max allowed hands = 3 * 13 = 39 hands');
+assert(tripleIn13Cycle.remainingHands === 24, '3-hand child with 15 paid hands: exactly 24 remaining hands (39 - 15 = 24)');
+assert(tripleIn13Cycle.remainingAmount === 6000, '3-hand child with 15 paid hands: remaining amount = 24 * 250 = 6,000 HTG');
+
+// 15. SECTION 15: VERIFICATION & BLINDAGE DE LA LOGIQUE DES MAINS (PARTS MULTIPLES & 15-HANDS SOL)
+// A. Hands covered calculation: S / P_unitaire
+assert(calculateHandsCovered(500, 250) === 2, '500 HTG / 250 HTG = exactly 2 hands covered');
+assert(calculateHandsCovered(1500, 250) === 6, '1500 HTG / 250 HTG = exactly 6 hands covered');
+assert(calculateHandsCovered(250, 250) === 1, '250 HTG / 250 HTG = exactly 1 hand covered');
+assert(calculateHandsCovered(0, 250) === 0, '0 HTG / 250 HTG = 0 hands covered');
+assert(calculateHandsCovered(100, 250) === 0, '100 HTG / 250 HTG = 0 hands covered (< 1 hand)');
+assert(calculateHandsCovered(600, 250) === 2, '600 HTG / 250 HTG = 2 hands covered (floor)');
+
+// B. Pot de tirage ("Bay Men"): M_total * P_unitaire
+const sol15Pot = calculatePotAmount(15, 250);
+assert(sol15Pot === 3750, 'SOL of 15 hands @ 250 HTG = strict pot of 3,750 HTG');
+
+// C. Nominal due per round: handsCount * P_unitaire
+assert(calculateMemberDuePerRound(1, 250) === 250, '1-hand child nominal round due = 250 HTG');
+assert(calculateMemberDuePerRound(2, 250) === 500, '2-hand child nominal round due = 500 HTG');
+assert(calculateMemberDuePerRound(3, 250) === 750, '3-hand child nominal round due = 750 HTG');
+
+// D. Total cycle payout per member: handsCount * (M_total * P_unitaire)
+assert(calculateMemberTotalCyclePot(1, 15, 250) === 3750, '1-hand child in 15-hand SOL touches 1 * 3,750 = 3,750 HTG');
+assert(calculateMemberTotalCyclePot(2, 15, 250) === 7500, '2-hand child in 15-hand SOL touches 2 * 3,750 = 7,500 HTG');
+assert(calculateMemberTotalCyclePot(3, 15, 250) === 11250, '3-hand child in 15-hand SOL touches 3 * 3,750 = 11,250 HTG');
+
+// E. Full cycle quotas & completion in a 15-hand SOL
+// 1-hand child in 15-hand cycle
+const singleIn15 = calculateCycleContributionLimits({
+  currentPaidHands: 0,
+  totalCycleHands: 15,
+  memberHandsCount: 1,
+  unitAmount: 250,
+});
+assert(singleIn15.maxAllowedHands === 15, '1-hand child in 15-hand SOL: max allowed hands = 15');
+assert(singleIn15.maxPotAmount === 3750, '1-hand child in 15-hand SOL: total due on cycle = 3,750 HTG');
+
+// 2-hand child in 15-hand cycle: 2 * 15 = 30 hands = 7,500 HTG
+const doubleIn15 = calculateCycleContributionLimits({
+  currentPaidHands: 10,
+  totalCycleHands: 15,
+  memberHandsCount: 2,
+  unitAmount: 250,
+});
+assert(doubleIn15.maxAllowedHands === 30, '2-hand child in 15-hand SOL: max allowed hands = 30');
+assert(doubleIn15.maxPotAmount === 7500, '2-hand child in 15-hand SOL: total due on cycle = 7,500 HTG');
+assert(doubleIn15.remainingHands === 20, '2-hand child with 10 paid hands: 20 remaining hands');
+assert(doubleIn15.remainingAmount === 5000, '2-hand child with 10 paid hands: 5,000 HTG remaining');
+
+// 2-hand child fully completed
+const doubleIn15Completed = calculateCycleContributionLimits({
+  currentPaidHands: 30,
+  totalCycleHands: 15,
+  memberHandsCount: 2,
+  unitAmount: 250,
+});
+assert(doubleIn15Completed.remainingHands === 0, '2-hand child with 30/30 paid: 0 remaining hands');
+assert(doubleIn15Completed.isCycleCompleted === true, '2-hand child with 30/30 paid: cycle is completed');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);

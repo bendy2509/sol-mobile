@@ -179,32 +179,70 @@ class WebSQLiteAdapter {
     }
 
     if (upperSql.startsWith('UPDATE')) {
-      if (cleanSql.includes('UPDATE clients SET')) {
-        if (cleanSql.includes('has_received_hand = 1')) {
-          const [date, clientId] = params;
-          const cl = this.data.clients.find((c) => c.id === clientId);
-          if (cl) {
-            cl.has_received_hand = 1;
-            cl.has_received_payout = 1;
-            cl.hand_received_date = date;
-          }
-        } else if (cleanSql.includes('current_balance =')) {
-          const [balance, totalPaid, paidHands, paidUntil, clientId] = params;
-          const cl = this.data.clients.find((c) => c.id === clientId);
-          if (cl) {
-            cl.current_balance = Number(balance);
-            if (totalPaid !== undefined) cl.total_paid_amount = Number(totalPaid);
-            if (paidHands !== undefined) cl.paid_hands_count = Number(paidHands);
-            if (paidUntil !== undefined) cl.paid_until_date = paidUntil;
+      const match = cleanSql.match(/UPDATE\s+(\w+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/is);
+      if (match) {
+        const tableName = match[1].toLowerCase() as keyof WebTableStore;
+        const setClause = match[2];
+        const whereClause = match[3] || '';
+
+        const setPairs = setClause.split(',').map((p) => p.trim());
+        let paramIdx = 0;
+        const updates: Record<string, any> = {};
+
+        for (const pair of setPairs) {
+          const eqMatch = pair.match(/(\w+)\s*=\s*(.+)/);
+          if (eqMatch) {
+            const col = eqMatch[1].toLowerCase();
+            const valExpr = eqMatch[2].trim();
+            if (valExpr === '?') {
+              updates[col] = params[paramIdx++];
+            } else if (valExpr.startsWith("'") && valExpr.endsWith("'")) {
+              updates[col] = valExpr.slice(1, -1);
+            } else if (!isNaN(Number(valExpr))) {
+              updates[col] = Number(valExpr);
+            } else {
+              updates[col] = valExpr;
+            }
           }
         }
-      } else if (cleanSql.includes('UPDATE collectors SET status =')) {
-        const [newStatus, collectorId] = params;
-        if (collectorId) {
-          const c = this.data.collectors.find((col) => col.id === collectorId);
-          if (c) c.status = newStatus;
-        } else {
-          this.data.collectors.forEach((c) => (c.status = newStatus));
+
+        const tableData = this.data[tableName];
+        if (Array.isArray(tableData)) {
+          let targets: any[] = [];
+          if (whereClause) {
+            const whereUpper = whereClause.toUpperCase();
+            if (whereUpper.includes('ID = ?')) {
+              const targetId = params[paramIdx++];
+              targets = tableData.filter((item: any) => item.id === targetId);
+            } else if (whereUpper.includes('COLLECTOR_ID = ?')) {
+              const targetCollectorId = params[paramIdx++];
+              targets = tableData.filter((item: any) => item.collector_id === targetCollectorId);
+            } else if (whereUpper.includes('PHONE_NUMBER = ?')) {
+              const targetPhone = params[paramIdx++];
+              targets = tableData.filter((item: any) => item.phone_number === targetPhone);
+            } else if (whereUpper.includes('CLIENT_ID = ?')) {
+              const targetClientId = params[paramIdx++];
+              targets = tableData.filter((item: any) => item.client_id === targetClientId || item.id === targetClientId);
+            } else {
+              targets = tableData;
+            }
+          } else {
+            targets = tableData;
+          }
+
+          for (const item of targets) {
+            Object.assign(item, updates);
+            if ('hands_count' in updates) item.hands_count = Math.max(1, Number(item.hands_count || 1));
+            if ('received_hands_count' in updates) item.received_hands_count = Number(item.received_hands_count || 0);
+            if ('has_received_hand' in updates) item.has_received_hand = item.has_received_hand ? 1 : 0;
+            if ('has_received_payout' in updates) item.has_received_payout = item.has_received_payout ? 1 : 0;
+            if ('current_balance' in updates) item.current_balance = Number(item.current_balance || 0);
+            if ('total_paid_amount' in updates) item.total_paid_amount = Number(item.total_paid_amount || 0);
+            if ('paid_hands_count' in updates) item.paid_hands_count = Number(item.paid_hands_count || 0);
+            if ('total_slots' in updates) item.total_slots = Number(item.total_slots || 0);
+            if ('contribution_amount' in updates) item.contribution_amount = Number(item.contribution_amount || 0);
+            if ('is_reversed' in updates) item.is_reversed = item.is_reversed ? 1 : 0;
+          }
         }
       }
       await this.persist();
@@ -316,32 +354,42 @@ class WebSQLiteAdapter {
     }
 
     if (upperSql.includes('FROM TRANSACTIONS')) {
-      if (cleanSql.includes('COUNT(*)')) {
-        if (cleanSql.includes(`sync_status = 'PENDING'`)) {
-          const count = this.data.transactions.filter((t) => t.sync_status === 'PENDING').length;
-          return [{ count }] as any;
+      let filtered = [...this.data.transactions];
+
+      if (cleanSql.includes('WHERE')) {
+        if (cleanSql.includes('is_reversed = 0')) {
+          filtered = filtered.filter((t) => !t.is_reversed);
         }
-        if (cleanSql.includes(`type = 'CONTRIBUTION'`) || cleanSql.includes(`type = 'SABOTAY_DEPOSIT'`)) {
-          const count = this.data.transactions.filter((t) => t.type === 'CONTRIBUTION' || t.type === 'SABOTAY_DEPOSIT' || t.type === 'SOL_CONTRIBUTION').length;
-          return [{ count }] as any;
+        if (cleanSql.includes('collector_id = ?')) {
+          const colParam = params[0];
+          filtered = filtered.filter((t) => t.collector_id === colParam);
+        }
+        if (cleanSql.includes('client_id = ?') || cleanSql.includes('member_id = ?')) {
+          const clientParam = params.find((p) => typeof p === 'string' && p.length > 5);
+          if (clientParam) {
+            filtered = filtered.filter((t) => t.client_id === clientParam || t.member_id === clientParam);
+          }
+        }
+        if (cleanSql.includes(`'HAND_PAYOUT'`) || cleanSql.includes(`'SOL_PAYOUT'`)) {
+          filtered = filtered.filter((t) => t.type === 'HAND_PAYOUT' || t.type === 'SOL_PAYOUT');
+        } else if (cleanSql.includes(`'CONTRIBUTION'`) || cleanSql.includes(`'SABOTAY_DEPOSIT'`)) {
+          filtered = filtered.filter((t) => t.type === 'CONTRIBUTION' || t.type === 'SABOTAY_DEPOSIT' || t.type === 'SOL_CONTRIBUTION');
+        } else if (cleanSql.includes(`sync_status = 'PENDING'`)) {
+          filtered = filtered.filter((t) => t.sync_status === 'PENDING');
         }
       }
-      if (cleanSql.includes('SUM(AMOUNT)')) {
-        const isContribution = cleanSql.includes(`'CONTRIBUTION'`) || cleanSql.includes(`'SABOTAY_DEPOSIT'`);
-        const isPayout = cleanSql.includes(`'HAND_PAYOUT'`) || cleanSql.includes(`'SOL_PAYOUT'`);
 
-        let filtered = this.data.transactions;
-        if (isContribution) {
-          filtered = filtered.filter((t) => t.type === 'CONTRIBUTION' || t.type === 'SABOTAY_DEPOSIT' || t.type === 'SOL_CONTRIBUTION');
-        } else if (isPayout) {
-          filtered = filtered.filter((t) => t.type === 'HAND_PAYOUT' || t.type === 'SOL_PAYOUT');
-        }
+      if (cleanSql.toLowerCase().includes('count(*)')) {
+        const total = filtered.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+        return [{ count: filtered.length, total }] as any;
+      }
 
+      if (cleanSql.toUpperCase().includes('SUM(AMOUNT)') || cleanSql.includes('SUM(amount)')) {
         const total = filtered.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
         return [{ total }] as any;
       }
 
-      let txs = this.data.transactions.map((t) => {
+      let txs = filtered.map((t) => {
         const client = this.data.clients.find((c) => c.id === t.client_id || c.id === t.member_id);
         return {
           ...t,
@@ -352,9 +400,6 @@ class WebSQLiteAdapter {
         };
       });
 
-      if (cleanSql.includes('client_id = ?') || cleanSql.includes('member_id = ?')) {
-        txs = txs.filter((t) => t.client_id === params[0] || t.member_id === params[0]);
-      }
       return txs as any;
     }
 

@@ -76,6 +76,13 @@ export default function PayoutScreen() {
 
   const isFullyReceived = currentReceivedHands >= memberHandsCount || Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
 
+  const totalHandsTouched = allClients.reduce(
+    (sum, m) => sum + (m.receivedHandsCount !== undefined ? m.receivedHandsCount : m.hasReceivedHand || m.hasReceivedPayout ? Math.max(1, m.handsCount || 1) : 0),
+    0
+  );
+  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((totalHandsTouched / totalCycleHands) * 100)) : 0;
+  const memberPayoutProgressPct = memberHandsCount > 0 ? Math.min(100, Math.round((currentReceivedHands / memberHandsCount) * 100)) : 0;
+
   const handleInitiatePayout = () => {
     if (isFullyReceived) {
       triggerErrorFeedback();
@@ -272,7 +279,22 @@ export default function PayoutScreen() {
               </View>
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Progression des tirages perçus :</Text>
-                <Text style={styles.infoValue}>{currentReceivedHands} / {memberHandsCount} tirage{memberHandsCount > 1 ? 's' : ''}</Text>
+                <Text style={styles.infoValue}>{currentReceivedHands} / {memberHandsCount} tirage{memberHandsCount > 1 ? 's' : ''} ({memberPayoutProgressPct}%)</Text>
+              </View>
+
+              {/* Recipient Payout Progress Bar */}
+              <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFillAmber, { width: `${memberPayoutProgressPct}%` }]} />
+              </View>
+
+              <View style={[styles.infoRow, { marginTop: 10 }]}>
+                <Text style={styles.infoLabel}>Mains données au total :</Text>
+                <Text style={styles.infoValue}>{totalHandsTouched} / {totalCycleHands} mains ({cycleProgressPct}%)</Text>
+              </View>
+
+              {/* Global Cycle Progress Bar */}
+              <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFillGreen, { width: `${cycleProgressPct}%` }]} />
               </View>
             </View>
 
@@ -527,5 +549,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '900',
     color: '#FFFFFF',
+  },
+  progressBarBg: {
+    height: 6,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 3,
+    marginTop: 4,
+    marginBottom: 6,
+    overflow: 'hidden',
+  },
+  progressBarFillAmber: {
+    height: '100%',
+    backgroundColor: '#D97706',
+    borderRadius: 3,
+  },
+  progressBarFillGreen: {
+    height: '100%',
+    backgroundColor: '#10B981',
+    borderRadius: 3,
   },
 });

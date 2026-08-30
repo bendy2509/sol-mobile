@@ -17,6 +17,10 @@ import { Header } from '@/components/Header';
 import { MemberCard } from '@/components/MemberCard';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { DashboardHero } from '@/components/dashboard/DashboardHero';
+import { DashboardMetricsGrid } from '@/components/dashboard/DashboardMetricsGrid';
+import { BeneficiaryBanner } from '@/components/dashboard/BeneficiaryBanner';
+import { DashboardFilters } from '@/components/dashboard/DashboardFilters';
 import { getDashboardMetrics } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { getActiveCollector } from '@/db/sqlite';
@@ -244,147 +248,11 @@ export default function DashboardScreen() {
         }
         ListHeaderComponent={
           <View style={styles.dashboardHeader}>
-            {/* 1. Hero Summary Card with Progress & Multi-hands breakdown */}
-            <View style={styles.heroCard}>
-              <View style={styles.heroTopRow}>
-                <View>
-                  <View style={styles.heroPillHeader}>
-                    <Icon name="crown" size={12} color="#FDE68A" style={{ marginRight: 4 }} />
-                    <Text style={styles.heroLabel}>CAGNOTTE D'UNE MAIN (TIRAGE)</Text>
-                  </View>
-                  <Text style={styles.heroAmount}>{formatCurrency(metrics.totalPotAmount)}</Text>
-                  <Text style={styles.heroSubFormula}>
-                    Base : {metrics.totalHandsExpected} mains effectives au cycle × {formatCurrency(metrics.unitAmount)}
-                  </Text>
-                </View>
-                <View style={styles.heroUnitBadge}>
-                  <Text style={styles.heroUnitText}>{formatCurrency(metrics.unitAmount)} / main</Text>
-                </View>
-              </View>
+            {/* 1. Hero Summary Card */}
+            <DashboardHero metrics={metrics} cycleProgressPct={cycleProgressPct} />
 
-              {/* Multi-Hands & Enrolled Stats Pill Row inside Hero */}
-              <View style={styles.heroStatsRow}>
-                <View style={styles.heroStatItem}>
-                  <Text style={styles.heroStatItemLabel}>ENFANTS INSCRITS</Text>
-                  <View style={styles.heroStatItemValRow}>
-                    <Icon name="users" size={12} color="#94A3B8" style={{ marginRight: 4 }} />
-                    <Text style={styles.heroStatItemVal}>{metrics.totalMembersCount}</Text>
-                  </View>
-                </View>
-                <View style={styles.heroStatDivider} />
-                <View style={styles.heroStatItem}>
-                  <Text style={styles.heroStatItemLabel}>PARTS TOTALES</Text>
-                  <View style={styles.heroStatItemValRow}>
-                    <Icon name="crown" size={12} color="#FDE68A" style={{ marginRight: 4 }} />
-                    <Text style={styles.heroStatItemVal}>{metrics.totalHandsExpected} mains</Text>
-                  </View>
-                </View>
-                <View style={styles.heroStatDivider} />
-                <View style={styles.heroStatItem}>
-                  <Text style={styles.heroStatItemLabel}>TOTAL DU CYCLE</Text>
-                  <Text style={styles.heroStatItemValGreen}>
-                    {formatCurrency(metrics.totalHandsExpected * metrics.totalPotAmount)}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.heroProgressSection}>
-                <View style={styles.progressLabelRow}>
-                  <Text style={styles.progressLabel}>
-                    Avancement du Sol ({metrics.handsTouchedCount}/{metrics.totalHandsExpected} mains remises)
-                  </Text>
-                  <Text style={styles.progressPct}>{cycleProgressPct}%</Text>
-                </View>
-                <View style={styles.progressBarBg}>
-                  <View style={[styles.progressBarFill, { width: `${cycleProgressPct}%` }]} />
-                </View>
-              </View>
-            </View>
-
-            {/* 2. Enhanced 2x2 Metrics Grid */}
-            <View style={styles.metricsGrid}>
-              {/* Card 1: Collecté aujourd'hui */}
-              <View style={styles.metricCard}>
-                <View style={styles.metricCardHeader}>
-                  <Text style={styles.metricCardTitle}>AUJOURD'HUI</Text>
-                  <View style={[styles.metricIconBox, { backgroundColor: '#ECFDF5' }]}>
-                    <Icon name="cash" size={13} color={SOL_COLORS.successDark} />
-                  </View>
-                </View>
-                <Text style={[styles.metricCardValue, { color: SOL_COLORS.successDark }]}>
-                  {metrics.handsCollectedToday} main{metrics.handsCollectedToday > 1 ? 's' : ''}
-                </Text>
-                <Text style={styles.metricCardSub}>
-                  {formatCurrency(metrics.handsCollectedToday * metrics.unitAmount)} • {metrics.paidTodayCount}/{members.length} à jour
-                </Text>
-              </View>
-
-              {/* Card 2: Effectif total & parts */}
-              <View style={styles.metricCard}>
-                <View style={styles.metricCardHeader}>
-                  <Text style={styles.metricCardTitle}>EFFECTIF DU SOL</Text>
-                  <View style={[styles.metricIconBox, { backgroundColor: '#EFF6FF' }]}>
-                    <Icon name="crown" size={13} color={SOL_COLORS.info} />
-                  </View>
-                </View>
-                <Text style={[styles.metricCardValue, { color: SOL_COLORS.primary }]}>
-                  {metrics.totalHandsExpected} mains
-                </Text>
-                <Text style={styles.metricCardSub}>
-                  {metrics.totalMembersCount} enfants inscrits
-                </Text>
-              </View>
-
-              {/* Card 3: Jours restants & Calendrier */}
-              <View style={styles.metricCard}>
-                <View style={styles.metricCardHeader}>
-                  <Text style={styles.metricCardTitle}>CALENDRIER</Text>
-                  <View style={[styles.metricIconBox, { backgroundColor: '#F0F9FF' }]}>
-                    <Icon name="clock" size={13} color="#0284C7" />
-                  </View>
-                </View>
-                <Text style={[styles.metricCardValue, { color: SOL_COLORS.textPrimary }]}>
-                  {metrics.daysRemaining} jours
-                </Text>
-                <Text style={styles.metricCardSub}>
-                  Fin : {formatDateShort(metrics.endDate)}
-                </Text>
-              </View>
-
-              {/* Card 4: Retards */}
-              <View style={[styles.metricCard, metrics.overdueMembersCount > 0 && styles.metricCardAlert]}>
-                <View style={styles.metricCardHeader}>
-                  <Text style={[styles.metricCardTitle, metrics.overdueMembersCount > 0 && { color: SOL_COLORS.dangerDark }]}>
-                    RETARDS
-                  </Text>
-                  <View style={[styles.metricIconBox, { backgroundColor: metrics.overdueMembersCount > 0 ? '#FFE4E6' : '#F1F5F9' }]}>
-                    <Icon
-                      name="alert"
-                      size={13}
-                      color={metrics.overdueMembersCount > 0 ? SOL_COLORS.danger : SOL_COLORS.textMuted}
-                    />
-                  </View>
-                </View>
-                <Text
-                  style={[
-                    styles.metricCardValue,
-                    metrics.overdueMembersCount > 0 ? { color: SOL_COLORS.dangerDark } : { color: SOL_COLORS.textPrimary },
-                  ]}
-                >
-                  {metrics.overdueMembersCount} {metrics.overdueMembersCount > 1 ? 'enfants' : 'enfant'}
-                </Text>
-                <Text
-                  style={[
-                    styles.metricCardSub,
-                    metrics.overdueMembersCount > 0 && { color: SOL_COLORS.dangerDark },
-                  ]}
-                >
-                  {metrics.overdueMembersCount > 0
-                    ? `${metrics.overdueHandsCount} main(s) • ${formatCurrency(metrics.overdueHandsCount * metrics.unitAmount)}`
-                    : 'Aucun retard'}
-                </Text>
-              </View>
-            </View>
+            {/* 2. 2x2 Metrics Grid */}
+            <DashboardMetricsGrid metrics={metrics} membersCount={members.length} />
 
             {/* 3. Quick Action Buttons */}
             <View style={styles.quickActionsRow}>
@@ -434,123 +302,26 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* 4. Sol Turn Hero Banner (Next Beneficiary in Order) */}
+            {/* 4. Sol Turn Beneficiary Banner */}
             {metrics.currentPayoutBeneficiary && (
-              <View style={styles.heroPayoutBanner}>
-                <View style={styles.heroPayoutHeader}>
-                  <View style={styles.heroPayoutBadgePill}>
-                    <Icon name="crown" size={13} color="#D97706" style={{ marginRight: 4 }} />
-                    <Text style={styles.heroPayoutTitle}>PROCHAIN BÉNÉFICIAIRE DE LA MAIN</Text>
-                  </View>
-                  <Text style={styles.heroPayoutUnitPill}>
-                    {formatCurrency(metrics.totalPotAmount)}
-                  </Text>
-                </View>
-                <View style={styles.heroPayoutBody}>
-                  <View style={styles.heroBeneficiaryAvatarCircle}>
-                    <Text style={styles.heroBeneficiaryAvatarText}>
-                      {getInitials(metrics.currentPayoutBeneficiary.fullName)}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.heroBeneficiaryName} numberOfLines={1}>
-                      {metrics.currentPayoutBeneficiary.fullName}
-                    </Text>
-                    <Text style={styles.heroBeneficiarySub}>
-                      {metrics.currentPayoutBeneficiary.handsCount && metrics.currentPayoutBeneficiary.handsCount > 1
-                        ? `${metrics.currentPayoutBeneficiary.handsCount} mains souscrites (Rangs: #${metrics.currentPayoutBeneficiary.payoutRanks || metrics.currentPayoutBeneficiary.payoutRank})`
-                        : `Main #${metrics.currentPayoutBeneficiary.rankOrder || 1}`} • Cagnotte : {formatCurrency(metrics.totalPotAmount)}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={() => handleInitiatePayout(metrics.currentPayoutBeneficiary!)}
-                    style={styles.heroPayoutBtn}
-                  >
-                    <Text style={styles.heroPayoutBtnText}>Décaisser</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+              <BeneficiaryBanner
+                beneficiary={metrics.currentPayoutBeneficiary}
+                potAmount={metrics.totalPotAmount}
+                onPayout={handleInitiatePayout}
+              />
             )}
 
-            {/* 5. Search Bar */}
-            <View style={styles.searchBar}>
-              <Icon name="search" size={16} color={SOL_COLORS.textMuted} style={{ marginRight: 8 }} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Rechercher un adhérent (nom, téléphone)..."
-                placeholderTextColor={SOL_COLORS.textMuted}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <Icon name="close" size={16} color={SOL_COLORS.textSecondary} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* 6. Filter Chips */}
-            <View style={styles.filterScroll}>
-              <TouchableOpacity
-                onPress={() => handleFilterChange('ALL')}
-                style={[styles.filterChip, filter === 'ALL' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filter === 'ALL' && styles.filterChipTextActive]}>
-                  Tous ({metrics.totalMembersCount})
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => handleFilterChange('PAID_TODAY')}
-                style={[styles.filterChip, filter === 'PAID_TODAY' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filter === 'PAID_TODAY' && styles.filterChipTextActive]}>
-                  À jour ({metrics.paidTodayCount})
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => handleFilterChange('UNPAID_TODAY')}
-                style={[styles.filterChip, filter === 'UNPAID_TODAY' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filter === 'UNPAID_TODAY' && styles.filterChipTextActive]}>
-                  À encaisser ({metrics.unpaidTodayCount})
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => handleFilterChange('OVERDUE')}
-                style={[styles.filterChip, filter === 'OVERDUE' && styles.filterChipAlertActive]}
-              >
-                <Text style={[styles.filterChipText, filter === 'OVERDUE' && styles.filterChipTextAlertActive]}>
-                  Retard ({metrics.overdueMembersCount})
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => handleFilterChange('HAND_RECEIVED')}
-                style={[styles.filterChip, filter === 'HAND_RECEIVED' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filter === 'HAND_RECEIVED' && styles.filterChipTextActive]}>
-                  Main reçue ({metrics.handsTouchedCount})
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Section Header */}
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>LISTE DES ADHÉRENTS ({members.length})</Text>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => handleSortChange(sort === 'PAYOUT_RANK' ? 'NAME' : 'PAYOUT_RANK')}
-                style={styles.sortToggle}
-              >
-                <Text style={styles.sortToggleText}>
-                  Tri : {sort === 'PAYOUT_RANK' ? 'Rang # ➔' : 'Nom A-Z ➔'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+            {/* 5. Search Bar, Filter Chips & Section Header */}
+            <DashboardFilters
+              metrics={metrics}
+              membersCount={members.length}
+              filter={filter}
+              sort={sort}
+              searchQuery={searchQuery}
+              onFilterChange={handleFilterChange}
+              onSortChange={handleSortChange}
+              onSearchChange={setSearchQuery}
+            />
           </View>
         }
         ListEmptyComponent={

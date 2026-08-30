@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Client } from '@/types';
 import { Badge } from './Badge';
+import { Icon } from './Icon';
 import { formatCurrency, getInitials } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
@@ -76,7 +77,7 @@ export const ClientListItem: React.FC<ClientListItemProps> = ({
         onPress={handleCollectPress}
         style={styles.collectButton}
       >
-        <Text style={styles.collectButtonIcon}>⚡</Text>
+        <Icon name="collect" size={13} color={SOL_COLORS.primaryDark} style={{ marginRight: 3 }} />
         <Text style={styles.collectButtonText}>Peye</Text>
       </TouchableOpacity>
     </TouchableOpacity>

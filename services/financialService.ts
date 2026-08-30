@@ -11,6 +11,40 @@ export function calculatePot(unitAmount: number, totalSlots: number): number {
 }
 
 /**
+ * Calculates the total payout pot of a Sol/Sabotay cycle.
+ * Formula: Pot = Total Hands * Unit Amount
+ */
+export function calculatePotAmount(totalHands: number, unitAmount: number): number {
+  const hands = Math.max(0, Number(totalHands) || 0);
+  const unit = Math.max(0, Number(unitAmount) || 0);
+  return hands * unit;
+}
+
+/**
+ * Calculates nominal contribution due per round for a member.
+ * Formula: Cotisation par tour = handsCount * Unit Amount
+ */
+export function calculateMemberDuePerRound(memberHandsCount: number, unitAmount: number): number {
+  const hands = Math.max(1, Number(memberHandsCount) || 1);
+  const unit = Math.max(0, Number(unitAmount) || 0);
+  return hands * unit;
+}
+
+/**
+ * Calculates total cumulative payout an adherent will receive over the whole cycle.
+ * Formula: Total Payout = handsCount * (Total Cycle Hands * Unit Amount)
+ */
+export function calculateMemberTotalCyclePot(
+  memberHandsCount: number,
+  totalCycleHands: number,
+  unitAmount: number
+): number {
+  const hands = Math.max(1, Number(memberHandsCount) || 1);
+  const singlePot = calculatePotAmount(totalCycleHands, unitAmount);
+  return hands * singlePot;
+}
+
+/**
  * Validates if the given contribution amount is an exact positive integer multiple of the unit hand amount.
  */
 export function isValidContributionMultiple(amount: number, unitAmount: number): boolean {
@@ -22,11 +56,20 @@ export function isValidContributionMultiple(amount: number, unitAmount: number):
 
 /**
  * Calculates the exact number of hands covered by a paid amount.
+ * Formula: Nombre de mains = floor(amount / unitAmount)
  */
-export function calculateHandsCount(amount: number, unitAmount: number): number {
+export function calculateHandsCovered(amount: number, unitAmount: number): number {
+  if (unitAmount <= 0) return 0;
   const amt = Math.max(0, Number(amount) || 0);
   const unit = Math.max(1, Number(unitAmount) || 1);
-  return Math.max(1, Math.floor(amt / unit));
+  return Math.floor(amt / unit);
+}
+
+/**
+ * Calculates the exact number of hands covered by a paid amount (alias).
+ */
+export function calculateHandsCount(amount: number, unitAmount: number): number {
+  return calculateHandsCovered(amount, unitAmount);
 }
 
 /**

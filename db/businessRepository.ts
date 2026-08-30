@@ -255,6 +255,27 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     handsTouchedCount += receivedCount;
 
     handsCollectedTotal += Number(m.paid_hands_count || 0);
+  }
+
+  // Count total non-reversed payout transactions to guarantee 100% reconciliation
+  const payoutTxRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT count(*) as count FROM transactions 
+     WHERE collector_id = ? AND type IN ('HAND_PAYOUT', 'SOL_PAYOUT') AND is_reversed = 0`,
+    [collectorId]
+  );
+  const totalPayoutTxCount = Number(payoutTxRow?.count || 0);
+  const effectiveHandsTouched = Math.max(handsTouchedCount, totalPayoutTxCount);
+
+  for (const m of members) {
+    const memberHandsCount = Math.max(1, Number(m.hands_count || 1));
+    const receivedCount = Number(
+      m.received_hands_count !== null && m.received_hands_count !== undefined
+        ? m.received_hands_count
+        : m.has_received_hand || m.has_received_payout
+        ? memberHandsCount
+        : 0
+    );
+    const hasTouched = receivedCount >= memberHandsCount || Boolean(m.has_received_hand || m.has_received_payout);
 
     // Check if member paid today
     const paidTodayTx = await db.getFirstAsync<{ count: number }>(
@@ -333,7 +354,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     paidTodayCount,
     unpaidTodayCount,
     totalMembersCount,
-    handsTouchedCount,
+    handsTouchedCount: effectiveHandsTouched,
     currentPayoutBeneficiary,
     businessName: business.name,
     businessType: business.type,
@@ -345,7 +366,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     handsRemaining,
     totalCashToday,
     contributionAmount: unitAmount,
-    currentRound: Math.min(effectiveChildrenCount, handsTouchedCount + 1),
+    currentRound: Math.min(effectiveChildrenCount, effectiveHandsTouched + 1),
     totalRounds: effectiveChildrenCount,
   };
 }
