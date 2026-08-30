@@ -337,24 +337,50 @@ class SyncEngine {
 
         if (remoteClients && remoteClients.length > 0) {
           for (const rc of remoteClients) {
-            await db.runAsync(
-              `INSERT OR REPLACE INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, has_received_payout, qr_code_token, created_at, sync_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED')`,
-              [
-                rc.id,
-                rc.business_id || null,
-                rc.collector_id,
-                rc.full_name,
-                rc.phone_number,
-                rc.type,
-                Number(rc.daily_amount),
-                Number(rc.current_balance),
-                rc.payout_rank || null,
-                rc.has_received_payout ? 1 : 0,
-                rc.qr_code_token,
-                rc.created_at,
-              ]
-            );
+            // Merge remote client with any existing local fields to avoid overwriting local hands_count/received_hands_count/payout_ranks
+            try {
+              const existingLocal = await db.getFirstAsync<{ hands_count?: number; payout_ranks?: string; received_hands_count?: number }>(
+                `SELECT hands_count, payout_ranks, received_hands_count FROM clients WHERE id = ?`,
+                [rc.id]
+              );
+
+              const handsCount = rc.hands_count !== undefined && rc.hands_count !== null
+                ? Number(rc.hands_count)
+                : existingLocal?.hands_count ?? 1;
+
+              const payoutRanks = rc.payout_ranks || existingLocal?.payout_ranks || (rc.payout_rank ? String(rc.payout_rank) : null);
+
+              const receivedHandsCount = rc.received_hands_count !== undefined && rc.received_hands_count !== null
+                ? Number(rc.received_hands_count)
+                : existingLocal?.received_hands_count ?? 0;
+
+              await db.runAsync(
+                `INSERT OR REPLACE INTO clients (
+                  id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance,
+                  payout_rank, payout_ranks, hands_count, received_hands_count, has_received_payout, qr_code_token, created_at, sync_status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED')`,
+                [
+                  rc.id,
+                  rc.business_id || null,
+                  rc.collector_id,
+                  rc.full_name,
+                  rc.phone_number,
+                  rc.type,
+                  Number(rc.daily_amount),
+                  Number(rc.current_balance),
+                  rc.payout_rank || null,
+                  payoutRanks,
+                  handsCount,
+                  receivedHandsCount,
+                  rc.has_received_payout ? 1 : 0,
+                  rc.qr_code_token,
+                  rc.created_at,
+                ]
+              );
+            } catch (pullInsertErr) {
+              console.warn('Remote client merge notice:', pullInsertErr);
+            }
           }
         }
       } catch (pullErr) {
