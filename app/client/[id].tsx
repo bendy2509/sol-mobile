@@ -45,6 +45,8 @@ export default function ClientDetailScreen() {
   const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
   // Modals & form state
+  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
   const [isReversalModalOpen, setIsReversalModalOpen] = useState(false);
@@ -416,68 +418,89 @@ Document sécurisé et certifié par SOL Mobile.`;
 
   const handleTransactionPress = (tx: Transaction) => {
     triggerLightImpact();
-    if (!client) return;
+    setSelectedTx(tx);
+    setIsDetailModalOpen(true);
+  };
 
-    const isReversal = tx.type === 'REVERSAL' || tx.isReversed;
+  const handleShareReceipt = async () => {
+    if (!selectedTx || !client) return;
+    try {
+      const isPayout = selectedTx.type === 'SOL_PAYOUT' || selectedTx.type === 'HAND_PAYOUT' || selectedTx.type === 'WITHDRAWAL';
+      let fileUri: string;
+      if (isPayout) {
+        fileUri = await generatePayoutReceiptPdf({
+          transactionId: selectedTx.id,
+          businessName: business?.name || 'SOL Mobile',
+          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
+          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorZone: activeCollector?.zone,
+          clientName: client.fullName,
+          clientPhone: client.phoneNumber,
+          payoutRank: client.payoutRank || undefined,
+          totalPotAmount: selectedTx.amount,
+          registeredChildrenCount: totalCycleHands,
+          unitAmount: unitAmount,
+          note: selectedTx.note,
+          createdAt: selectedTx.createdAtLocal,
+        });
+      } else {
+        const uAmount = unitAmount || Math.round(selectedTx.amount / (selectedTx.handsCovered || 1));
+        fileUri = await generateContributionReceiptPdf({
+          transactionId: selectedTx.id,
+          businessName: business?.name || 'SOL Mobile',
+          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
+          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorZone: activeCollector?.zone,
+          clientName: client.fullName,
+          clientPhone: client.phoneNumber,
+          payoutRank: client.payoutRank || undefined,
+          qrCodeToken: client.qrCodeToken || `SOL-${selectedTx.id.slice(0, 6)}`,
+          unitAmount: uAmount,
+          handsCount: selectedTx.handsCovered || 1,
+          totalAmount: selectedTx.amount,
+          coverageStartDate: selectedTx.createdAtLocal.split('T')[0],
+          coverageEndDate: selectedTx.createdAtLocal.split('T')[0],
+          createdAt: selectedTx.createdAtLocal,
+        });
+      }
+      await sharePdfFile(fileUri, `recu_operation_${selectedTx.id.slice(0, 8)}.pdf`);
+    } catch (err: any) {
+      Alert.alert('Erreur', err?.message || 'Impossible de générer le reçu.');
+    }
+  };
 
-    const actionButtons: any[] = [
-      {
-        text: 'Envoyer Reçu WhatsApp',
-        onPress: () => {
-          const digitsOnly = client.phoneNumber.replace(/[^0-9]/g, '');
-          const message = `Bonjour ${client.fullName}, voici votre reçu SOL :
-- Opération : #${tx.id.slice(0, 8)}
-- Type : ${tx.type}
-- Montant : ${formatCurrency(tx.amount)}
-- Date : ${formatDate(tx.createdAtLocal)}
+  const handleWhatsAppShare = () => {
+    if (!selectedTx || !client) return;
+    const digitsOnly = normalizePhoneNumber(client.phoneNumber);
+    const typeLabel = selectedTx.type === 'SABOTAY_DEPOSIT'
+      ? 'Dépôt Sabotay'
+      : selectedTx.type === 'SOL_CONTRIBUTION' || selectedTx.type === 'CONTRIBUTION'
+      ? 'Cotisation Sol'
+      : selectedTx.type === 'REVERSAL' || selectedTx.isReversed
+      ? 'Annulation'
+      : 'Décaissement Main ("Bay Men")';
+
+    const message = `*SOL MOBILE - RÉCÉPISSÉ CERTIFIÉ*
+Adhérent : ${client.fullName}
+Opération : #${selectedTx.id.slice(0, 8)}
+Type : ${typeLabel}
+Montant : ${formatCurrency(selectedTx.amount)}
+Date : ${formatDate(selectedTx.createdAtLocal)}
 
 Reçu archivé avec succès sur SOL Mobile.`;
-          const encoded = encodeURIComponent(message);
-          const url = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
-          Linking.openURL(url).catch(() => {
-            Alert.alert('WhatsApp', 'Impossible d\'ouvrir WhatsApp.');
-          });
-        },
-      },
-    ];
+    const encoded = encodeURIComponent(message);
+    const url = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
+    Linking.openURL(url).catch(() => {
+      Alert.alert('WhatsApp', "Impossible d'ouvrir WhatsApp.");
+    });
+  };
 
-    if (!isReversal && !isReadOnly) {
-      actionButtons.push({
-        text: 'Annuler / Rectifier cette opération',
-        style: 'destructive',
-        onPress: () => {
-          setSelectedTxForReversal(tx);
-          setReversalReason('');
-          setIsReversalModalOpen(true);
-        },
-      });
-    }
-
-    if (!isAdmin) {
-      actionButtons.push({
-        text: "Contacter l'Admin (Assistance)",
-        onPress: async () => {
-          const profile = await getAdminProfile();
-          const phone = profile.phoneNumber || '+50900000000';
-          const digits = phone.replace(/[^0-9+]/g, '');
-          Linking.openURL(`tel:${digits}`).catch(() => {
-            Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
-          });
-        },
-      });
-    }
-
-    actionButtons.push({ text: 'Fermer', style: 'cancel' });
-
-    const explanation = isReadOnly && !isReversal
-      ? `Montant : ${formatCurrency(tx.amount)} (${tx.handsCovered || 1} main(s))\nDate : ${formatDate(tx.createdAtLocal)}\n\nℹ️ Compte en consultation seule. En cas d'erreur de saisie, contactez votre gestionnaire ou un Super-Admin.`
-      : `Montant : ${formatCurrency(tx.amount)} (${tx.handsCovered || 1} main(s))\nDate : ${formatDate(tx.createdAtLocal)}`;
-
-    Alert.alert(
-      `Opération #${tx.id.slice(0, 8)}`,
-      explanation,
-      actionButtons
-    );
+  const handleInitiateCancel = () => {
+    if (!selectedTx) return;
+    setIsDetailModalOpen(false);
+    setSelectedTxForReversal(selectedTx);
+    setReversalReason('');
+    setIsReversalModalOpen(true);
   };
 
   const handleConfirmReversal = () => {
@@ -852,6 +875,143 @@ Reçu archivé avec succès sur SOL Mobile.`;
         )}
       </ScrollView>
 
+      {/* Transaction Detail Modal */}
+      <Modal
+        visible={isDetailModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsDetailModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Détail de l'Opération</Text>
+              <TouchableOpacity
+                onPress={() => setIsDetailModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedTx && (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 6 }}>
+                <View style={styles.detailBody}>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Référence :</Text>
+                    <Text style={styles.detailValue}>#{selectedTx.id.slice(0, 8)}</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Adhérent :</Text>
+                    <Text style={styles.detailValueBold}>{client.fullName}</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Type :</Text>
+                    <Text style={styles.detailValue}>
+                      {selectedTx.type === 'SABOTAY_DEPOSIT'
+                        ? 'Dépôt Sabotay'
+                        : selectedTx.type === 'SOL_CONTRIBUTION' || selectedTx.type === 'CONTRIBUTION'
+                        ? 'Cotisation Sol'
+                        : selectedTx.type === 'REVERSAL' || selectedTx.isReversed
+                        ? 'Annulation'
+                        : 'Décaissement Main ("Bay Men")'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Montant :</Text>
+                    <Text style={styles.detailValueAmount}>{formatCurrency(selectedTx.amount)}</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Mains couvertes :</Text>
+                    <Text style={styles.detailValue}>{selectedTx.handsCovered || 1} main(s)</Text>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Date & Heure :</Text>
+                    <Text style={styles.detailValue}>{formatDate(selectedTx.createdAtLocal)}</Text>
+                  </View>
+
+                  {selectedTx.note && (
+                    <View style={styles.noteBox}>
+                      <Text style={styles.noteBoxTitle}>NOTE D'ENREGISTREMENT :</Text>
+                      <Text style={styles.noteBoxContent}>{selectedTx.note}</Text>
+                    </View>
+                  )}
+
+                  <View style={styles.modalActionButtons}>
+                    {/* Row 1: Share Actions */}
+                    <View style={styles.shareRow}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={handleShareReceipt}
+                        style={styles.shareBtn}
+                      >
+                        <Icon name="print" size={15} color="#1D4ED8" style={{ marginRight: 6 }} />
+                        <Text style={styles.shareBtnText}>Reçu PDF</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={handleWhatsAppShare}
+                        style={styles.whatsappActionBtn}
+                      >
+                        <Icon name="share" size={15} color="#059669" style={{ marginRight: 6 }} />
+                        <Text style={styles.whatsappActionBtnText}>WhatsApp</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Row 2: Cancel / Reversal */}
+                    {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={handleInitiateCancel}
+                        style={styles.cancelOpBtn}
+                      >
+                        <Icon name="alert" size={15} color="#DC2626" style={{ marginRight: 6 }} />
+                        <Text style={styles.cancelOpBtnText}>Annuler cette opération</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Row 3: Admin Hotline */}
+                    {!isAdmin && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={async () => {
+                          const profile = await getAdminProfile();
+                          const phone = profile.phoneNumber || '+50900000000';
+                          const digits = phone.replace(/[^0-9+]/g, '');
+                          Linking.openURL(`tel:${digits}`).catch(() => {
+                            Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
+                          });
+                        }}
+                        style={styles.contactAdminBtn}
+                      >
+                        <Icon name="phone" size={14} color="#0284C7" style={{ marginRight: 6 }} />
+                        <Text style={styles.contactAdminBtnText}>Besoin d'aide ? Contacter l'Admin</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {isReadOnly && selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
+                      <View style={styles.managerNoticeCard}>
+                        <Icon name="shield" size={14} color="#64748B" style={{ marginRight: 6 }} />
+                        <Text style={styles.managerNoticeText}>
+                          Mode consultation seule. Contactez votre gestionnaire ou un Super-Admin pour régularisation.
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {/* Edit Profile Modal */}
       <Modal
         visible={isEditModalOpen}
@@ -861,7 +1021,16 @@ Reçu archivé avec succès sur SOL Mobile.`;
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Modifier l'Adhérent</Text>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Modifier l'Adhérent</Text>
+              <TouchableOpacity
+                onPress={() => setIsEditModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.modalSub}>Mise à jour des informations de l'adhérent.</Text>
 
             <View style={styles.formGroup}>
@@ -920,7 +1089,16 @@ Reçu archivé avec succès sur SOL Mobile.`;
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Remise de la Main ("Bay Men")</Text>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Remise de la Main ("Bay Men")</Text>
+              <TouchableOpacity
+                onPress={() => setIsPayoutModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.modalSub}>
               Le gestionnaire peut donner la main à cet adhérent avec validation de sécurité.
             </Text>
@@ -979,7 +1157,16 @@ Reçu archivé avec succès sur SOL Mobile.`;
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Annuler une Transaction</Text>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Annuler une Transaction</Text>
+              <TouchableOpacity
+                onPress={() => setIsReversalModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.modalSub}>
               L'annulation recalculera fidèlement le solde, les mains payées et la couverture de l'adhérent.
             </Text>
@@ -1272,7 +1459,14 @@ const styles = StyleSheet.create({
   txAmountReversal: { color: SOL_COLORS.dangerDark },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.75)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   modalCard: { width: '100%', maxWidth: 380, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 22, ...SHADOWS.lg },
-  modalTitle: { fontSize: 18, fontWeight: '900', color: SOL_COLORS.textPrimary, marginBottom: 4 },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+    width: '100%',
+  },
+  modalTitle: { fontSize: 18, fontWeight: '900', color: SOL_COLORS.textPrimary },
   modalSub: { fontSize: 12, color: SOL_COLORS.textSecondary, marginBottom: 14, lineHeight: 16 },
   outOfOrderWarning: {
     flexDirection: 'row',
@@ -1312,6 +1506,147 @@ const styles = StyleSheet.create({
   modalPayoutConfirmBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
   modalDangerBtn: { flex: 1.5, paddingVertical: 12, borderRadius: 14, backgroundColor: SOL_COLORS.danger, alignItems: 'center' },
   modalDangerBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
+  detailBody: {
+    paddingVertical: 4,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  detailValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: SOL_COLORS.textPrimary,
+  },
+  detailValueBold: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: SOL_COLORS.textPrimary,
+  },
+  detailValueAmount: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: SOL_COLORS.primary,
+  },
+  noteBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 10,
+    marginVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  noteBoxTitle: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  noteBoxContent: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  modalActionButtons: {
+    gap: 8,
+    marginTop: 12,
+    width: '100%',
+  },
+  shareRow: {
+    flexDirection: 'row',
+    gap: 8,
+    width: '100%',
+  },
+  shareBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+  },
+  shareBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1D4ED8',
+  },
+  whatsappActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+  },
+  whatsappActionBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  cancelOpBtn: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: '#FECACA',
+  },
+  cancelOpBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#DC2626',
+  },
+  contactAdminBtn: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F0F9FF',
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#BAE6FD',
+    marginTop: 2,
+  },
+  contactAdminBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0284C7',
+  },
+  managerNoticeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginTop: 4,
+  },
+  managerNoticeText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+    flex: 1,
+  },
   clientProgressBarSection: {
     marginTop: 10,
     marginBottom: 6,

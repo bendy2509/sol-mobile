@@ -52,12 +52,17 @@ export default function HistoryScreen() {
   const loadData = useCallback(async () => {
     try {
       const typeParam = filterType === 'ALL' ? undefined : filterType;
-      const list = await getAllTransactions({ type: typeParam, limit: 150 });
+      const list = await getAllTransactions({
+        type: typeParam,
+        limit: 150,
+        collectorId: isAdmin ? undefined : activeCollector?.id,
+        allCollectors: isAdmin,
+      });
       setTransactions(list);
     } catch (err) {
       console.warn('History load error:', err);
     }
-  }, [filterType]);
+  }, [filterType, isAdmin, activeCollector?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -236,75 +241,78 @@ Reçu certifié et archivé avec succès. Merci !`;
     }
   };
 
-  const renderTransactionItem = ({ item }: { item: Transaction }) => {
-    const isReversal = item.type === 'REVERSAL';
-    const isPayout = item.type === 'SOL_PAYOUT' || item.type === 'WITHDRAWAL';
+  const renderTransactionItem = useCallback(
+    ({ item }: { item: Transaction }) => {
+      const isReversal = item.type === 'REVERSAL';
+      const isPayout = item.type === 'SOL_PAYOUT' || item.type === 'WITHDRAWAL';
 
-    return (
-      <TouchableOpacity
-        activeOpacity={0.7}
-        onPress={() => handleOpenDetail(item)}
-        style={[styles.txCard, isReversal && styles.txCardReversal]}
-      >
-        <View style={styles.txCardLeft}>
-          <View
-            style={[
-              styles.iconCircle,
-              isReversal
-                ? styles.iconCircleReversal
-                : isPayout
-                ? styles.iconCirclePayout
-                : styles.iconCircleDeposit,
-            ]}
-          >
-            <Icon
-              name={isReversal ? 'alert' : isPayout ? 'crown' : 'cash'}
-              size={16}
-              color={isReversal ? '#DC2626' : isPayout ? '#2563EB' : '#059669'}
-            />
-          </View>
-
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={styles.clientName}>{item.clientName || 'Adhérent SOL'}</Text>
-            <Text style={styles.txTypeLabel}>{getTransactionTypeLabel(item.type)}</Text>
-            <Text style={styles.txDate}>{formatDate(item.createdAtLocal)}</Text>
-          </View>
-        </View>
-
-        <View style={styles.txCardRight}>
-          <Text
-            style={[
-              styles.txAmount,
-              isReversal
-                ? styles.txAmountReversal
-                : isPayout
-                ? styles.txAmountPayout
-                : styles.txAmountDeposit,
-            ]}
-          >
-            {isReversal ? '-' : isPayout ? '-' : '+'}
-            {formatCurrency(item.amount)}
-          </Text>
-
-          <View style={styles.syncStatusRow}>
+      return (
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => handleOpenDetail(item)}
+          style={[styles.txCard, isReversal && styles.txCardReversal]}
+        >
+          <View style={styles.txCardLeft}>
             <View
               style={[
-                styles.syncDot,
-                item.syncStatus === 'SYNCED'
-                  ? styles.syncDotSynced
-                  : item.syncStatus === 'FAILED'
-                  ? styles.syncDotFailed
-                  : styles.syncDotPending,
+                styles.iconCircle,
+                isReversal
+                  ? styles.iconCircleReversal
+                  : isPayout
+                  ? styles.iconCirclePayout
+                  : styles.iconCircleDeposit,
               ]}
-            />
-            <Text style={styles.syncStatusText}>
-              {item.syncStatus === 'SYNCED' ? 'Synchronisé' : 'En attente'}
-            </Text>
+            >
+              <Icon
+                name={isReversal ? 'alert' : isPayout ? 'crown' : 'cash'}
+                size={16}
+                color={isReversal ? '#DC2626' : isPayout ? '#2563EB' : '#059669'}
+              />
+            </View>
+
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.clientName}>{item.clientName || 'Adhérent SOL'}</Text>
+              <Text style={styles.txTypeLabel}>{getTransactionTypeLabel(item.type)}</Text>
+              <Text style={styles.txDate}>{formatDate(item.createdAtLocal)}</Text>
+            </View>
           </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
+
+          <View style={styles.txCardRight}>
+            <Text
+              style={[
+                styles.txAmount,
+                isReversal
+                  ? styles.txAmountReversal
+                  : isPayout
+                  ? styles.txAmountPayout
+                  : styles.txAmountDeposit,
+              ]}
+            >
+              {isReversal ? '-' : isPayout ? '-' : '+'}
+              {formatCurrency(item.amount)}
+            </Text>
+
+            <View style={styles.syncStatusRow}>
+              <View
+                style={[
+                  styles.syncDot,
+                  item.syncStatus === 'SYNCED'
+                    ? styles.syncDotSynced
+                    : item.syncStatus === 'FAILED'
+                    ? styles.syncDotFailed
+                    : styles.syncDotPending,
+                ]}
+              />
+              <Text style={styles.syncStatusText}>
+                {item.syncStatus === 'SYNCED' ? 'Synchronisé' : 'En attente'}
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+      );
+    },
+    []
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -395,6 +403,10 @@ Reçu certifié et archivé avec succès. Merci !`;
         data={filteredTransactions}
         keyExtractor={(item) => item.id}
         renderItem={renderTransactionItem}
+        initialNumToRender={15}
+        maxToRenderPerBatch={15}
+        windowSize={7}
+        removeClippedSubviews={true}
         contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl
@@ -431,101 +443,109 @@ Reçu certifié et archivé avec succès. Merci !`;
             </View>
 
             {selectedTx && (
-              <View style={styles.detailBody}>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Référence :</Text>
-                  <Text style={styles.detailValue}>#{selectedTx.id.slice(0, 8)}</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Adhérent :</Text>
-                  <Text style={styles.detailValueBold}>{selectedTx.clientName || 'Adhérent'}</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Type :</Text>
-                  <Text style={styles.detailValue}>{getTransactionTypeLabel(selectedTx.type)}</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Montant :</Text>
-                  <Text style={styles.detailValueAmount}>{formatCurrency(selectedTx.amount)}</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Mains couvertes :</Text>
-                  <Text style={styles.detailValue}>{selectedTx.handsCovered || 1} main(s)</Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Date & Heure :</Text>
-                  <Text style={styles.detailValue}>{formatDate(selectedTx.createdAtLocal)}</Text>
-                </View>
-
-                {selectedTx.note && (
-                  <View style={styles.noteBox}>
-                    <Text style={styles.noteBoxTitle}>NOTE D'ENREGISTREMENT :</Text>
-                    <Text style={styles.noteBoxContent}>{selectedTx.note}</Text>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 6 }}>
+                <View style={styles.detailBody}>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Référence :</Text>
+                    <Text style={styles.detailValue}>#{selectedTx.id.slice(0, 8)}</Text>
                   </View>
-                )}
 
-                <View style={styles.modalActionButtons}>
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={handleShareReceipt}
-                    style={styles.shareBtn}
-                  >
-                    <Icon name="print" size={16} color="#1D4ED8" style={{ marginRight: 6 }} />
-                    <Text style={styles.shareBtnText}>Partager Reçu PDF</Text>
-                  </TouchableOpacity>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Adhérent :</Text>
+                    <Text style={styles.detailValueBold}>{selectedTx.clientName || 'Adhérent'}</Text>
+                  </View>
 
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={handleWhatsAppShare}
-                    style={styles.whatsappActionBtn}
-                  >
-                    <Text style={styles.whatsappActionBtnText}>Envoyer par WhatsApp</Text>
-                  </TouchableOpacity>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Type :</Text>
+                    <Text style={styles.detailValue}>{getTransactionTypeLabel(selectedTx.type)}</Text>
+                  </View>
 
-                  {selectedTx.type !== 'REVERSAL' && !isReadOnly && (
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={handleInitiateCancel}
-                      style={styles.cancelOpBtn}
-                    >
-                      <Icon name="alert" size={16} color="#DC2626" style={{ marginRight: 6 }} />
-                      <Text style={styles.cancelOpBtnText}>Annuler / Rectifier l'Opération</Text>
-                    </TouchableOpacity>
-                  )}
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Montant :</Text>
+                    <Text style={styles.detailValueAmount}>{formatCurrency(selectedTx.amount)}</Text>
+                  </View>
 
-                  {!isAdmin && (
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={async () => {
-                        const profile = await getAdminProfile();
-                        const phone = profile.phoneNumber || '+50900000000';
-                        const digits = phone.replace(/[^0-9+]/g, '');
-                        Linking.openURL(`tel:${digits}`).catch(() => {
-                          Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
-                        });
-                      }}
-                      style={styles.contactAdminBtn}
-                    >
-                      <Icon name="phone" size={14} color="#0284C7" style={{ marginRight: 6 }} />
-                      <Text style={styles.contactAdminBtnText}>Besoin d'aide ? Contacter l'Admin</Text>
-                    </TouchableOpacity>
-                  )}
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Mains couvertes :</Text>
+                    <Text style={styles.detailValue}>{selectedTx.handsCovered || 1} main(s)</Text>
+                  </View>
 
-                  {isReadOnly && selectedTx.type !== 'REVERSAL' && (
-                    <View style={styles.managerNoticeCard}>
-                      <Icon name="shield" size={14} color="#64748B" style={{ marginRight: 6 }} />
-                      <Text style={styles.managerNoticeText}>
-                        Mode consultation seule. Contactez votre gestionnaire ou un Super-Admin pour régularisation.
-                      </Text>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Date & Heure :</Text>
+                    <Text style={styles.detailValue}>{formatDate(selectedTx.createdAtLocal)}</Text>
+                  </View>
+
+                  {selectedTx.note && (
+                    <View style={styles.noteBox}>
+                      <Text style={styles.noteBoxTitle}>NOTE D'ENREGISTREMENT :</Text>
+                      <Text style={styles.noteBoxContent}>{selectedTx.note}</Text>
                     </View>
                   )}
+
+                  <View style={styles.modalActionButtons}>
+                    {/* Row 1: Share Actions */}
+                    <View style={styles.shareRow}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={handleShareReceipt}
+                        style={styles.shareBtn}
+                      >
+                        <Icon name="print" size={15} color="#1D4ED8" style={{ marginRight: 6 }} />
+                        <Text style={styles.shareBtnText}>Reçu PDF</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={handleWhatsAppShare}
+                        style={styles.whatsappActionBtn}
+                      >
+                        <Icon name="share" size={15} color="#059669" style={{ marginRight: 6 }} />
+                        <Text style={styles.whatsappActionBtnText}>WhatsApp</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Row 2: Cancel / Reversal */}
+                    {selectedTx.type !== 'REVERSAL' && !isReadOnly && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={handleInitiateCancel}
+                        style={styles.cancelOpBtn}
+                      >
+                        <Icon name="alert" size={15} color="#DC2626" style={{ marginRight: 6 }} />
+                        <Text style={styles.cancelOpBtnText}>Annuler cette opération</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Row 3: Admin Hotline */}
+                    {!isAdmin && (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={async () => {
+                          const profile = await getAdminProfile();
+                          const phone = profile.phoneNumber || '+50900000000';
+                          const digits = phone.replace(/[^0-9+]/g, '');
+                          Linking.openURL(`tel:${digits}`).catch(() => {
+                            Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
+                          });
+                        }}
+                        style={styles.contactAdminBtn}
+                      >
+                        <Icon name="phone" size={14} color="#0284C7" style={{ marginRight: 6 }} />
+                        <Text style={styles.contactAdminBtnText}>Besoin d'aide ? Contacter l'Admin</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {isReadOnly && selectedTx.type !== 'REVERSAL' && (
+                      <View style={styles.managerNoticeCard}>
+                        <Icon name="shield" size={14} color="#64748B" style={{ marginRight: 6 }} />
+                        <Text style={styles.managerNoticeText}>
+                          Mode consultation seule. Contactez votre gestionnaire ou un Super-Admin pour régularisation.
+                        </Text>
+                      </View>
+                    )}
+                  </View>
                 </View>
-              </View>
+              </ScrollView>
             )}
           </View>
         </View>
@@ -540,7 +560,16 @@ Reçu certifié et archivé avec succès. Merci !`;
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Motif de l'Annulation</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Motif de l'Annulation</Text>
+              <TouchableOpacity
+                onPress={() => setIsCancelPromptOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.modalSubText}>
               Cette opération sera rectifiée dans le solde de l'adhérent et une écriture d'annulation sera archivée à des fins d'audit.
             </Text>
@@ -761,6 +790,7 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 400,
+    maxHeight: '90%',
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 18,
@@ -832,9 +862,14 @@ const styles = StyleSheet.create({
     color: '#334155',
   },
   modalActionButtons: {
+    gap: 8,
+    marginTop: 12,
+    width: '100%',
+  },
+  shareRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 10,
+    width: '100%',
   },
   shareBtn: {
     flex: 1,
@@ -842,44 +877,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     height: 44,
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: '#EFF6FF',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#BFDBFE',
   },
   shareBtnText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
     color: '#1D4ED8',
   },
   whatsappActionBtn: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  whatsappActionBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  cancelOpBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     height: 44,
-    borderRadius: 10,
+    borderRadius: 12,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+  },
+  whatsappActionBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#059669',
+  },
+  cancelOpBtn: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 44,
+    borderRadius: 12,
     backgroundColor: '#FEF2F2',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#FECACA',
   },
   cancelOpBtnText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
     color: '#DC2626',
   },
@@ -928,18 +964,19 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   contactAdminBtn: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F0F9FF',
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 12,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#BAE6FD',
-    marginTop: 4,
+    marginTop: 2,
   },
   contactAdminBtnText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
     color: '#0284C7',
   },

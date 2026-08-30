@@ -117,6 +117,166 @@ export async function saveBusinessConfig(
 /**
  * Closes the active cycle formally with verification and audit trail.
  */
+export interface RenewCycleParams {
+  businessId: string;
+  collectorId?: string;
+  mode: 'RENEW_SAME_MEMBERS' | 'START_FRESH';
+  userId: string;
+  userRole: 'ADMIN' | 'MANAGER' | 'USER' | 'COLLECTOR';
+  name: string;
+  contributionAmount: number;
+  frequency: PaymentFrequency;
+  totalSlots?: number;
+  startDate?: string;
+  reason?: string;
+}
+
+/**
+ * Renews or restarts a SOL cycle:
+ * Mode 'RENEW_SAME_MEMBERS': Keeps registered children and their subscribed hands, resets financial counters (balances, paid hands, received hands) to 0.
+ * Mode 'START_FRESH': Clears the children list to start a brand new SOL from scratch.
+ */
+export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessConfig> {
+  const db = await getDatabase();
+  const collectorId = params.collectorId || (await getActiveCollectorId());
+  const now = new Date().toISOString();
+  const todayStr = params.startDate || now.split('T')[0];
+  const unitAmount = Math.max(1, Number(params.contributionAmount) || 250);
+  const frequency = params.frequency || 'DAILY';
+
+  // 1. Record an audit log for cycle renewal
+  await recordAuditLog({
+    userId: params.userId,
+    userRole: params.userRole as any,
+    action: 'CLOSE_CYCLE',
+    entityType: 'BUSINESS',
+    entityId: params.businessId,
+    reason:
+      params.reason ||
+      (params.mode === 'RENEW_SAME_MEMBERS'
+        ? `Renouvellement Sol (${params.name}) avec les mêmes adhérents`
+        : `Nouveau départ Sol (${params.name}) à zéro`),
+    newData: JSON.stringify({
+      mode: params.mode,
+      name: params.name,
+      contributionAmount: unitAmount,
+      frequency,
+      startDate: todayStr,
+    }),
+  });
+
+  if (params.mode === 'RENEW_SAME_MEMBERS') {
+    // A. Reset financial timeline counters for all existing children of this collector
+    await db.runAsync(
+      `UPDATE clients 
+       SET current_balance = 0,
+           total_paid_amount = 0,
+           paid_hands_count = 0,
+           received_hands_count = 0,
+           has_received_hand = 0,
+           has_received_payout = 0,
+           hand_received_date = NULL,
+           paid_until_date = ?,
+           daily_amount = ?,
+           sync_status = 'PENDING'
+       WHERE collector_id = ? OR business_id = ?`,
+      [todayStr, unitAmount, collectorId, params.businessId]
+    );
+
+    // Calculate dynamic end date based on actual registered hands
+    const totalHandsRow = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? OR business_id = ?`,
+      [collectorId, params.businessId]
+    );
+    const totalCycleHands = Math.max(1, Number(totalHandsRow?.total || 0), params.totalSlots || 10);
+    const endDate = calculateCycleEndDate(todayStr, totalCycleHands, frequency);
+
+    // Update business config with new cycle info
+    await db.runAsync(
+      `UPDATE business_configs
+       SET name = ?,
+           contribution_amount = ?,
+           frequency = ?,
+           total_slots = ?,
+           start_date = ?,
+           end_date = ?,
+           status = 'ACTIVE',
+           cycle_status = 'ACTIVE'
+       WHERE id = ?`,
+      [
+        params.name.trim(),
+        unitAmount,
+        frequency,
+        totalCycleHands,
+        todayStr,
+        endDate,
+        params.businessId,
+      ]
+    );
+
+    return {
+      id: params.businessId,
+      collectorId,
+      name: params.name.trim(),
+      type: 'SOL',
+      contributionAmount: unitAmount,
+      frequency,
+      totalSlots: totalCycleHands,
+      startDate: todayStr,
+      endDate,
+      status: 'ACTIVE',
+      cycleStatus: 'ACTIVE',
+      createdAt: now,
+    };
+  } else {
+    // B. Start completely fresh: Remove existing clients for this collector / business
+    await db.runAsync(`DELETE FROM clients WHERE collector_id = ? OR business_id = ?`, [collectorId, params.businessId]);
+
+    const totalSlots = Math.max(1, Number(params.totalSlots) || 10);
+    const endDate = calculateCycleEndDate(todayStr, totalSlots, frequency);
+
+    await db.runAsync(
+      `UPDATE business_configs
+       SET name = ?,
+           contribution_amount = ?,
+           frequency = ?,
+           total_slots = ?,
+           start_date = ?,
+           end_date = ?,
+           status = 'ACTIVE',
+           cycle_status = 'ACTIVE'
+       WHERE id = ?`,
+      [
+        params.name.trim(),
+        unitAmount,
+        frequency,
+        totalSlots,
+        todayStr,
+        endDate,
+        params.businessId,
+      ]
+    );
+
+    return {
+      id: params.businessId,
+      collectorId,
+      name: params.name.trim(),
+      type: 'SOL',
+      contributionAmount: unitAmount,
+      frequency,
+      totalSlots,
+      startDate: todayStr,
+      endDate,
+      status: 'ACTIVE',
+      cycleStatus: 'ACTIVE',
+      createdAt: now,
+    };
+  }
+}
+
+/**
+ * Closes the active cycle formally with verification and audit trail.
+ */
 export async function closeCycle(params: {
   businessId: string;
   userId: string;
@@ -257,11 +417,12 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     handsCollectedTotal += Number(m.paid_hands_count || 0);
   }
 
-  // Count total non-reversed payout transactions to guarantee 100% reconciliation
+  // Count total non-reversed payout transactions for the current cycle to guarantee 100% reconciliation
+  const cycleStartIso = business.startDate ? new Date(business.startDate).toISOString() : startOfDayIso;
   const payoutTxRow = await db.getFirstAsync<{ count: number }>(
     `SELECT count(*) as count FROM transactions 
-     WHERE collector_id = ? AND type IN ('HAND_PAYOUT', 'SOL_PAYOUT') AND is_reversed = 0`,
-    [collectorId]
+     WHERE collector_id = ? AND type IN ('HAND_PAYOUT', 'SOL_PAYOUT') AND is_reversed = 0 AND created_at_local >= ?`,
+    [collectorId, cycleStartIso]
   );
   const totalPayoutTxCount = Number(payoutTxRow?.count || 0);
   const effectiveHandsTouched = Math.max(handsTouchedCount, totalPayoutTxCount);

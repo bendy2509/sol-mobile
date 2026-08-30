@@ -203,7 +203,16 @@ export default function ProfileScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Modifier mon Code PIN</Text>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Modifier mon Code PIN</Text>
+              <TouchableOpacity
+                onPress={() => setIsChangePinModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.modalSub}>
               Saisissez votre code actuel puis définissez votre nouveau code à 4 chiffres.
             </Text>
@@ -415,6 +424,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 20,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+    width: '100%',
   },
   modalTitle: {
     fontSize: 16,

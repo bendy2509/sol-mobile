@@ -274,9 +274,11 @@ export async function getTransactions(options?: {
   type?: TransactionType;
   syncStatus?: SyncStatus;
   limit?: number;
+  allCollectors?: boolean;
 }): Promise<Transaction[]> {
   const db = await getDatabase();
-  const collectorId = options?.collectorId || (await getActiveCollectorId());
+  const activeCollectorId = await getActiveCollectorId();
+  const targetCollectorId = options?.collectorId || (options?.allCollectors ? undefined : activeCollectorId);
 
   let query = `
     SELECT 
@@ -305,9 +307,9 @@ export async function getTransactions(options?: {
   `;
   const params: (string | number)[] = [];
 
-  if (options?.collectorId) {
+  if (targetCollectorId) {
     query += ` AND t.collector_id = ?`;
-    params.push(options.collectorId);
+    params.push(targetCollectorId);
   }
 
   if (options?.clientId) {

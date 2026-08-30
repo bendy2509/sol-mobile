@@ -256,8 +256,8 @@ export async function createAdminUserAccount(data: {
     const startDate = now.split('T')[0];
     const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     await db.runAsync(
-      `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, created_at)
-       VALUES (?, ?, ?, 'SABOTAY', ?, ?, ?, ?, ?, 'ACTIVE', ?)`,
+      `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, cycle_status, created_at)
+       VALUES (?, ?, ?, 'SOL', ?, ?, ?, ?, ?, 'ACTIVE', 'ACTIVE', ?)`,
       [
         bizId,
         id,

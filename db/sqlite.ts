@@ -75,11 +75,24 @@ class WebSQLiteAdapter {
       const tableName = tableMatch ? tableMatch[1].toLowerCase() : '';
 
       if (tableName === 'collectors') {
-        const [id, full_name, phone_number, pin_hash, status, zone, created_at] = params;
-        const existingIdx = this.data.collectors.findIndex((c) => c.id === id || c.phone_number === phone_number);
-        const item = { id, full_name, phone_number, pin_hash, status: status || 'ACTIVE', zone, created_at };
+        const columnsMatch = cleanSql.match(/INSERT (?:OR REPLACE )?INTO\s+collectors\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
+        const columnNames = columnsMatch
+          ? columnsMatch[1].split(',').map((c) => c.trim().toLowerCase())
+          : [];
+        let item: any = { status: 'ACTIVE', role: 'MANAGER', sync_status: 'PENDING' };
+        if (columnNames.length > 0) {
+          let paramIdx = 0;
+          for (let i = 0; i < columnNames.length; i++) {
+            const col = columnNames[i];
+            item[col] = params[paramIdx++];
+          }
+        } else {
+          const [id, full_name, phone_number, pin_hash, status, zone, created_at] = params;
+          item = { id, full_name, phone_number, pin_hash, status: status || 'ACTIVE', role: 'MANAGER', zone, created_at };
+        }
+        const existingIdx = this.data.collectors.findIndex((c) => c.id === item.id || c.phone_number === item.phone_number);
         if (existingIdx >= 0) {
-          this.data.collectors[existingIdx] = item;
+          this.data.collectors[existingIdx] = { ...this.data.collectors[existingIdx], ...item };
         } else {
           this.data.collectors.push(item);
         }
@@ -215,6 +228,8 @@ class WebSQLiteAdapter {
             const valExpr = eqMatch[2].trim();
             if (valExpr === '?') {
               updates[col] = params[paramIdx++];
+            } else if (valExpr.toUpperCase() === 'NULL') {
+              updates[col] = null;
             } else if (valExpr.startsWith("'") && valExpr.endsWith("'")) {
               updates[col] = valExpr.slice(1, -1);
             } else if (!isNaN(Number(valExpr))) {
@@ -230,7 +245,11 @@ class WebSQLiteAdapter {
           let targets: any[] = [];
           if (whereClause) {
             const whereUpper = whereClause.toUpperCase();
-            if (whereUpper.includes('ID = ?')) {
+            if (whereUpper.includes('COLLECTOR_ID = ?') && whereUpper.includes('BUSINESS_ID = ?')) {
+              const cId = params[paramIdx++];
+              const bId = params[paramIdx++];
+              targets = tableData.filter((item: any) => item.collector_id === cId || item.business_id === bId);
+            } else if (whereUpper.includes('ID = ?')) {
               const targetId = params[paramIdx++];
               targets = tableData.filter((item: any) => item.id === targetId);
             } else if (whereUpper.includes('COLLECTOR_ID = ?')) {
@@ -261,6 +280,42 @@ class WebSQLiteAdapter {
             if ('total_slots' in updates) item.total_slots = Number(item.total_slots || 0);
             if ('contribution_amount' in updates) item.contribution_amount = Number(item.contribution_amount || 0);
             if ('is_reversed' in updates) item.is_reversed = item.is_reversed ? 1 : 0;
+          }
+        }
+      }
+      await this.persist();
+      return { lastInsertRowId: 0, changes: 1 };
+    }
+
+    if (upperSql.startsWith('DELETE')) {
+      const match = cleanSql.match(/DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?$/is);
+      if (match) {
+        const tableName = match[1].toLowerCase() as keyof WebTableStore;
+        const whereClause = match[2] || '';
+        let paramIdx = 0;
+
+        const tableData = this.data[tableName];
+        if (Array.isArray(tableData)) {
+          if (whereClause) {
+            const whereUpper = whereClause.toUpperCase();
+            if (whereUpper.includes('COLLECTOR_ID = ?') && whereUpper.includes('BUSINESS_ID = ?')) {
+              const cId = params[paramIdx++];
+              const bId = params[paramIdx++];
+              this.data[tableName] = tableData.filter((item: any) => item.collector_id !== cId && item.business_id !== bId) as any;
+            } else if (whereUpper.includes('COLLECTOR_ID = ?')) {
+              const cId = params[paramIdx++];
+              this.data[tableName] = tableData.filter((item: any) => item.collector_id !== cId) as any;
+            } else if (whereUpper.includes('BUSINESS_ID = ?')) {
+              const bId = params[paramIdx++];
+              this.data[tableName] = tableData.filter((item: any) => item.business_id !== bId) as any;
+            } else if (whereUpper.includes('ID = ?')) {
+              const targetId = params[paramIdx++];
+              this.data[tableName] = tableData.filter((item: any) => item.id !== targetId) as any;
+            } else {
+              this.data[tableName] = [];
+            }
+          } else {
+            this.data[tableName] = [];
           }
         }
       }
@@ -540,6 +595,8 @@ async function runMigrations(db: UniversalSQLiteDatabase): Promise<void> {
     // 3. Collectors migrations
     await safeAddColumn(db, 'collectors', 'zone', 'zone TEXT');
     await safeAddColumn(db, 'collectors', 'status', "status TEXT DEFAULT 'PENDING_APPROVAL'");
+    await safeAddColumn(db, 'collectors', 'role', "role TEXT DEFAULT 'MANAGER'");
+    await safeAddColumn(db, 'collectors', 'sync_status', "sync_status TEXT DEFAULT 'PENDING'");
 
     // 4. Business configs migrations
     await safeAddColumn(db, 'business_configs', 'cycle_status', "cycle_status TEXT DEFAULT 'ACTIVE'");
@@ -570,7 +627,9 @@ async function initDatabaseInternal(db: any): Promise<void> {
       phone_number TEXT UNIQUE NOT NULL,
       pin_hash TEXT NOT NULL,
       status TEXT DEFAULT 'PENDING_APPROVAL',
+      role TEXT DEFAULT 'MANAGER',
       zone TEXT,
+      sync_status TEXT DEFAULT 'PENDING',
       created_at TEXT NOT NULL
     );
 

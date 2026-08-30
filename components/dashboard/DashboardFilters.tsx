@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import { triggerLightImpact } from '@/lib/haptics';
 interface DashboardFiltersProps {
   metrics: DashboardMetrics;
   membersCount: number;
+  filteredMembersCount?: number;
   filter: FilterStatus;
   sort: SortOption;
   searchQuery: string;
@@ -25,6 +26,7 @@ interface DashboardFiltersProps {
 export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
   metrics,
   membersCount,
+  filteredMembersCount,
   filter,
   sort,
   searchQuery,
@@ -58,7 +60,7 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
       {/* Filter Chips */}
       <View style={styles.filterRow}>
         {([
-          { key: 'ALL' as FilterStatus, label: 'Tous', count: membersCount },
+          { key: 'ALL' as FilterStatus, label: 'Tous', count: metrics.totalMembersCount || membersCount },
           { key: 'PAID_TODAY' as FilterStatus, label: 'À jour', count: metrics.paidTodayCount },
           { key: 'UNPAID_TODAY' as FilterStatus, label: 'À encaisser', count: metrics.unpaidTodayCount },
           { key: 'OVERDUE' as FilterStatus, label: 'Retard', count: metrics.overdueMembersCount, danger: true },
@@ -92,7 +94,9 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
 
       {/* Section Header */}
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>LISTE DES ADHÉRENTS ({membersCount})</Text>
+        <Text style={styles.sectionTitle}>
+          LISTE DES ADHÉRENTS ({filteredMembersCount !== undefined ? filteredMembersCount : membersCount})
+        </Text>
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => {

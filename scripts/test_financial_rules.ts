@@ -638,6 +638,45 @@ assert(dernierTestLimits.maxAllowedHands === 48, 'Dernier Test (3 mains dans cyc
 assert(dernierTestLimits.maxPotAmount === 12000, 'Dernier Test (3 mains dans cycle 16): maxPotAmount = 48 * 250 = 12,000 HTG');
 assert(calculateMemberTotalCyclePot(3, 16, 250) === 12000, 'Dernier Test touches 3 cagnottes de 4,000 HTG = 12,000 HTG (équilibre parfait)');
 
+// 12. Cycle Renewal & Restart Tests
+// Scenario: A cycle with 10 members (13 effective hands) completes.
+const completedMembers = [
+  { id: 'c1', fullName: 'Enfant 1', handsCount: 1, currentBalance: 3250, paidHandsCount: 13, receivedHandsCount: 1, hasReceivedHand: 1 },
+  { id: 'c2', fullName: 'Enfant 2 (3 mains)', handsCount: 3, currentBalance: 9750, paidHandsCount: 39, receivedHandsCount: 3, hasReceivedHand: 1 },
+  ...Array.from({ length: 8 }, (_, i) => ({
+    id: `c${i + 3}`, fullName: `Enfant ${i + 3}`, handsCount: 1, currentBalance: 3250, paidHandsCount: 13, receivedHandsCount: 1, hasReceivedHand: 1
+  }))
+];
+
+// Renewal Mode A: Keep same members with new unit amount (500 HTG)
+const renewedMembers = completedMembers.map((m) => ({
+  ...m,
+  currentBalance: 0,
+  totalPaidAmount: 0,
+  paidHandsCount: 0,
+  receivedHandsCount: 0,
+  hasReceivedHand: 0,
+  hasReceivedPayout: 0,
+  handReceivedDate: null,
+  dailyAmount: 500,
+}));
+
+assert(renewedMembers.length === 10, 'Renewed cycle preserves all 10 registered members');
+assert(calculateCycleTotalHands(renewedMembers as any) === 12, 'Renewed cycle retains multi-hands distribution (1*3 + 9*1 = 12 mains)');
+assert(renewedMembers.every((m) => m.currentBalance === 0 && m.paidHandsCount === 0), 'All members balances and paid hands reset to 0 in renewed cycle');
+assert(renewedMembers.every((m) => m.receivedHandsCount === 0 && m.hasReceivedHand === 0), 'All members payout flags reset to 0 in renewed cycle');
+
+// New pot calculation with new unit amount (500 HTG)
+const renewedTotalHands = calculateCycleTotalHands(renewedMembers as any);
+const renewedPot = calculatePot(500, renewedTotalHands);
+assert(renewedPot === 6000, 'New pot for renewed cycle (12 mains * 500 HTG) = 6,000 HTG');
+
+// Renewal Mode B: Fresh Start (empty members list)
+const freshMembers: any[] = [];
+assert(freshMembers.length === 0, 'Fresh start cycle clears all member records');
+const freshPot = calculatePot(500, 10);
+assert(freshPot === 5000, 'Fresh start cycle with 10 default slots @ 500 HTG = 5,000 HTG');
+
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);
 console.log('==================================================');

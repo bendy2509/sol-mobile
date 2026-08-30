@@ -974,7 +974,7 @@ export default function AdminScreen() {
           {/* Users List */}
           <FlatList
             data={filteredUsers}
-            keyExtractor={(item) => item.collector.id}
+            keyExtractor={(item, index) => item.collector.id ? `${item.collector.id}-${index}` : String(index)}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[SOL_COLORS.primary]} />}
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => {
@@ -1114,7 +1114,7 @@ export default function AdminScreen() {
       {activeTab === 'TRANSACTIONS' && (
         <FlatList
           data={transactions}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[SOL_COLORS.primary]} />}
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
@@ -1186,7 +1186,7 @@ export default function AdminScreen() {
 
           <FlatList
             data={filteredAuditLogs}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[SOL_COLORS.primary]} />}
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => (
@@ -1298,8 +1298,17 @@ export default function AdminScreen() {
       <Modal visible={isCreateUserModalOpen} transparent animationType="fade" onRequestClose={() => setIsCreateUserModalOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={styles.modalHeaderRow}>
               <Text style={styles.modalTitle}>Créer un Nouvel Utilisateur</Text>
+              <TouchableOpacity
+                onPress={() => setIsCreateUserModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={styles.modalSub}>Définissez son rôle et ses accès sur la plateforme.</Text>
 
               {/* Role Selection */}
@@ -1390,9 +1399,17 @@ export default function AdminScreen() {
       <Modal visible={isEditModalOpen} transparent animationType="fade" onRequestClose={() => setIsEditModalOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={styles.modalHeaderRow}>
               <Text style={styles.modalTitle}>Modifier l'Utilisateur</Text>
-
+              <TouchableOpacity
+                onPress={() => setIsEditModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
               {/* Role Selection */}
               <Text style={styles.formLabel}>RÔLE ATTRIBUÉ</Text>
               <View style={styles.rolePickerRow}>
@@ -1457,7 +1474,16 @@ export default function AdminScreen() {
       <Modal visible={isCancelTxModalOpen} transparent animationType="fade" onRequestClose={() => setIsCancelTxModalOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Annulation Administrative</Text>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Annulation Administrative</Text>
+              <TouchableOpacity
+                onPress={() => setIsCancelTxModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.modalSub}>
               Opération #{selectedTxToCancel?.id.slice(0, 8)} · {selectedTxToCancel?.clientName || 'Adhérent'} · {formatCurrency(selectedTxToCancel?.amount || 0)}
             </Text>
@@ -1497,7 +1523,16 @@ export default function AdminScreen() {
       <Modal visible={isAdminProfileModalOpen} transparent animationType="fade" onRequestClose={() => setIsAdminProfileModalOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Coordonnées Hotline Admin</Text>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Coordonnées Hotline Admin</Text>
+              <TouchableOpacity
+                onPress={() => setIsAdminProfileModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>NOM DU SUPERVISEUR</Text>
               <TextInput style={styles.formInput} value={adminEditName} onChangeText={setAdminEditName} placeholder="Nom Admin" />
@@ -1526,7 +1561,16 @@ export default function AdminScreen() {
       <Modal visible={isRestoreModalOpen} transparent animationType="fade" onRequestClose={() => setIsRestoreModalOpen(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Restaurer une Sauvegarde JSON</Text>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Restaurer une Sauvegarde JSON</Text>
+              <TouchableOpacity
+                onPress={() => setIsRestoreModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.modalSub}>Collez ci-dessous le contenu textuel complet du fichier JSON exporté :</Text>
             <TextInput
               style={[styles.formInput, { height: 120, textAlignVertical: 'top' }]}
@@ -2181,6 +2225,13 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 20,
     maxHeight: '90%',
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+    width: '100%',
   },
   modalTitle: { fontSize: 17, fontWeight: '900', color: SOL_COLORS.textPrimary },
   modalSub: { fontSize: 12, color: SOL_COLORS.textSecondary, marginTop: 2, marginBottom: 12 },

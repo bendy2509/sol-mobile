@@ -14,7 +14,7 @@ interface MemberCardProps {
   onPayoutHand?: (member: Member) => void;
 }
 
-export const MemberCard: React.FC<MemberCardProps> = ({
+const MemberCardComponent: React.FC<MemberCardProps> = ({
   member,
   isPayoutTurn = false,
   onQuickCollect,
@@ -502,3 +502,5 @@ const styles = StyleSheet.create({
     color: SOL_COLORS.primaryDark,
   },
 });
+
+export const MemberCard = React.memo(MemberCardComponent);

@@ -220,6 +220,17 @@ export default function DashboardScreen() {
       ? Math.min(100, Math.round((metrics.handsTouchedCount / metrics.totalHandsExpected) * 100))
       : 0;
 
+  const renderMemberItem = useCallback(
+    ({ item }: { item: Member }) => (
+      <MemberCard
+        member={item}
+        isPayoutTurn={metrics.currentPayoutBeneficiary?.id === item.id}
+        onPayoutHand={handleInitiatePayout}
+      />
+    ),
+    [metrics.currentPayoutBeneficiary?.id, handleInitiatePayout]
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <Header
@@ -231,13 +242,11 @@ export default function DashboardScreen() {
       <FlatList
         data={members}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <MemberCard
-            member={item}
-            isPayoutTurn={metrics.currentPayoutBeneficiary?.id === item.id}
-            onPayoutHand={handleInitiatePayout}
-          />
-        )}
+        renderItem={renderMemberItem}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
+        removeClippedSubviews={true}
         contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl
@@ -252,7 +261,7 @@ export default function DashboardScreen() {
             <DashboardHero metrics={metrics} cycleProgressPct={cycleProgressPct} />
 
             {/* 2. 2x2 Metrics Grid */}
-            <DashboardMetricsGrid metrics={metrics} membersCount={members.length} />
+            <DashboardMetricsGrid metrics={metrics} membersCount={metrics.totalMembersCount} />
 
             {/* 3. Quick Action Buttons */}
             <View style={styles.quickActionsRow}>
@@ -314,7 +323,8 @@ export default function DashboardScreen() {
             {/* 5. Search Bar, Filter Chips & Section Header */}
             <DashboardFilters
               metrics={metrics}
-              membersCount={members.length}
+              membersCount={metrics.totalMembersCount}
+              filteredMembersCount={members.length}
               filter={filter}
               sort={sort}
               searchQuery={searchQuery}
@@ -357,6 +367,14 @@ export default function DashboardScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
+              <TouchableOpacity
+                onPress={() => setIsPayoutModalOpen(false)}
+                style={styles.modalCloseTopBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={18} color="#64748B" />
+              </TouchableOpacity>
               <View style={styles.iconCircleCrown}>
                 <Icon name="crown" size={24} color={SOL_COLORS.accent} />
               </View>
@@ -830,6 +848,20 @@ const styles = StyleSheet.create({
   modalHeader: {
     alignItems: 'center',
     marginBottom: 8,
+    position: 'relative',
+    width: '100%',
+  },
+  modalCloseTopBtn: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
   },
   iconCircleCrown: {
     width: 48,

@@ -25,6 +25,7 @@ export type IconName =
   | 'plus'
   | 'filter'
   | 'target'
+  | 'share'
   | 'shield';
 
 interface IconProps {
@@ -459,6 +460,15 @@ export const Icon: React.FC<IconProps> = ({
               borderBottomRightRadius: size * 0.35,
             }}
           />
+        </View>
+      );
+
+    case 'share':
+      return (
+        <View style={[{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }, style]}>
+          <View style={{ width: size * 0.35, height: size * 0.35, borderRadius: size * 0.18, backgroundColor: color, position: 'absolute', top: size * 0.1, right: size * 0.1 }} />
+          <View style={{ width: size * 0.35, height: size * 0.35, borderRadius: size * 0.18, backgroundColor: color, position: 'absolute', bottom: size * 0.1, right: size * 0.1 }} />
+          <View style={{ width: size * 0.35, height: size * 0.35, borderRadius: size * 0.18, backgroundColor: color, position: 'absolute', top: size * 0.35, left: size * 0.1 }} />
         </View>
       );
 

@@ -157,20 +157,18 @@ export async function getMembersWithPaymentStatus(options?: {
   if (options?.filter && options.filter !== 'ALL') {
     switch (options.filter) {
       case 'PAID_TODAY':
-        filtered = members.filter((m) => m.paymentStatusToday === 'PAID_TODAY');
+        filtered = members.filter((m) => m.paymentStatusToday === 'PAID_TODAY' || m.paymentStatusToday === 'PAID_IN_ADVANCE');
         break;
       case 'UNPAID_TODAY':
-        filtered = members.filter((m) => m.paymentStatusToday === 'UNPAID_TODAY');
+        filtered = members.filter((m) => m.paymentStatusToday === 'UNPAID_TODAY' || m.paymentStatusToday === 'OVERDUE');
         break;
       case 'OVERDUE':
         filtered = members.filter((m) => m.paymentStatusToday === 'OVERDUE');
         break;
       case 'HAND_RECEIVED':
-        filtered = members.filter((m) => m.hasReceivedHand);
+        filtered = members.filter((m) => m.hasReceivedHand || (m.receivedHandsCount !== undefined && m.receivedHandsCount > 0));
         break;
       case 'HAND_PENDING':
-        filtered = members.filter((m) => !m.hasReceivedHand);
-        break;
       case 'UPCOMING_PAYOUT':
         filtered = members.filter((m) => !m.hasReceivedHand);
         break;
@@ -195,7 +193,14 @@ export async function getMembersWithPaymentStatus(options?: {
     }
   });
 
-  return filtered;
+  const uniqueMap = new Map<string, Member>();
+  for (const m of filtered) {
+    if (!uniqueMap.has(m.id)) {
+      uniqueMap.set(m.id, m);
+    }
+  }
+
+  return Array.from(uniqueMap.values());
 }
 
 export async function payoutMemberHand(

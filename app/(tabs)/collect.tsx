@@ -599,6 +599,10 @@ export default function CollectScreen() {
           <FlatList
             data={filteredClients}
             keyExtractor={(item) => item.id}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            removeClippedSubviews={true}
             contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
             renderItem={({ item }) => {
               const isSelected = selectedClient?.id === item.id;
@@ -719,6 +723,14 @@ export default function CollectScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.receiptCard}>
             <View style={styles.receiptHeader}>
+              <TouchableOpacity
+                onPress={() => setIsReceiptOpen(false)}
+                style={styles.receiptCloseTopBtn}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={18} color="#64748B" />
+              </TouchableOpacity>
               <View style={styles.receiptIconCircle}>
                 <Icon name="check" size={28} color="#FFFFFF" />
               </View>
@@ -1400,6 +1412,20 @@ const styles = StyleSheet.create({
   },
   receiptHeader: {
     alignItems: 'center',
+    position: 'relative',
+    width: '100%',
+  },
+  receiptCloseTopBtn: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
   },
   receiptIconCircle: {
     width: 52,
