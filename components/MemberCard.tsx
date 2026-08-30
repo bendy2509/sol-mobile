@@ -99,11 +99,11 @@ export const MemberCard: React.FC<MemberCardProps> = ({
               <Icon name="check" size={12} color={SOL_COLORS.successDark} style={{ marginRight: 4 }} />
               <Text style={styles.handReceivedText}>
                 {member.handsCount > 1
-                  ? `Toutes les mains reçues (${member.handsCount}/${member.handsCount})`
-                  : `Main reçue ${member.handReceivedDate ? `le ${formatDateShort(member.handReceivedDate)}` : ''}`}
+                  ? `Toutes mains reçues (${member.handsCount}/${member.handsCount})`
+                  : `Main reçue (1/1) ${member.handReceivedDate ? `le ${formatDateShort(member.handReceivedDate)}` : ''}`}
               </Text>
             </View>
-          ) : member.handsCount > 1 && (member.receivedHandsCount || 0) > 0 ? (
+          ) : (member.receivedHandsCount || 0) > 0 ? (
             <View style={styles.handPartialBadge}>
               <Icon name="check" size={12} color="#0284C7" style={{ marginRight: 4 }} />
               <Text style={styles.handPartialText}>
@@ -113,7 +113,9 @@ export const MemberCard: React.FC<MemberCardProps> = ({
           ) : (
             <View style={styles.handPendingBadge}>
               <Icon name="clock" size={12} color={SOL_COLORS.textSecondary} style={{ marginRight: 4 }} />
-              <Text style={styles.handPendingText}>En attente de son tour</Text>
+              <Text style={styles.handPendingText}>
+                0/{member.handsCount || 1} main perçue • En attente
+              </Text>
             </View>
           )}
 
@@ -145,38 +147,10 @@ export const MemberCard: React.FC<MemberCardProps> = ({
         )}
       </View>
 
-      {/* Middle Row: Payment Status Badge & Financial Total */}
-      <View style={styles.middleRow}>
-        <View style={styles.statusBox}>
-          {member.paymentStatusToday === 'PAID_IN_ADVANCE' ? (
-            <View style={styles.badgeAdvance}>
-              <Icon name="check" size={12} color={SOL_COLORS.primaryDark} style={{ marginRight: 4 }} />
-              <Text style={styles.badgeAdvanceText}>
-                Couvert : {formatDateShort(member.paidUntilDate)}
-              </Text>
-            </View>
-          ) : member.paymentStatusToday === 'PAID_TODAY' ? (
-            <View style={styles.badgePaid}>
-              <Icon name="check" size={12} color={SOL_COLORS.successDark} style={{ marginRight: 4 }} />
-              <Text style={styles.badgePaidText}>À jour aujourd'hui</Text>
-            </View>
-          ) : member.paymentStatusToday === 'OVERDUE' ? (
-            <View style={styles.badgeOverdue}>
-              <Icon name="alert" size={12} color={SOL_COLORS.dangerDark} style={{ marginRight: 4 }} />
-              <Text style={styles.badgeOverdueText}>
-                Retard ({member.overdueRoundsCount} main{member.overdueRoundsCount > 1 ? 's' : ''})
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.badgeUnpaid}>
-              <Icon name="clock" size={12} color={SOL_COLORS.accent} style={{ marginRight: 4 }} />
-              <Text style={styles.badgeUnpaidText}>À encaisser</Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.financialBox}>
-          <Text style={styles.balanceLabel}>Total cotisé</Text>
+      {/* Contribution Balance Row */}
+      <View style={styles.balanceRow}>
+        <View style={styles.balanceItem}>
+          <Text style={styles.balanceLabel}>COTISATIONS VERSÉES</Text>
           <Text style={styles.balanceAmount}>{formatCurrency(member.totalPaidAmount || member.currentBalance)}</Text>
         </View>
       </View>
@@ -205,7 +179,7 @@ export const MemberCard: React.FC<MemberCardProps> = ({
           <View style={[styles.actionBtn, styles.payoutBtnDisabled]}>
             <Icon name="check" size={14} color="#059669" style={{ marginRight: 6 }} />
             <Text style={styles.payoutBtnDisabledText}>
-              {member.handsCount > 1 ? `${member.handsCount}/${member.handsCount} mains remises` : 'Main déjà remise'}
+              {member.handsCount > 1 ? `${member.handsCount}/${member.handsCount} mains remises` : 'Main remise (1/1)'}
             </Text>
           </View>
         ) : (
@@ -218,7 +192,7 @@ export const MemberCard: React.FC<MemberCardProps> = ({
             <Text style={styles.actionBtnText}>
               {member.handsCount > 1
                 ? `Décaisser (${(member.receivedHandsCount || 0) + 1}/${member.handsCount})`
-                : 'Décaisser'}
+                : 'Décaisser la main'}
             </Text>
           </TouchableOpacity>
         )}
@@ -467,8 +441,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: SOL_COLORS.accent,
   },
-  financialBox: {
-    alignItems: 'flex-end',
+  balanceRow: {
+    marginBottom: 12,
+  },
+  balanceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   balanceLabel: {
     fontSize: 12,
@@ -479,7 +458,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '900',
     color: SOL_COLORS.textPrimary,
-    marginTop: 2,
   },
   actionRow: {
     flexDirection: 'row',

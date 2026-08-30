@@ -96,9 +96,12 @@ class WebSQLiteAdapter {
           this.data.business_configs.push(item);
         }
       } else if (tableName === 'clients') {
-        const columnsMatch = cleanSql.match(/INSERT (?:OR REPLACE )?INTO\s+clients\s*\(([^)]+)\)/i);
+        const columnsMatch = cleanSql.match(/INSERT (?:OR REPLACE )?INTO\s+clients\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
         const columnNames = columnsMatch
           ? columnsMatch[1].split(',').map((c) => c.trim().toLowerCase())
+          : [];
+        const rawValues = columnsMatch
+          ? columnsMatch[2].split(',').map((v) => v.trim())
           : [];
 
         let clientObj: any = {
@@ -113,7 +116,23 @@ class WebSQLiteAdapter {
           current_balance: 0,
         };
 
-        if (columnNames.length > 0 && columnNames.length === params.length) {
+        if (columnNames.length > 0 && rawValues.length === columnNames.length) {
+          let pIdx = 0;
+          columnNames.forEach((col, idx) => {
+            const vExpr = rawValues[idx];
+            if (vExpr === '?') {
+              clientObj[col] = params[pIdx++];
+            } else if (vExpr.startsWith("'") && vExpr.endsWith("'")) {
+              clientObj[col] = vExpr.slice(1, -1);
+            } else if (vExpr.toUpperCase() === 'NULL') {
+              clientObj[col] = null;
+            } else if (!isNaN(Number(vExpr))) {
+              clientObj[col] = Number(vExpr);
+            } else {
+              clientObj[col] = vExpr;
+            }
+          });
+        } else if (columnNames.length > 0 && columnNames.length === params.length) {
           columnNames.forEach((col, idx) => {
             clientObj[col] = params[idx];
           });
@@ -488,6 +507,19 @@ async function runMigrations(db: UniversalSQLiteDatabase): Promise<void> {
     try {
       await db.runAsync(`UPDATE clients SET hands_count = 1 WHERE hands_count IS NULL OR hands_count < 1;`);
       await db.runAsync(`UPDATE clients SET received_hands_count = 0 WHERE received_hands_count IS NULL;`);
+
+      // Auto-repair any client whose payout_ranks has multiple ranks but hands_count was saved as 1
+      const allClientsWithRanks = await db.getAllAsync<{ id: string; payout_ranks: string; hands_count: number }>(
+        `SELECT id, payout_ranks, hands_count FROM clients WHERE payout_ranks IS NOT NULL`
+      );
+      for (const cl of allClientsWithRanks || []) {
+        if (cl.payout_ranks) {
+          const ranksCount = String(cl.payout_ranks).split(/[,;\s]+/).filter(Boolean).length;
+          if (ranksCount > 1 && (!cl.hands_count || cl.hands_count < ranksCount)) {
+            await db.runAsync(`UPDATE clients SET hands_count = ? WHERE id = ?`, [ranksCount, cl.id]);
+          }
+        }
+      }
     } catch {}
 
     // 2. Transactions migrations
@@ -834,8 +866,8 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
 
     for (const c of sampleClients) {
       await db.runAsync(
-        `INSERT INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, has_received_payout, has_received_hand, hand_received_date, total_paid_amount, paid_hands_count, paid_until_date, qr_code_token, created_at, sync_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED')`,
+        `INSERT INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, payout_ranks, hands_count, received_hands_count, has_received_payout, has_received_hand, hand_received_date, total_paid_amount, paid_hands_count, paid_until_date, qr_code_token, created_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED')`,
         [
           c.id,
           businessId,
@@ -846,6 +878,9 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
           c.daily,
           c.balance,
           c.rank,
+          String(c.rank),
+          1,
+          c.hasHand ? 1 : 0,
           c.hasHand,
           c.hasHand,
           c.handDate,
@@ -856,6 +891,7 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
           now,
         ]
       );
+
 
       const txId = uuidv4();
       await db.runAsync(

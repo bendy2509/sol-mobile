@@ -86,13 +86,24 @@ export function calculateContributionAmount(handsCount: number, unitAmount: numb
  * Formula: Total Hands = Sum of each member's subscribed hands (e.g. 5 members x 1 hand + 1 member x 3 hands = 8 hands).
  */
 export function calculateCycleTotalHands(
-  clients: Array<{ handsCount?: number | null; hands_count?: number | null }>
+  clients: Array<{
+    handsCount?: number | null;
+    hands_count?: number | null;
+    payoutRanks?: string | number[] | null;
+    payout_ranks?: string | number[] | null;
+  }>
 ): number {
   if (!clients || clients.length === 0) return 0;
-  return clients.reduce(
-    (sum, c) => sum + Math.max(1, Number(c?.handsCount || c?.hands_count || 1)),
-    0
-  );
+  return clients.reduce((sum, c) => {
+    const rawRanks = c?.payoutRanks || c?.payout_ranks;
+    const parsedRanksCount = Array.isArray(rawRanks)
+      ? rawRanks.length
+      : rawRanks
+      ? String(rawRanks).split(/[,;\s]+/).filter(Boolean).length
+      : 1;
+    const count = Math.max(1, Number(c?.handsCount || c?.hands_count || 1), parsedRanksCount);
+    return sum + count;
+  }, 0);
 }
 
 /**

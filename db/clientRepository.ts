@@ -4,6 +4,7 @@ import { Client, ClientType, SyncStatus } from '@/types';
 import { getActiveCollectorId, getDatabase, isClientPhoneTaken } from './sqlite';
 import { getActiveBusinessConfig } from './businessRepository';
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
+import { calculateCycleEndDate } from '@/lib/dateCalculations';
 
 export async function getAllClients(options?: {
   search?: string;
@@ -87,7 +88,8 @@ export async function getAllClients(options?: {
   const todayStr = new Date().toISOString().split('T')[0];
 
   return rows.map((r) => {
-    const handsCount = Math.max(1, Number(r.hands_count || 1));
+    const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+    const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
     const receivedHandsCount = Number(
       r.received_hands_count !== null && r.received_hands_count !== undefined
         ? r.received_hands_count
@@ -165,7 +167,8 @@ export async function getClientById(id: string): Promise<Client | null> {
   if (!r) return null;
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const handsCount = Math.max(1, Number(r.hands_count || 1));
+  const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+  const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
   const receivedHandsCount = Number(
     r.received_hands_count !== null && r.received_hands_count !== undefined
       ? r.received_hands_count
@@ -243,7 +246,8 @@ export async function getClientByQrToken(qrCodeToken: string): Promise<Client | 
   if (!r) return null;
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const handsCount = Math.max(1, Number(r.hands_count || 1));
+  const parsedQrRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+  const handsCount = Math.max(1, Number(r.hands_count || 1), parsedQrRanksCount);
   const receivedHandsCount = Number(
     r.received_hands_count !== null && r.received_hands_count !== undefined
       ? r.received_hands_count
@@ -315,7 +319,15 @@ export async function createClient(data: {
   );
   const currentTotalHands = Number(totalHandsRow?.total || 0);
   const startingRank = currentTotalHands + 1;
-  const handsCount = Math.max(1, Number(data.handsCount) || 1);
+  let handsCount = Math.max(1, Number(data.handsCount) || 1);
+  if (data.payoutRanks) {
+    const parsedRanks = (Array.isArray(data.payoutRanks) ? data.payoutRanks : String(data.payoutRanks).split(/[,;\s]+/))
+      .map((r) => String(r).trim())
+      .filter(Boolean);
+    if (parsedRanks.length > handsCount) {
+      handsCount = parsedRanks.length;
+    }
+  }
   const payoutRank = data.payoutRank || startingRank;
 
   let payoutRanksStr: string;
@@ -347,8 +359,14 @@ export async function createClient(data: {
   }
 
   await db.runAsync(
-    `INSERT INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, payout_ranks, hands_count, received_hands_count, has_received_hand, has_received_payout, hand_received_date, total_paid_amount, paid_hands_count, paid_until_date, qr_code_token, created_at, sync_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, ?, ?, ?, ?, 'PENDING')`,
+    `INSERT INTO clients (
+      id, business_id, collector_id, full_name, phone_number, type, 
+      daily_amount, current_balance, payout_rank, payout_ranks, 
+      hands_count, received_hands_count, has_received_hand, has_received_payout, 
+      hand_received_date, total_paid_amount, paid_hands_count, paid_until_date, 
+      qr_code_token, created_at, sync_status
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       businessId,
@@ -361,11 +379,16 @@ export async function createClient(data: {
       payoutRank,
       payoutRanksStr,
       handsCount,
-      initialBalance,
-      initialHandsCount,
-      todayStr,
+      0, // received_hands_count
+      0, // has_received_hand
+      0, // has_received_payout
+      null, // hand_received_date
+      initialBalance, // total_paid_amount
+      initialHandsCount, // paid_hands_count
+      todayStr, // paid_until_date
       qrCodeToken,
       now,
+      'PENDING',
     ]
   );
 
@@ -387,13 +410,21 @@ export async function createClient(data: {
     );
   }
 
-  // Update business total_slots if active business exists
+  // Update business total_slots if active business exists with exact DB sum
   if (activeBusiness) {
-    const newTotalHands = currentTotalHands + handsCount;
-    const newTotalSlots = Math.max(activeBusiness.totalSlots, newTotalHands);
+    const allHandsRow = await db.getFirstAsync<{ total: number }>(
+      `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+      [collectorId]
+    );
+    const updatedTotalSlots = Math.max(1, Number(allHandsRow?.total || 0));
+    const newEndDate = calculateCycleEndDate(
+      activeBusiness.startDate,
+      updatedTotalSlots,
+      activeBusiness.frequency
+    );
     await db.runAsync(
-      `UPDATE business_configs SET total_slots = ? WHERE id = ?`,
-      [newTotalSlots, activeBusiness.id]
+      `UPDATE business_configs SET total_slots = ?, end_date = ? WHERE id = ?`,
+      [updatedTotalSlots, newEndDate, activeBusiness.id]
     );
   }
 

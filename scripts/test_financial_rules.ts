@@ -578,6 +578,66 @@ const doubleIn15Completed = calculateCycleContributionLimits({
 assert(doubleIn15Completed.remainingHands === 0, '2-hand child with 30/30 paid: 0 remaining hands');
 assert(doubleIn15Completed.isCycleCompleted === true, '2-hand child with 30/30 paid: cycle is completed');
 
+// 16. SECTION 16: DYNAMIC ADDITION D'UN ENFANT AVEC X MAINS & DÉCAISSEMENT ÉTAPE PAR ÉTAPE
+// A. Initial cycle: 10 children with 1 hand + 1 child (Odince) with 3 hands = 13 hands
+const initialMembers = [
+  ...Array(10).fill(null).map((_, i) => ({ id: `single-${i}`, handsCount: 1 })),
+  { id: 'odince', handsCount: 3 },
+];
+assert(calculateCycleTotalHands(initialMembers) === 13, 'Initial cycle hands count = 10*1 + 1*3 = 13 mains');
+
+// B. Adding "Dernier Test" with 3 hands: total hands becomes 13 + 3 = 16 mains
+const membersAfterDernierTest = [
+  ...initialMembers,
+  { id: 'dernier-test', handsCount: 3 },
+];
+assert(calculateCycleTotalHands(membersAfterDernierTest) === 16, 'Adding child with 3 hands: total cycle hands increases from 13 to 16 mains');
+
+// C. Adding another child with 2 hands: total hands becomes 16 + 2 = 18 mains
+const membersAfterSecondChild = [
+  ...membersAfterDernierTest,
+  { id: 'new-child-2', handsCount: 2 },
+];
+assert(calculateCycleTotalHands(membersAfterSecondChild) === 18, 'Adding child with 2 hands: total cycle hands increases from 16 to 18 mains');
+
+// D. Cagnotte du tirage mise à jour automatiquement
+assert(calculatePotAmount(16, 250) === 4000, 'Pot amount in 16-hand cycle = 16 * 250 = 4,000 HTG');
+assert(calculatePotAmount(18, 250) === 4500, 'Pot amount in 18-hand cycle = 18 * 250 = 4,500 HTG');
+
+// E. Step-by-Step Payout for a 3-hand child ("Dernier Test")
+const child3Hands = { id: 'dernier-test', fullName: 'Dernier Test', handsCount: 3, receivedHandsCount: 0 };
+
+// Étape 1: Avant tout décaissement
+let receivedCount = child3Hands.receivedHandsCount;
+let hasReceivedAll = receivedCount >= child3Hands.handsCount;
+assert(receivedCount === 0 && !hasReceivedAll, 'Dernier Test (0/3): 0 main perçue, hasReceivedAll = false');
+
+// Étape 2: 1ère main décaissée (1/3)
+receivedCount += 1;
+hasReceivedAll = receivedCount >= child3Hands.handsCount;
+assert(receivedCount === 1 && !hasReceivedAll, 'Dernier Test (1/3): 1ère main perçue, hasReceivedAll = false (reste 2 mains)');
+
+// Étape 3: 2ème main décaissée (2/3)
+receivedCount += 1;
+hasReceivedAll = receivedCount >= child3Hands.handsCount;
+assert(receivedCount === 2 && !hasReceivedAll, 'Dernier Test (2/3): 2ème main perçue, hasReceivedAll = false (reste 1 main)');
+
+// Étape 4: 3ème main décaissée (3/3)
+receivedCount += 1;
+hasReceivedAll = receivedCount >= child3Hands.handsCount;
+assert(receivedCount === 3 && hasReceivedAll, 'Dernier Test (3/3): 3ème main perçue, hasReceivedAll = true (toutes mains remises)');
+
+// F. Total cotisations dues sur le cycle entier par Dernier Test (3 mains dans un cycle de 16)
+const dernierTestLimits = calculateCycleContributionLimits({
+  currentPaidHands: 0,
+  totalCycleHands: 16,
+  memberHandsCount: 3,
+  unitAmount: 250,
+});
+assert(dernierTestLimits.maxAllowedHands === 48, 'Dernier Test (3 mains dans cycle 16): maxAllowedHands = 3 * 16 = 48 cotisations');
+assert(dernierTestLimits.maxPotAmount === 12000, 'Dernier Test (3 mains dans cycle 16): maxPotAmount = 48 * 250 = 12,000 HTG');
+assert(calculateMemberTotalCyclePot(3, 16, 250) === 12000, 'Dernier Test touches 3 cagnottes de 4,000 HTG = 12,000 HTG (équilibre parfait)');
+
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);
 console.log('==================================================');

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
+import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 
 import { Header } from '@/components/Header';
 import { Badge } from '@/components/Badge';
@@ -37,6 +38,8 @@ export default function SolMatrixScreen() {
   const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
 
+  const [dbTotalHands, setDbTotalHands] = useState<number>(0);
+
   const loadData = useCallback(async () => {
     try {
       const [activeBusiness, memberList] = await Promise.all([
@@ -45,6 +48,22 @@ export default function SolMatrixScreen() {
       ]);
       setBusiness(activeBusiness);
       setMembers(memberList);
+
+      // Direct SQL SUM for guaranteed accuracy — avoids ORM mapping issues
+      try {
+        const db = await getDatabase();
+        const collectorId = await getActiveCollectorId();
+        const row = await db.getFirstAsync<{ total: number }>(
+          `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+          [collectorId]
+        );
+        const totalFromSql = Number(row?.total || 0);
+        const totalFromMembers = calculateCycleTotalHands(memberList);
+        setDbTotalHands(Math.max(1, totalFromMembers, totalFromSql));
+      } catch {
+        // Fallback to JS calculation if direct query fails
+        setDbTotalHands(Math.max(1, calculateCycleTotalHands(memberList)));
+      }
     } catch (err) {
       console.warn('Error loading Sol matrix:', err);
     }
@@ -68,7 +87,9 @@ export default function SolMatrixScreen() {
   const handleInitiatePayout = (member: Member) => {
     triggerMediumImpact();
     setPayoutTargetMember(member);
-    setPayoutNote(`Remise de la main #${member.rankOrder || member.payoutRank || 1} - ${member.fullName}`);
+    const hands = Math.max(1, member.handsCount || 1);
+    const rec = Number(member.receivedHandsCount || 0);
+    setPayoutNote(`Remise de la main (${rec + 1}/${hands}) - ${member.fullName}`);
     setIsPayoutModalOpen(true);
   };
 
@@ -81,7 +102,8 @@ export default function SolMatrixScreen() {
     setIsPinModalOpen(true);
   };
 
-  const totalHandsCount = calculateCycleTotalHands(members) || (business?.totalSlots || 10);
+  // Use SQL-based total (most reliable) falling back to JS calculation then business config
+  const totalHandsCount = dbTotalHands || calculateCycleTotalHands(members) || (business?.totalSlots || 10);
   const potValue = calculatePot(
     business?.contributionAmount || 250,
     totalHandsCount
@@ -182,8 +204,14 @@ export default function SolMatrixScreen() {
           <Text style={styles.sectionTitle}>ORDRE OFFICIEL DE PASSAGE DES MAINS</Text>
 
           {members.map((member, index) => {
-            const hasReceived = Boolean(member.hasReceivedHand || member.hasReceivedPayout);
-            const isNextTurn = !hasReceived && member.payoutRank === currentRound;
+            const memberHandsCount = Math.max(1, member.handsCount || 1);
+            const receivedCount = Number(member.receivedHandsCount || 0);
+            const hasReceived = receivedCount >= memberHandsCount || Boolean(member.hasReceivedHand || member.hasReceivedPayout);
+            
+            const ranksList = (member.payoutRanks ? String(member.payoutRanks).split(',') : [String(member.payoutRank || '')])
+              .map((r) => Number(r.trim()))
+              .filter((n) => !isNaN(n) && n > 0);
+            const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
 
             return (
               <View
@@ -214,13 +242,26 @@ export default function SolMatrixScreen() {
                   </View>
 
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.memberName}>{member.fullName}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                      <Text style={styles.memberName}>{member.fullName}</Text>
+                      {memberHandsCount > 1 && (
+                        <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                          <Text style={{ fontSize: 10, fontWeight: '800', color: '#B45309' }}>
+                            {memberHandsCount} mains
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={styles.memberPhone}>{member.phoneNumber}</Text>
-                    {member.handReceivedDate && (
+                    {memberHandsCount > 1 ? (
+                      <Text style={{ fontSize: 11, color: '#0284C7', fontWeight: '700', marginTop: 2 }}>
+                        {receivedCount}/{memberHandsCount} main{receivedCount > 1 ? 's' : ''} touchée{receivedCount > 1 ? 's' : ''} • Rangs #{member.payoutRanks || member.payoutRank}
+                      </Text>
+                    ) : member.handReceivedDate ? (
                       <Text style={styles.receivedDateText}>
                         Main touchée le {formatDateShort(member.handReceivedDate)}
                       </Text>
-                    )}
+                    ) : null}
                   </View>
                 </View>
 
@@ -228,7 +269,9 @@ export default function SolMatrixScreen() {
                   {hasReceived ? (
                     <View style={styles.badgePaidOut}>
                       <Icon name="check" size={12} color="#047857" style={{ marginRight: 4 }} />
-                      <Text style={styles.badgePaidOutText}>Main Touchée</Text>
+                      <Text style={styles.badgePaidOutText}>
+                        {memberHandsCount > 1 ? `${memberHandsCount}/${memberHandsCount} Touchées` : 'Main Touchée'}
+                      </Text>
                     </View>
                   ) : (
                     <TouchableOpacity
@@ -238,7 +281,9 @@ export default function SolMatrixScreen() {
                     >
                       <Icon name="crown" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
                       <Text style={styles.payoutActionBtnText}>
-                        {isNextTurn ? 'Donner la Main' : 'Décaisser'}
+                        {memberHandsCount > 1
+                          ? `Décaisser (${receivedCount + 1}/${memberHandsCount})`
+                          : isNextTurn ? 'Donner la Main' : 'Décaisser'}
                       </Text>
                     </TouchableOpacity>
                   )}

@@ -21,6 +21,8 @@ import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { getClientById, getAllClients } from '@/db/clientRepository';
 import { createTransaction } from '@/db/transactionRepository';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
+
 import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
 import { BusinessConfig, Client, Transaction } from '@/types';
@@ -56,11 +58,13 @@ export default function CollectScreen() {
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
   const [lastTx, setLastTx] = useState<Transaction | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
   const unitAmount = selectedClient?.dailyAmount || business?.contributionAmount || 250;
   const totalAmount = calculateContributionAmount(handsCount, unitAmount);
 
   const loadData = useCallback(async () => {
+
     try {
       const [biz, list] = await Promise.all([
         getActiveBusinessConfig(),
@@ -68,6 +72,21 @@ export default function CollectScreen() {
       ]);
       setBusiness(biz);
       setAllClients(list);
+
+      // Direct SQL SUM for guaranteed accuracy
+      try {
+        const db = await getDatabase();
+        const collectorId = await getActiveCollectorId();
+        const row = await db.getFirstAsync<{ total: number }>(
+          `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+          [collectorId]
+        );
+        const totalFromSql = Number(row?.total || 0);
+        const totalFromList = calculateCycleTotalHands(list);
+        setDbTotalHands(Math.max(1, totalFromList, totalFromSql));
+      } catch {
+        setDbTotalHands(Math.max(1, calculateCycleTotalHands(list)));
+      }
 
       const targetId = params.clientId || selectedClient?.id;
       if (targetId) {
@@ -83,6 +102,7 @@ export default function CollectScreen() {
     }
   }, [params.clientId, selectedClient?.id]);
 
+
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -93,7 +113,7 @@ export default function CollectScreen() {
     }, [loadData])
   );
 
-  const totalCycleHands = calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
+  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
   const clientUnitAmount = selectedClient?.dailyAmount || business?.contributionAmount || 250;
   const clientBalance = Number(selectedClient?.currentBalance || 0);
   const clientTotalPaid = Number(selectedClient?.totalPaidAmount || clientBalance);

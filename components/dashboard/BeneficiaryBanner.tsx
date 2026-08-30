@@ -35,7 +35,7 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({
           </Text>
           <Text style={styles.beneficiarySub}>
             {beneficiary.handsCount && beneficiary.handsCount > 1
-              ? `${beneficiary.handsCount} mains souscrites • Rangs #${beneficiary.payoutRanks || beneficiary.payoutRank}`
+              ? `${beneficiary.handsCount} mains souscrites • Rangs #${beneficiary.payoutRanks || beneficiary.payoutRank} • Main ${(beneficiary.receivedHandsCount || 0) + 1}/${beneficiary.handsCount}`
               : `Main #${beneficiary.rankOrder || 1}`} • Cagnotte : {formatCurrency(potAmount)}
           </Text>
         </View>
@@ -44,7 +44,11 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({
           onPress={() => onPayout(beneficiary)}
           style={styles.payoutBtn}
         >
-          <Text style={styles.payoutBtnText}>Décaisser</Text>
+          <Text style={styles.payoutBtnText}>
+            {beneficiary.handsCount && beneficiary.handsCount > 1
+              ? `Décaisser (${(beneficiary.receivedHandsCount || 0) + 1}/${beneficiary.handsCount})`
+              : 'Décaisser'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>

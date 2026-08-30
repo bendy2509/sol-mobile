@@ -16,6 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getClientById, updateClientDetails, deleteClient, getAllClients } from '@/db/clientRepository';
 import { getTransactionsByClient, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { payoutMemberHand } from '@/db/memberRepository';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/Badge';
@@ -41,6 +42,7 @@ export default function ClientDetailScreen() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [allClients, setAllClients] = useState<Client[]>([]);
+  const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
   // Modals & form state
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -72,6 +74,21 @@ export default function ClientDetailScreen() {
     setBusiness(activeBiz);
     setAllClients(clientList);
 
+    // Direct SQL SUM for guaranteed total hands accuracy
+    try {
+      const db = await getDatabase();
+      const collectorId = await getActiveCollectorId();
+      const row = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+        [collectorId]
+      );
+      const totalFromSql = Number(row?.total || 0);
+      const totalFromClients = calculateCycleTotalHands(clientList);
+      setDbTotalHands(Math.max(1, totalFromClients, totalFromSql));
+    } catch {
+      setDbTotalHands(Math.max(1, calculateCycleTotalHands(clientList)));
+    }
+
     if (data) {
       setEditFullName(data.fullName);
       setEditPhoneNumber(data.phoneNumber);
@@ -86,8 +103,9 @@ export default function ClientDetailScreen() {
 
   const unitAmount = client?.dailyAmount || business?.contributionAmount || 250;
   const memberHandsCount = Math.max(1, client?.handsCount || 1);
-  const totalCycleHands = calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
+  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
   const totalPotAmount = totalCycleHands * unitAmount;
+
 
   const limits = calculateCycleContributionLimits({
     currentPaidHands: client?.paidHandsCount || 0,
@@ -99,18 +117,29 @@ export default function ClientDetailScreen() {
   const remainingHands = limits.remainingHands;
   const remainingAmount = limits.remainingAmount;
   const maxAllowedHands = limits.maxAllowedHands;
-  const currentReceivedHands = client?.receivedHandsCount !== undefined
-    ? client.receivedHandsCount
-    : client?.hasReceivedHand || client?.hasReceivedPayout
-    ? memberHandsCount
-    : 0;
-  const isFullyReceived = currentReceivedHands >= memberHandsCount || Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
 
-  const totalHandsTouched = allClients.reduce(
-    (sum, m) => sum + (m.receivedHandsCount !== undefined ? m.receivedHandsCount : m.hasReceivedHand || m.hasReceivedPayout ? Math.max(1, m.handsCount || 1) : 0),
-    0
+  // Direct count of payout transactions to guarantee 100% coherence with transaction timeline
+  const clientPayoutTxsCount = transactions.filter(
+    (t) => !t.isReversed && (t.type === 'HAND_PAYOUT' || t.type === 'SOL_PAYOUT')
+  ).length;
+
+  const rawReceived = Number(client?.receivedHandsCount || 0);
+  const hasPayoutFlag = Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
+  const currentReceivedHands = Math.max(
+    rawReceived,
+    clientPayoutTxsCount,
+    hasPayoutFlag ? (rawReceived > 0 ? rawReceived : memberHandsCount) : 0
   );
-  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((totalHandsTouched / totalCycleHands) * 100)) : 0;
+  const isFullyReceived = currentReceivedHands >= memberHandsCount || hasPayoutFlag;
+
+  const totalHandsTouched = allClients.reduce((sum, m) => {
+    const rawRec = Number(m.receivedHandsCount || 0);
+    const flag = Boolean(m.hasReceivedHand || m.hasReceivedPayout);
+    const hands = Math.max(1, Number(m.handsCount || 1));
+    return sum + Math.max(rawRec, flag ? (rawRec > 0 ? rawRec : hands) : 0);
+  }, 0);
+  const effectiveTotalHandsTouched = Math.max(totalHandsTouched, currentReceivedHands);
+  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((effectiveTotalHandsTouched / totalCycleHands) * 100)) : 0;
   const memberPayoutProgressPct = memberHandsCount > 0 ? Math.min(100, Math.round((currentReceivedHands / memberHandsCount) * 100)) : 0;
   const memberContributionProgressPct = maxAllowedHands > 0 ? Math.min(100, Math.round(((client?.paidHandsCount || 0) / maxAllowedHands) * 100)) : 0;
 
@@ -601,9 +630,9 @@ Reçu archivé avec succès sur SOL Mobile.`;
 
           <View style={styles.multiHandsSpecGrid}>
             <View style={styles.multiHandsSpecRow}>
-              <Text style={styles.multiHandsSpecLabel}>Effectif total du SOL :</Text>
+              <Text style={styles.multiHandsSpecLabel}>Effectif du SOL :</Text>
               <Text style={styles.multiHandsSpecValueBold}>
-                {totalCycleHands} enfants/mains
+                {allClients.length} enfant{allClients.length > 1 ? 's' : ''} • {totalCycleHands} main{totalCycleHands > 1 ? 's' : ''} au total
               </Text>
             </View>
             <View style={styles.multiHandsSpecRow}>
@@ -652,7 +681,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
             <View style={[styles.multiHandsSpecRow, { marginTop: 10 }]}>
               <Text style={styles.multiHandsSpecLabel}>Mains données au total :</Text>
               <Text style={styles.multiHandsSpecValueBold}>
-                {totalHandsTouched} / {totalCycleHands} mains ({cycleProgressPct}%)
+                {effectiveTotalHandsTouched} / {totalCycleHands} mains ({cycleProgressPct}%)
               </Text>
             </View>
 

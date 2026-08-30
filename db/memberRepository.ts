@@ -95,15 +95,15 @@ export async function getMembersWithPaymentStatus(options?: {
       [r.id]
     );
 
-    const handsCount = Math.max(1, Number(r.hands_count || 1));
-    const receivedHandsCount = Number(
-      r.received_hands_count !== null && r.received_hands_count !== undefined
-        ? r.received_hands_count
-        : r.has_received_hand || r.has_received_payout
-        ? handsCount
-        : 0
-    );
-    const hasReceived = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
+    const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+    const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
+    const rawReceived = Number(r.received_hands_count || 0);
+    const receivedHandsCount = rawReceived > 0
+      ? rawReceived
+      : (r.has_received_hand || r.has_received_payout)
+        ? (handsCount === 1 ? 1 : 0)
+        : 0;
+    const hasReceived = receivedHandsCount >= handsCount;
     const balance = Number(r.current_balance || 0);
     const totalPaid = Number(r.total_paid_amount || balance);
     const paidHands = Number(r.paid_hands_count || Math.floor(balance / (unitAmount || 1)));
@@ -208,16 +208,18 @@ export async function payoutMemberHand(
 
   const client = await db.getFirstAsync<{
     hands_count: number | null;
+    payout_ranks: string | null;
     received_hands_count: number | null;
     has_received_hand: number | null;
     has_received_payout: number | null;
     full_name: string;
   }>(
-    `SELECT hands_count, received_hands_count, has_received_hand, has_received_payout, full_name FROM clients WHERE id = ?`,
+    `SELECT hands_count, payout_ranks, received_hands_count, has_received_hand, has_received_payout, full_name FROM clients WHERE id = ?`,
     [memberId]
   );
 
-  const totalHands = Math.max(1, Number(client?.hands_count || 1));
+  const parsedRanksCount = client?.payout_ranks ? String(client.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+  const totalHands = Math.max(1, Number(client?.hands_count || 1), parsedRanksCount);
   const currentReceived = Number(
     client?.received_hands_count !== null && client?.received_hands_count !== undefined
       ? client.received_hands_count

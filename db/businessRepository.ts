@@ -243,15 +243,15 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   let currentPayoutBeneficiary: Member | null = null;
 
   for (const m of members) {
-    const memberHandsCount = Math.max(1, Number(m.hands_count || 1));
-    const receivedCount = Number(
-      m.received_hands_count !== null && m.received_hands_count !== undefined
-        ? m.received_hands_count
-        : m.has_received_hand || m.has_received_payout
-        ? memberHandsCount
-        : 0
-    );
-    const hasTouched = receivedCount >= memberHandsCount || Boolean(m.has_received_hand || m.has_received_payout);
+    const parsedRanksCount = m.payout_ranks ? String(m.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+    const memberHandsCount = Math.max(1, Number(m.hands_count || 1), parsedRanksCount);
+    const rawReceived = Number(m.received_hands_count || 0);
+    const receivedCount = rawReceived > 0
+      ? rawReceived
+      : (m.has_received_hand || m.has_received_payout)
+        ? (memberHandsCount === 1 ? 1 : 0)
+        : 0;
+    const hasTouched = receivedCount >= memberHandsCount;
     handsTouchedCount += receivedCount;
 
     handsCollectedTotal += Number(m.paid_hands_count || 0);
@@ -267,15 +267,15 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const effectiveHandsTouched = Math.max(handsTouchedCount, totalPayoutTxCount);
 
   for (const m of members) {
-    const memberHandsCount = Math.max(1, Number(m.hands_count || 1));
-    const receivedCount = Number(
-      m.received_hands_count !== null && m.received_hands_count !== undefined
-        ? m.received_hands_count
-        : m.has_received_hand || m.has_received_payout
-        ? memberHandsCount
-        : 0
-    );
-    const hasTouched = receivedCount >= memberHandsCount || Boolean(m.has_received_hand || m.has_received_payout);
+    const parsedRanksCount = m.payout_ranks ? String(m.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+    const memberHandsCount = Math.max(1, Number(m.hands_count || 1), parsedRanksCount);
+    const rawReceived = Number(m.received_hands_count || 0);
+    const receivedCount = rawReceived > 0
+      ? rawReceived
+      : (m.has_received_hand || m.has_received_payout)
+        ? (memberHandsCount === 1 ? 1 : 0)
+        : 0;
+    const hasTouched = receivedCount >= memberHandsCount;
 
     // Check if member paid today
     const paidTodayTx = await db.getFirstAsync<{ count: number }>(
@@ -332,7 +332,18 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   }
 
   const totalMembersCount = members.length;
-  const totalCycleHands = calculateCycleTotalHands(members) || (totalSlots || 10);
+  // Use direct SQL SUM for guaranteed accuracy — avoids any ORM mapping ambiguity
+  const totalHandsRow = await db.getFirstAsync<{ total: number }>(
+    `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+    [collectorId]
+  );
+  const calculatedTotal = calculateCycleTotalHands(members);
+  const totalCycleHands = Math.max(
+    1,
+    calculatedTotal,
+    Number(totalHandsRow?.total || 0),
+    totalSlots || 10
+  );
   const effectiveChildrenCount = totalCycleHands;
   const unpaidTodayCount = Math.max(0, totalMembersCount - paidTodayCount);
   const handsRemaining = Math.max(0, effectiveChildrenCount - handsCollectedTotal);

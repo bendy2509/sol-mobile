@@ -224,7 +224,7 @@ export default function DashboardScreen() {
     <SafeAreaView style={styles.container}>
       <Header
         title={metrics.businessName || 'SOL'}
-        subtitle={`${formatCurrency(metrics.unitAmount)}/main • ${metrics.totalHandsExpected} enfants/mains • Fin: ${formatDateShort(metrics.endDate)}`}
+        subtitle={`${formatCurrency(metrics.unitAmount)}/main • ${metrics.totalMembersCount} enfants • ${metrics.totalHandsExpected} mains • Fin: ${formatDateShort(metrics.endDate)}`}
         onRefresh={handleRefresh}
       />
 

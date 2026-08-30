@@ -13,7 +13,9 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { getClientById, getAllClients } from '@/db/clientRepository';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { payoutMemberHand } from '@/db/memberRepository';
+
 import { recordAuditLog } from '@/services/auditService';
 import { generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useAuth } from '@/context/AuthContext';
@@ -38,6 +40,7 @@ export default function PayoutScreen() {
   const [client, setClient] = useState<Client | null>(null);
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [allClients, setAllClients] = useState<Client[]>([]);
+  const [dbTotalHands, setDbTotalHands] = useState<number>(0);
   const [payoutNote, setPayoutNote] = useState('');
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -52,6 +55,21 @@ export default function PayoutScreen() {
     setClient(cData);
     setBusiness(biz);
     setAllClients(cList);
+
+    try {
+      const db = await getDatabase();
+      const collectorId = await getActiveCollectorId();
+      const row = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+        [collectorId]
+      );
+      const totalFromSql = Number(row?.total || 0);
+      const totalFromClients = calculateCycleTotalHands(cList);
+      setDbTotalHands(Math.max(1, totalFromClients, totalFromSql));
+    } catch {
+      setDbTotalHands(Math.max(1, calculateCycleTotalHands(cList)));
+    }
+
     if (cData) {
       const hands = Math.max(1, cData.handsCount || 1);
       const curRec = cData.receivedHandsCount || 0;
@@ -65,22 +83,26 @@ export default function PayoutScreen() {
 
   const unitAmount = client?.dailyAmount || business?.contributionAmount || 250;
   const memberHandsCount = Math.max(1, client?.handsCount || 1);
-  const totalCycleHands = calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
+  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
   const totalPotAmount = totalCycleHands * unitAmount;
 
-  const currentReceivedHands = client?.receivedHandsCount !== undefined
-    ? client.receivedHandsCount
-    : client?.hasReceivedHand || client?.hasReceivedPayout
-    ? memberHandsCount
-    : 0;
-
-  const isFullyReceived = currentReceivedHands >= memberHandsCount || Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
-
-  const totalHandsTouched = allClients.reduce(
-    (sum, m) => sum + (m.receivedHandsCount !== undefined ? m.receivedHandsCount : m.hasReceivedHand || m.hasReceivedPayout ? Math.max(1, m.handsCount || 1) : 0),
-    0
+  const rawReceived = Number(client?.receivedHandsCount || 0);
+  const hasPayoutFlag = Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
+  const currentReceivedHands = Math.max(
+    rawReceived,
+    hasPayoutFlag ? (rawReceived > 0 ? rawReceived : memberHandsCount) : 0
   );
-  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((totalHandsTouched / totalCycleHands) * 100)) : 0;
+
+  const isFullyReceived = currentReceivedHands >= memberHandsCount || hasPayoutFlag;
+
+  const totalHandsTouched = allClients.reduce((sum, m) => {
+    const rawRec = Number(m.receivedHandsCount || 0);
+    const flag = Boolean(m.hasReceivedHand || m.hasReceivedPayout);
+    const hands = Math.max(1, Number(m.handsCount || 1));
+    return sum + Math.max(rawRec, flag ? (rawRec > 0 ? rawRec : hands) : 0);
+  }, 0);
+  const effectiveTotalHandsTouched = Math.max(totalHandsTouched, currentReceivedHands);
+  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((effectiveTotalHandsTouched / totalCycleHands) * 100)) : 0;
   const memberPayoutProgressPct = memberHandsCount > 0 ? Math.min(100, Math.round((currentReceivedHands / memberHandsCount) * 100)) : 0;
 
   const handleInitiatePayout = () => {
@@ -129,9 +151,14 @@ export default function PayoutScreen() {
       );
 
       triggerSuccessFeedback();
+      const remainingHandsToReceive = memberHandsCount - (currentReceivedHands + 1);
+      const remainingNotice = remainingHandsToReceive > 0
+        ? `\n\nIl reste encore ${remainingHandsToReceive} main${remainingHandsToReceive > 1 ? 's' : ''} à décaisser pour cet adhérent au cours de ce cycle.`
+        : `\n\nToutes les ${memberHandsCount} mains de cet adhérent ont été intégralement remises.`;
+
       Alert.alert(
         'Main Remise avec Succès !',
-        `La cagnotte de ${formatCurrency(totalPotAmount)} a été décaissée pour ${client.fullName} (Main ${currentReceivedHands + 1}/${memberHandsCount}).\n\nCalculée sur la base des ${totalCycleHands} mains effectives du cycle (${totalCycleHands} × ${formatCurrency(unitAmount)}).`,
+        `La cagnotte de ${formatCurrency(totalPotAmount)} a été décaissée pour ${client.fullName} (Main ${currentReceivedHands + 1}/${memberHandsCount}).\n\nCalculée sur la base des ${totalCycleHands} mains effectives du cycle (${totalCycleHands} × ${formatCurrency(unitAmount)}).${remainingNotice}`,
         [
           {
             text: 'Télécharger Reçu PDF',
@@ -259,7 +286,7 @@ export default function PayoutScreen() {
 
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Effectif total du cycle :</Text>
-                <Text style={styles.infoValue}>{totalCycleHands} enfants/mains</Text>
+                <Text style={styles.infoValue}>{allClients.length} enfant{allClients.length > 1 ? 's' : ''} • {totalCycleHands} main{totalCycleHands > 1 ? 's' : ''}</Text>
               </View>
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Mains souscrites par l'adhérent :</Text>

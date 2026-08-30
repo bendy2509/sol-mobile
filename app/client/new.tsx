@@ -132,15 +132,26 @@ export default function NewClientScreen() {
     try {
       const collectorId = activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001';
       const fullPhone = normalizePhoneNumber(`+509${phoneDigits}`);
-      const computedRanks = multiRanks.trim() || String(assignedRank);
+      
+      const parsedRanks = multiRanks.trim()
+        ? multiRanks.split(/[,;\s]+/).map((r) => r.trim()).filter(Boolean)
+        : [];
+      const effectiveHandsCount = Math.max(
+        1,
+        Number(handsCount) || 1,
+        parsedRanks.length > 1 ? parsedRanks.length : 1
+      );
+      const computedRanks = parsedRanks.length > 0
+        ? parsedRanks.join(', ')
+        : generateRanksString(assignedRank, effectiveHandsCount);
 
-      // 1. Create client locally with hands count
+      // 1. Create client locally with guaranteed hands count
       const client = await createClient({
         fullName: fullName.trim(),
         phoneNumber: fullPhone,
         type: business?.type === 'SOL' ? 'SOL' : 'SABOTAY',
         dailyAmount: unitAmount,
-        handsCount,
+        handsCount: effectiveHandsCount,
         payoutRank: assignedRank,
         payoutRanks: computedRanks,
         initialDeposit: 0,
@@ -153,34 +164,11 @@ export default function NewClientScreen() {
         await createTransaction({
           clientId: client.id,
           collectorId,
-          amount: unitAmount * handsCount,
-          handsCovered: handsCount,
+          amount: unitAmount * effectiveHandsCount,
+          handsCovered: effectiveHandsCount,
           type: 'SOL_CONTRIBUTION',
           paymentMethod: 'CASH',
-          note: `Première cotisation à l'inscription (${handsCount} main(s) - Rangs: #${computedRanks})`,
-        });
-      }
-
-      // 3. Adjust total cycle slots and recompute end date if needed
-      if (business) {
-        const newTotalSlots = Math.max(business.totalSlots, existingTotalCycleHands + handsCount);
-        const newEndDate = calculateCycleEndDate(
-          business.startDate,
-          newTotalSlots,
-          business.frequency
-        );
-
-        await saveBusinessConfig({
-          id: business.id,
-          collectorId: business.collectorId,
-          name: business.name,
-          type: business.type,
-          contributionAmount: business.contributionAmount,
-          frequency: business.frequency,
-          totalSlots: newTotalSlots,
-          startDate: business.startDate,
-          endDate: newEndDate,
-          status: business.status,
+          note: `Première cotisation à l'inscription (${effectiveHandsCount} main(s) - Rangs: #${computedRanks})`,
         });
       }
 
@@ -189,7 +177,7 @@ export default function NewClientScreen() {
 
       Alert.alert(
         'Adhérent Enregistré avec Succès !',
-        `${fullName.trim()} a été ajouté(e) au carnet avec la Main #${assignedRank} (${formatCurrency(unitAmount)} / main).${collectFirstHand ? '\n\n1ère main encaissée avec succès.' : ''}`,
+        `${fullName.trim()} a été ajouté(e) au carnet avec ${effectiveHandsCount} main${effectiveHandsCount > 1 ? 's' : ''} (Rangs : #${computedRanks}) (${formatCurrency(unitAmount)} / main).${collectFirstHand ? `\n\n1ère cotisation encaissée avec succès (${formatCurrency(unitAmount * effectiveHandsCount)}).` : ''}`,
         [
           {
             text: 'Voir le Tableau de Bord',
@@ -204,6 +192,7 @@ export default function NewClientScreen() {
       setIsSubmitting(false);
     }
   };
+
 
   return (
     <SafeAreaView style={styles.container}>
@@ -408,8 +397,8 @@ export default function NewClientScreen() {
                 <Icon name="crown" size={14} color="#0284C7" style={{ marginRight: 6 }} />
                 <Text style={styles.multiHandsInfoText}>
                   {handsCount > 1
-                    ? `Cet enfant prend ${handsCount} mains (l'effectif du SOL passe de ${existingTotalCycleHands} à ${totalCycleHands} enfants/places). La cagnotte de chaque main tirée passe à ${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)}). Cet enfant recevra ${handsCount} tirages de ${formatCurrency(totalPotAmount)} (Total: ${formatCurrency(memberTotalDue)}).`
-                    : `1 part standard. L'effectif du SOL est de ${totalCycleHands} enfants/mains. Chaque main tirée est de ${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)}).`}
+                    ? `Cet enfant prend ${handsCount} mains (l'effectif du SOL passe de ${existingTotalCycleHands} à ${totalCycleHands} mains effectives). La cagnotte de chaque main tirée passe à ${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)}). Cet enfant recevra ${handsCount} tirages de ${formatCurrency(totalPotAmount)} (Total: ${formatCurrency(memberTotalDue)}).`
+                    : `1 part standard. L'effectif du SOL est de ${existingMembersCount + 1} enfants et ${totalCycleHands} mains. Chaque main tirée est de ${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)}).`}
                 </Text>
               </View>
             </View>
