@@ -241,7 +241,10 @@ export async function payoutMemberHand(
 
   const collectorId = await getActiveCollectorId();
   const todayStr = new Date().toISOString().split('T')[0];
+  const newReceivedCount = currentReceived + 1;
+  const isFullyCompleted = newReceivedCount >= totalHands ? 1 : 0;
 
+  // createTransaction handles its own atomic INSERT + client balance UPDATE internally.
   const tx = await createTransaction({
     clientId: memberId,
     businessId: businessId || null,
@@ -249,19 +252,20 @@ export async function payoutMemberHand(
     type: 'HAND_PAYOUT',
     collectorId,
     paymentMethod: 'CASH',
-    note: note || `Remise de la main (${currentReceived + 1}/${totalHands}) pour ${client?.full_name}`,
+    note: note || `Remise de la main (${newReceivedCount}/${totalHands}) pour ${client?.full_name}`,
   });
 
-  const newReceivedCount = currentReceived + 1;
-  const isFullyCompleted = newReceivedCount >= totalHands ? 1 : 0;
-
-  // Flag updated received count on client record
-  await db.runAsync(
-    `UPDATE clients 
-     SET received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, sync_status = 'PENDING' 
-     WHERE id = ?`,
-    [newReceivedCount, isFullyCompleted, isFullyCompleted, todayStr, memberId]
-  );
+  // Atomically persist received-hand counters as a second write.
+  // Isolated in its own withTransactionAsync so it is durable even if
+  // the calling screen re-renders or the process is interrupted.
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE clients 
+       SET received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, sync_status = 'PENDING' 
+       WHERE id = ?`,
+      [newReceivedCount, isFullyCompleted, isFullyCompleted, todayStr, memberId]
+    );
+  });
 
   return tx;
 }

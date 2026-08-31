@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
   heroLeft: { flex: 1, marginRight: 10 },
   heroPillHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
   heroLabel: { fontSize: 10, fontWeight: '900', color: '#CBD5E1', letterSpacing: 0.5 },
-  heroAmount: { fontSize: 30, fontWeight: '900', color: '#FFFFFF', marginTop: 2, letterSpacing: -0.5 },
+  heroAmount: { fontSize: 32, fontWeight: '900', color: '#FFFFFF', marginTop: 2, letterSpacing: -0.5 },
   heroSubFormula: { fontSize: 11, color: '#93C5FD', fontWeight: '600', marginTop: 2 },
   heroUnitBadge: {
     backgroundColor: SOL_COLORS.secondaryLight,
@@ -112,12 +112,13 @@ const styles = StyleSheet.create({
   progressLabel: { fontSize: 12, color: '#CBD5E1', fontWeight: '600' },
   progressPct: { fontSize: 12, fontWeight: '800', color: SOL_COLORS.primaryLight },
   progressBarBg: {
-    height: 8,
+    height: 10,
     backgroundColor: '#1E293B',
-    borderRadius: 4,
+    borderRadius: 5,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#334155',
   },
-  progressBarFill: { height: '100%', backgroundColor: '#10B981', borderRadius: 4 },
+  progressBarFill: { height: '100%', backgroundColor: '#10B981', borderRadius: 5 },
 });
+

@@ -98,16 +98,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   avatarCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#D97706',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
   },
   avatarText: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '900',
     color: '#FFFFFF',
   },
@@ -128,10 +128,11 @@ const styles = StyleSheet.create({
   payoutBtn: {
     backgroundColor: '#D97706',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderRadius: 12,
-    minHeight: 44,
+    minHeight: 48,
     justifyContent: 'center',
+    alignItems: 'center',
   },
   payoutBtnText: {
     color: '#FFFFFF',
@@ -139,3 +140,4 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
+

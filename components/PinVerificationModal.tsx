@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   Modal,
   TouchableOpacity,
   StyleSheet,
+  Animated,
 } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { Icon } from '@/components/Icon';
@@ -30,10 +31,26 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   const [pin, setPin] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Shake animation for wrong PIN
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+
+  const triggerShake = () => {
+    shakeAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: -12, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 12, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -8, duration: 55, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 8, duration: 55, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -4, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]).start();
+  };
+
   useEffect(() => {
     if (visible) {
       setPin('');
       setErrorMessage(null);
+      shakeAnim.setValue(0);
     }
   }, [visible]);
 
@@ -51,6 +68,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           onSuccess();
         } else {
           triggerErrorFeedback();
+          triggerShake();
           setErrorMessage('Code PIN incorrect. Veuillez réessayer.');
           setPin('');
         }
@@ -107,8 +125,10 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
 
-          {/* 4 Dots PIN Display */}
-          <View style={styles.dotsRow}>
+          {/* 4 Dots PIN Display with Shake Animation */}
+          <Animated.View
+            style={[styles.dotsRow, { transform: [{ translateX: shakeAnim }] }]}
+          >
             {[0, 1, 2, 3].map((index) => {
               const isFilled = index < pin.length;
               return (
@@ -122,7 +142,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
                 />
               );
             })}
-          </View>
+          </Animated.View>
 
           {errorMessage && (
             <View style={styles.errorContainer}>
@@ -150,7 +170,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
                       accessibilityLabel={key === 'DEL' ? 'Supprimer' : key === 'C' ? 'Effacer' : key}
                     >
                       {key === 'DEL' ? (
-                        <Icon name="arrow-left" size={18} color={SOL_COLORS.textSecondary} />
+                        <Icon name="arrow-left" size={20} color={SOL_COLORS.textSecondary} />
                       ) : key === 'C' ? (
                         <Text style={[styles.keyText, styles.keyTextAction]}>C</Text>
                       ) : (
@@ -171,18 +191,18 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.80)',
+    backgroundColor: 'rgba(15, 23, 42, 0.82)',
     justifyContent: 'flex-end',
     alignItems: 'center',
   },
   card: {
     width: '100%',
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
     paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 36,
+    paddingTop: 28,
+    paddingBottom: 40,
     alignItems: 'center',
     ...SHADOWS.lg,
   },
@@ -194,18 +214,18 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   iconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: SOL_COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
     ...SHADOWS.sm,
   },
   closeBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: SOL_COLORS.surfaceSubtle,
     alignItems: 'center',
     justifyContent: 'center',
@@ -222,19 +242,19 @@ const styles = StyleSheet.create({
     color: SOL_COLORS.textSecondary,
     textAlign: 'center',
     marginTop: 6,
-    marginBottom: 24,
+    marginBottom: 26,
     lineHeight: 19,
     paddingHorizontal: 8,
   },
   dotsRow: {
     flexDirection: 'row',
-    gap: 16,
-    marginBottom: 16,
+    gap: 18,
+    marginBottom: 18,
   },
   dot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     borderWidth: 2,
     borderColor: SOL_COLORS.borderStrong,
     backgroundColor: '#FFFFFF',
@@ -251,9 +271,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: SOL_COLORS.dangerLighter,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: SOL_COLORS.dangerLight,
@@ -266,7 +286,7 @@ const styles = StyleSheet.create({
   keypad: {
     width: '100%',
     gap: 12,
-    marginTop: 4,
+    marginTop: 6,
   },
   keypadRow: {
     flexDirection: 'row',
@@ -275,8 +295,8 @@ const styles = StyleSheet.create({
   },
   keyBtn: {
     flex: 1,
-    height: 58,
-    borderRadius: 16,
+    height: 62,
+    borderRadius: 18,
     backgroundColor: SOL_COLORS.surfaceSubtle,
     borderWidth: 1,
     borderColor: SOL_COLORS.border,
@@ -288,7 +308,7 @@ const styles = StyleSheet.create({
     borderColor: SOL_COLORS.borderStrong,
   },
   keyText: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
     color: SOL_COLORS.textPrimary,
   },
@@ -298,3 +318,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+

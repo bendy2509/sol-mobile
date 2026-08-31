@@ -482,6 +482,14 @@ export async function reverseTransaction(params: {
   adminId?: string;
 }): Promise<Transaction> {
   const { transactionId, reason } = params;
+
+  // Security Guard: only ADMIN may reverse transactions
+  if (params.userRole && params.userRole !== 'ADMIN') {
+    throw new Error(
+      "Accès refusé : Seul un administrateur peut annuler une transaction. Contactez votre administrateur SOL."
+    );
+  }
+
   if (!reason || reason.trim().length === 0) {
     throw new Error("Une justification est obligatoire pour effectuer l'annulation d'une transaction.");
   }
@@ -515,6 +523,7 @@ export async function reverseTransaction(params: {
   if (original.type === 'REVERSAL') {
     throw new Error("Impossible d'annuler une opération d'annulation.");
   }
+
 
   // Fetch all transactions for this client to reconstruct financial timeline accurately
   const allClientTxs = await getTransactions({ clientId: original.client_id });

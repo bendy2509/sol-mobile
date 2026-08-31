@@ -147,13 +147,39 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({
         )}
       </View>
 
-      {/* Contribution Balance Row */}
+      {/* Contribution Balance Row + Payment Status Badge */}
       <View style={styles.balanceRow}>
         <View style={styles.balanceItem}>
           <Text style={styles.balanceLabel}>COTISATIONS VERSÉES</Text>
           <Text style={styles.balanceAmount}>{formatCurrency(member.totalPaidAmount || member.currentBalance)}</Text>
         </View>
+        <View style={[
+          styles.payStatusBadge,
+          member.paymentStatusToday === 'PAID_TODAY' || member.paymentStatusToday === 'PAID_IN_ADVANCE'
+            ? styles.payStatusBadgePaid
+            : member.paymentStatusToday === 'OVERDUE'
+            ? styles.payStatusBadgeOverdue
+            : styles.payStatusBadgeUnpaid,
+        ]}>
+          <Text style={[
+            styles.payStatusBadgeText,
+            member.paymentStatusToday === 'PAID_TODAY' || member.paymentStatusToday === 'PAID_IN_ADVANCE'
+              ? styles.payStatusBadgeTextPaid
+              : member.paymentStatusToday === 'OVERDUE'
+              ? styles.payStatusBadgeTextOverdue
+              : styles.payStatusBadgeTextUnpaid,
+          ]}>
+            {member.paymentStatusToday === 'PAID_TODAY'
+              ? 'À JOUR'
+              : member.paymentStatusToday === 'PAID_IN_ADVANCE'
+              ? 'AVANCE'
+              : member.paymentStatusToday === 'OVERDUE'
+              ? 'RETARD'
+              : 'À ENCAISSER'}
+          </Text>
+        </View>
       </View>
+
 
       {/* Bottom Action Row: Encaisser & Donner la main */}
       <View style={styles.actionRow}>
@@ -459,6 +485,42 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: SOL_COLORS.textPrimary,
   },
+  payStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    alignSelf: 'center',
+  },
+  payStatusBadgePaid: {
+    backgroundColor: SOL_COLORS.successLighter,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.successLight,
+  },
+  payStatusBadgeOverdue: {
+    backgroundColor: SOL_COLORS.dangerLighter,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.dangerLight,
+  },
+  payStatusBadgeUnpaid: {
+    backgroundColor: SOL_COLORS.accentLighter,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.accentLight,
+  },
+  payStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  payStatusBadgeTextPaid: {
+    color: SOL_COLORS.successDark,
+  },
+  payStatusBadgeTextOverdue: {
+    color: SOL_COLORS.dangerDark,
+  },
+  payStatusBadgeTextUnpaid: {
+    color: SOL_COLORS.accent,
+  },
+
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
