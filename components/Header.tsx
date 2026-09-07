@@ -11,6 +11,7 @@ interface HeaderProps {
   title?: string;
   subtitle?: string;
   showScanner?: boolean;
+  showBack?: boolean;
   onRefresh?: () => void;
 }
 
@@ -18,10 +19,16 @@ export const Header: React.FC<HeaderProps> = ({
   title,
   subtitle,
   showScanner = true,
+  showBack = false,
   onRefresh,
 }) => {
   const router = useRouter();
   const { activeCollector, userRole } = useAuth();
+
+  const handleBackPress = () => {
+    triggerLightImpact();
+    router.back();
+  };
 
   const handleScanPress = () => {
     triggerLightImpact();
@@ -37,6 +44,17 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <View style={styles.container}>
+      {showBack && (
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={handleBackPress}
+          style={styles.backButton}
+          accessibilityLabel="Retour"
+        >
+          <Icon name="arrow-left" size={18} color={SOL_COLORS.textPrimary} />
+        </TouchableOpacity>
+      )}
+
       <View style={styles.leftSection}>
         <View style={styles.titleRow}>
           <Text style={styles.appTitle}>{title || 'SOL'}</Text>
@@ -46,6 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
           {subtitle || `${getFirstName()} • ${activeCollector?.zone || 'Zone Principale'}`}
         </Text>
       </View>
+
 
       <View style={styles.rightSection}>
         <SyncBadge onSyncComplete={onRefresh} />
@@ -90,9 +109,21 @@ const styles = StyleSheet.create({
     borderBottomColor: SOL_COLORS.border,
     ...SHADOWS.sm,
   },
+  backButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: SOL_COLORS.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: SOL_COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
   leftSection: {
     flex: 1,
   },
+
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
