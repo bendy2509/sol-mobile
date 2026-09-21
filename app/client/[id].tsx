@@ -30,11 +30,13 @@ import { recordAuditLog } from '@/services/auditService';
 import { calculateCycleContributionLimits, calculateCycleTotalHands } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function ClientDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { activeCollector, userRole, getAdminProfile } = useAuth();
+  const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
   const isAdmin = userRole === 'ADMIN';
 
@@ -55,6 +57,8 @@ export default function ClientDetailScreen() {
   const [editFullName, setEditFullName] = useState('');
   const [editPhoneNumber, setEditPhoneNumber] = useState('');
   const [editRank, setEditRank] = useState('');
+  const [editHandsCount, setEditHandsCount] = useState<number>(1);
+  const [editMultiRanks, setEditMultiRanks] = useState<string>('');
   const [payoutNote, setPayoutNote] = useState('');
 
   // 4-Digit PIN Security State
@@ -76,12 +80,12 @@ export default function ClientDetailScreen() {
     setBusiness(activeBiz);
     setAllClients(clientList);
 
-    // Direct SQL SUM for guaranteed total hands accuracy
+    // Direct SQL SUM of all active clients for guaranteed accuracy
     try {
       const db = await getDatabase();
       const collectorId = await getActiveCollectorId();
       const row = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
         [collectorId]
       );
       const totalFromSql = Number(row?.total || 0);
@@ -95,6 +99,13 @@ export default function ClientDetailScreen() {
       setEditFullName(data.fullName);
       setEditPhoneNumber(data.phoneNumber);
       setEditRank(data.payoutRank ? data.payoutRank.toString() : '1');
+      setEditHandsCount(Math.max(1, data.handsCount || 1));
+      const ranksStr = Array.isArray(data.payoutRanks)
+        ? data.payoutRanks.join(', ')
+        : data.payoutRanks
+        ? String(data.payoutRanks)
+        : (data.payoutRank ? data.payoutRank.toString() : '1');
+      setEditMultiRanks(ranksStr);
       setPayoutNote(`Remise de la main #${data.payoutRank || 1} - ${data.fullName}`);
     }
   };
@@ -177,6 +188,13 @@ export default function ClientDetailScreen() {
     setEditFullName(client.fullName);
     setEditPhoneNumber(client.phoneNumber);
     setEditRank(client.payoutRank ? client.payoutRank.toString() : '1');
+    setEditHandsCount(Math.max(1, client.handsCount || 1));
+    const ranksStr = Array.isArray(client.payoutRanks)
+      ? client.payoutRanks.join(', ')
+      : client.payoutRanks
+      ? String(client.payoutRanks)
+      : (client.payoutRank ? client.payoutRank.toString() : '1');
+    setEditMultiRanks(ranksStr);
     setIsEditModalOpen(true);
   };
 
@@ -192,23 +210,35 @@ export default function ClientDetailScreen() {
       return;
     }
 
+    const validHands = Math.max(1, Number(editHandsCount) || 1);
+    const parsedRank = parseInt(editRank, 10) || client.payoutRank || 1;
+    let finalRanks = editMultiRanks.trim();
+    if (!finalRanks) {
+      const rList = [];
+      for (let i = 0; i < validHands; i++) {
+        rList.push(parsedRank + i);
+      }
+      finalRanks = rList.join(', ');
+    }
+
     requirePinForAction(
       "Modifier l'Adhérent",
-      `Saisissez votre code PIN gestionnaire (4 chiffres) pour valider la mise à jour des coordonnées de ${editFullName}.`,
+      `Saisissez votre code PIN gestionnaire (4 chiffres) pour valider la mise à jour de ${editFullName} (${validHands} main(s)).`,
       async () => {
         try {
           const normPhone = normalizePhoneNumber(editPhoneNumber);
-          const parsedRank = parseInt(editRank, 10) || client.payoutRank || 1;
           await updateClientDetails(client.id, {
             fullName: editFullName.trim(),
             phoneNumber: normPhone,
             payoutRank: parsedRank,
+            payoutRanks: finalRanks,
+            handsCount: validHands,
           });
 
           triggerSuccessFeedback();
-          Alert.alert('Succès', 'Les coordonnées ont été mises à jour.');
+          Alert.alert('Succès', `L'adhérent a été mis à jour avec ${validHands} main(s) (Rangs: #${finalRanks}).`);
           setIsEditModalOpen(false);
-          loadClientData();
+          await loadClientData();
         } catch (err: any) {
           triggerErrorFeedback();
           Alert.alert('Erreur', err?.message || 'Échec de la modification.');
@@ -336,7 +366,13 @@ export default function ClientDetailScreen() {
                   Alert.alert('Supprimé', "Le dossier de l'adhérent a été supprimé.", [
                     {
                       text: 'OK',
-                      onPress: () => router.replace('/(tabs)' as any),
+                      onPress: () => {
+                        if (router.canGoBack()) {
+                          router.back();
+                        } else {
+                          router.replace('/(tabs)' as any);
+                        }
+                      },
                     },
                   ]);
                 } catch (err: any) {
@@ -545,7 +581,15 @@ Reçu archivé avec succès sur SOL Mobile.`;
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingHorizontal: horizontalPadding },
+          isTablet && styles.scrollContentTablet,
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Profile Identity Card */}
         <View style={styles.profileCard}>
           <View style={styles.profileTop}>
@@ -768,40 +812,40 @@ Reçu archivé avec succès sur SOL Mobile.`;
         )}
 
         {/* Primary Action Buttons Grid */}
-        <View style={styles.actionRow}>
+        <View style={[styles.actionRow, isSmallScreen && { gap: isVerySmallScreen ? 4 : 6 }]}>
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => {
               triggerLightImpact();
-              router.push({ pathname: '/(tabs)/collect', params: { clientId: client.id } });
+              router.navigate({ pathname: '/(tabs)/collect', params: { clientId: client.id } } as any);
             }}
-            style={styles.actionBtnPrimary}
+            style={[styles.actionBtnPrimary, isSmallScreen && { paddingVertical: 10, paddingHorizontal: 6 }]}
           >
-            <Icon name="collect" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.actionBtnPrimaryText}>Encaisser</Text>
+            <Icon name="collect" size={isSmallScreen ? 14 : 16} color="#FFFFFF" style={{ marginRight: 4 }} />
+            <Text style={[styles.actionBtnPrimaryText, isSmallScreen && { fontSize: isVerySmallScreen ? 11 : 12 }]} numberOfLines={1} adjustsFontSizeToFit>Encaisser</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={handleOpenEditModal}
-            style={styles.actionBtnSecondary}
+            style={[styles.actionBtnSecondary, isSmallScreen && { paddingVertical: 10, paddingHorizontal: 6 }]}
           >
-            <Text style={styles.actionBtnSecondaryText}>Modifier</Text>
+            <Text style={[styles.actionBtnSecondaryText, isSmallScreen && { fontSize: isVerySmallScreen ? 10.5 : 11.5 }]} numberOfLines={1} adjustsFontSizeToFit>Modifier</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={handlePrintOrShare}
-            style={styles.actionBtnSecondary}
+            style={[styles.actionBtnSecondary, isSmallScreen && { paddingVertical: 10, paddingHorizontal: 6 }]}
           >
-            <Icon name="print" size={15} color={SOL_COLORS.textPrimary} style={{ marginRight: 4 }} />
-            <Text style={styles.actionBtnSecondaryText}>Reçu</Text>
+            <Icon name="print" size={isSmallScreen ? 13 : 15} color={SOL_COLORS.textPrimary} style={{ marginRight: 3 }} />
+            <Text style={[styles.actionBtnSecondaryText, isSmallScreen && { fontSize: isVerySmallScreen ? 10.5 : 11.5 }]} numberOfLines={1} adjustsFontSizeToFit>Reçu</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={handleDeleteClient}
-            style={styles.actionBtnDanger}
+            style={[styles.actionBtnDanger, isSmallScreen && { width: isVerySmallScreen ? 34 : 38 }]}
           >
             <Icon name="close" size={14} color={SOL_COLORS.danger} />
           </TouchableOpacity>
@@ -1056,16 +1100,61 @@ Reçu archivé avec succès sur SOL Mobile.`;
               />
             </View>
 
+            {/* Number of hands selector / stepper */}
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>RANG DANS LE SOL (ORDRE DE MAIN)</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <Text style={styles.formLabel}>NOMBRE DE MAINS SOUSCRITES (PARTS)</Text>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: SOL_COLORS.primary }}>
+                  {editHandsCount} main{editHandsCount > 1 ? 's' : ''} ({formatCurrency(editHandsCount * unitAmount)}/tour)
+                </Text>
+              </View>
+              <View style={styles.stepperContainer}>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    const next = Math.max(1, editHandsCount - 1);
+                    setEditHandsCount(next);
+                    triggerLightImpact();
+                  }}
+                  style={styles.stepperBtn}
+                >
+                  <Text style={styles.stepperBtnText}>−</Text>
+                </TouchableOpacity>
+
+                <View style={styles.stepperDisplay}>
+                  <Text style={styles.stepperDisplayText}>{editHandsCount}</Text>
+                  <Text style={styles.stepperDisplaySub}>main{editHandsCount > 1 ? 's' : ''}</Text>
+                </View>
+
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    const next = editHandsCount + 1;
+                    setEditHandsCount(next);
+                    triggerLightImpact();
+                  }}
+                  style={styles.stepperBtn}
+                >
+                  <Text style={styles.stepperBtnText}>+</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.stepperHelpText}>
+                Augmenter les mains de cet enfant incrémente automatiquement la cagnotte globale du SOL.
+              </Text>
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>RANG(S) DE TIRAGE DANS LE SOL</Text>
               <TextInput
                 style={styles.formInput}
-                value={editRank}
-                onChangeText={setEditRank}
-                placeholder="Ex: 1, 2, 3..."
+                value={editMultiRanks}
+                onChangeText={setEditMultiRanks}
+                placeholder="Ex: 1 ou 1, 4, 7"
                 placeholderTextColor={SOL_COLORS.textMuted}
-                keyboardType="numeric"
               />
+              <Text style={{ fontSize: 10, color: '#64748B', marginTop: 3 }}>
+                Rangs d'attribution des mains pour cet enfant (séparés par des virgules).
+              </Text>
             </View>
 
             <View style={styles.modalBtnRow}>
@@ -1212,6 +1301,11 @@ const styles = StyleSheet.create({
   centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { fontSize: 14, color: SOL_COLORS.textSecondary },
   scrollContent: { padding: 16, paddingBottom: 40 },
+  scrollContentTablet: {
+    maxWidth: 768,
+    width: '100%',
+    alignSelf: 'center',
+  },
   profileCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
@@ -1496,6 +1590,55 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: SOL_COLORS.textPrimary,
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    padding: 4,
+    height: 48,
+  },
+  stepperBtn: {
+    width: 42,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    ...SHADOWS.sm,
+  },
+  stepperBtnText: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: SOL_COLORS.primary,
+  },
+  stepperDisplay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  stepperDisplayText: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: SOL_COLORS.textPrimary,
+  },
+  stepperDisplaySub: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  stepperHelpText: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   modalBtnRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
   modalCancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: SOL_COLORS.surfaceSubtle, alignItems: 'center' },

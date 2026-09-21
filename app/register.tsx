@@ -18,10 +18,12 @@ import { Icon } from '@/components/Icon';
 import { SOL_COLORS } from '@/constants/Colors';
 import { formatCurrency } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function RegisterScreen() {
   const router = useRouter();
   const { registerManager } = useAuth();
+  const { horizontalPadding } = useResponsive();
 
   const [step, setStep] = useState<1 | 2>(1);
 
@@ -137,7 +139,10 @@ export default function RegisterScreen() {
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { maxWidth: 540, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >

@@ -677,6 +677,37 @@ assert(freshMembers.length === 0, 'Fresh start cycle clears all member records')
 const freshPot = calculatePot(500, 10);
 assert(freshPot === 5000, 'Fresh start cycle with 10 default slots @ 500 HTG = 5,000 HTG');
 
+// 17. SECTION 17: DYNAMIC HANDS SPECIFICATION (USER DOMAIN RULE)
+// "Le nombre de mains dans le SOL/SABOTAY se détermine par le nombre de mains récupérer par chaque enfant,
+// pas déterminé à l'avance. Chaque enfant enregistré incrémente le nombre de mains par le nombre de main de l'enfant en question."
+// Exemple : 3 enfants d'1 main + 1 enfant de 3 mains = 4 enfants et 6 mains.
+const dynamicGroup = [
+  { id: 'c1', fullName: 'Enfant 1', handsCount: 1, payoutRank: 1 },
+  { id: 'c2', fullName: 'Enfant 2', handsCount: 1, payoutRank: 2 },
+  { id: 'c3', fullName: 'Enfant 3', handsCount: 1, payoutRank: 3 },
+];
+assert(dynamicGroup.length === 3, 'Initial state: 3 registered children');
+assert(calculateCycleTotalHands(dynamicGroup as any) === 3, 'Initial state: exactly 3 hands (3 x 1)');
+
+// 4th child registers with 3 hands:
+const dynamicGroupWithNew = [
+  ...dynamicGroup,
+  { id: 'c4', fullName: 'Enfant 4', handsCount: 3, payoutRanks: '4, 5, 6' },
+];
+assert(dynamicGroupWithNew.length === 4, 'After 4th child: exactly 4 children');
+const totalHands4Children = calculateCycleTotalHands(dynamicGroupWithNew as any);
+assert(totalHands4Children === 6, 'User example: 3 children x 1 hand + 1 child x 3 hands = exactly 6 mains');
+assert(calculatePotAmount(totalHands4Children, 250) === 1500, 'Pot for 6 hands @ 250 HTG = exactly 1,500 HTG (not 2,500 or 3,000)');
+
+// Manager increases hands of Enfant 1 from 1 hand to 2 hands:
+const dynamicGroupUpdated = dynamicGroupWithNew.map((c) =>
+  c.id === 'c1' ? { ...c, handsCount: 2, payoutRanks: '1, 7' } : c
+);
+assert(dynamicGroupUpdated.length === 4, 'Still 4 children enrolled');
+const totalHandsAfterIncrease = calculateCycleTotalHands(dynamicGroupUpdated as any);
+assert(totalHandsAfterIncrease === 7, 'Increasing child 1 from 1 to 2 hands: total cycle hands increases from 6 to 7 mains');
+assert(calculatePotAmount(totalHandsAfterIncrease, 250) === 1750, 'Pot after increasing hand: 7 * 250 = 1,750 HTG');
+
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);
 console.log('==================================================');

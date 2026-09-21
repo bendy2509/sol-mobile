@@ -1,38 +1,62 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import { SyncBadge } from './SyncBadge';
 import { Icon } from './Icon';
+import { ImpersonationBanner } from './ImpersonationBanner';
 import { useAuth } from '@/context/AuthContext';
-import { triggerLightImpact } from '@/lib/haptics';
+import { triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
+import { safeBack } from '@/lib/navigation';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 interface HeaderProps {
   title?: string;
   subtitle?: string;
   showScanner?: boolean;
+  showProfile?: boolean;
   showBack?: boolean;
   onRefresh?: () => void;
+  fallbackBackRoute?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   title,
   subtitle,
   showScanner = true,
+  showProfile = true,
   showBack = false,
   onRefresh,
+  fallbackBackRoute = '/(tabs)',
 }) => {
   const router = useRouter();
-  const { activeCollector, userRole } = useAuth();
+  const pathname = usePathname();
+  const { activeCollector, userRole, isImpersonating, exitImpersonation } = useAuth();
+  const { isSmallScreen, isVerySmallScreen, isTablet } = useResponsive();
+
+  const isProfileScreen = pathname === '/profile' || pathname?.endsWith('/profile');
+  const isScanScreen = pathname === '/scan' || pathname?.endsWith('/scan');
 
   const handleBackPress = () => {
-    triggerLightImpact();
-    router.back();
+    safeBack(router, fallbackBackRoute);
   };
 
   const handleScanPress = () => {
+    if (isScanScreen) return;
     triggerLightImpact();
     router.push('/scan' as any);
+  };
+
+  const handleProfilePress = () => {
+    if (isProfileScreen) return;
+    triggerLightImpact();
+    router.navigate('/profile' as any);
+  };
+
+  const handleAdminReturn = async () => {
+    triggerMediumImpact();
+    await exitImpersonation();
+    router.replace('/admin' as any);
   };
 
   const getFirstName = () => {
@@ -43,60 +67,93 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <View style={styles.container}>
-      {showBack && (
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={handleBackPress}
-          style={styles.backButton}
-          accessibilityLabel="Retour"
-        >
-          <Icon name="arrow-left" size={18} color={SOL_COLORS.textPrimary} />
-        </TouchableOpacity>
-      )}
+    <View style={styles.headerWrapper}>
+      {(isImpersonating || userRole === 'ADMIN') && <ImpersonationBanner />}
 
-      <View style={styles.leftSection}>
-        <View style={styles.titleRow}>
-          <Text style={styles.appTitle}>{title || 'SOL'}</Text>
-          <View style={styles.brandDot} />
-        </View>
-        <Text style={styles.collectorInfo} numberOfLines={1}>
-          {subtitle || `${getFirstName()} • ${activeCollector?.zone || 'Zone Principale'}`}
-        </Text>
-      </View>
-
-
-      <View style={styles.rightSection}>
-        <SyncBadge onSyncComplete={onRefresh} />
-
-        {showScanner && (
+      <View
+        style={[
+          styles.container,
+          isSmallScreen && { paddingHorizontal: isVerySmallScreen ? 10 : 12, paddingTop: 10, paddingBottom: 12 },
+          isTablet && styles.containerTablet,
+        ]}
+      >
+        {showBack && (
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={handleScanPress}
-            style={styles.actionButton}
-            accessibilityLabel="Scanner Code QR"
+            onPress={handleBackPress}
+            style={[styles.backButton, isSmallScreen && styles.buttonSmall]}
+            accessibilityLabel="Retour"
           >
-            <Icon name="scan" size={18} color={SOL_COLORS.textPrimary} />
+            <Icon name="arrow-left" size={isSmallScreen ? 16 : 18} color={SOL_COLORS.textPrimary} />
           </TouchableOpacity>
         )}
 
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => {
-            triggerLightImpact();
-            router.push('/profile' as any);
-          }}
-          style={[styles.actionButton, styles.profileButton]}
-          accessibilityLabel="Mon Profil"
-        >
-          <Icon name="user" size={18} color={SOL_COLORS.primaryDark} />
-        </TouchableOpacity>
+        <View style={styles.leftSection}>
+          <View style={styles.titleRow}>
+            <Text
+              style={[styles.appTitle, isSmallScreen && { fontSize: isVerySmallScreen ? 18 : 20 }]}
+              numberOfLines={1}
+            >
+              {title || 'SOL'}
+            </Text>
+            <View style={styles.brandDot} />
+          </View>
+          <Text
+            style={[styles.collectorInfo, isSmallScreen && { fontSize: 11 }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {subtitle || `${getFirstName()} • ${activeCollector?.zone || 'Zone Principale'}`}
+          </Text>
+        </View>
+
+        <View style={[styles.rightSection, isSmallScreen && { gap: isVerySmallScreen ? 4 : 6 }]}>
+          {(isImpersonating || userRole === 'ADMIN') && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={handleAdminReturn}
+              style={[styles.adminQuickBtn, isSmallScreen && styles.adminQuickBtnSmall]}
+              accessibilityLabel="Retour Super-Admin"
+            >
+              <Icon name="crown" size={isSmallScreen ? 11 : 13} color="#B45309" />
+              <Text style={[styles.adminQuickBtnText, isSmallScreen && { fontSize: 10 }]}>Admin</Text>
+            </TouchableOpacity>
+          )}
+
+          <SyncBadge onSyncComplete={onRefresh} />
+
+          {showScanner && !isScanScreen && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={handleScanPress}
+              style={[styles.actionButton, isSmallScreen && styles.buttonSmall]}
+              accessibilityLabel="Scanner Code QR"
+            >
+              <Icon name="scan" size={isSmallScreen ? 16 : 18} color={SOL_COLORS.textPrimary} />
+            </TouchableOpacity>
+          )}
+
+          {showProfile && !isProfileScreen && (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={handleProfilePress}
+              style={[styles.actionButton, styles.profileButton, isSmallScreen && styles.buttonSmall]}
+              accessibilityLabel="Mon Profil"
+            >
+              <Icon name="user" size={isSmallScreen ? 16 : 18} color={SOL_COLORS.primaryDark} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  headerWrapper: {
+    backgroundColor: '#FFFFFF',
+    zIndex: 90,
+  },
   container: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -109,6 +166,33 @@ const styles = StyleSheet.create({
     borderBottomColor: SOL_COLORS.border,
     ...SHADOWS.sm,
   },
+  containerTablet: {
+    maxWidth: 900,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  adminQuickBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    gap: 4,
+  },
+  adminQuickBtnSmall: {
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    gap: 2,
+    borderRadius: 8,
+  },
+  adminQuickBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#B45309',
+  },
   backButton: {
     width: 38,
     height: 38,
@@ -120,10 +204,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
+  buttonSmall: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    marginRight: 6,
+  },
   leftSection: {
     flex: 1,
+    marginRight: 6,
   },
-
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',

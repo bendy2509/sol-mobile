@@ -53,7 +53,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <AuthProvider>
         <SyncProvider>
-          <StatusBar style="dark" backgroundColor="#FFFFFF" />
+          <StatusBar style="dark" />
           {!databaseReady ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={SOL_COLORS.primary} />
@@ -107,15 +107,13 @@ export default function RootLayout() {
               <Stack.Screen
                 name="profile"
                 options={{
-                  title: 'Mon Profil',
-                  headerBackTitle: 'Retour',
+                  headerShown: false,
                 }}
               />
               <Stack.Screen
                 name="closure"
                 options={{
-                  title: 'Clôture Journalière de Caisse',
-                  headerBackTitle: 'Retour',
+                  headerShown: false,
                 }}
               />
               <Stack.Screen
@@ -128,10 +126,8 @@ export default function RootLayout() {
               <Stack.Screen
                 name="scan"
                 options={{
-                  title: 'Scanner le Code QR',
+                  headerShown: false,
                   presentation: 'modal',
-                  headerStyle: { backgroundColor: '#0F172A' },
-                  headerTintColor: '#FFFFFF',
                 }}
               />
               <Stack.Screen
@@ -144,8 +140,13 @@ export default function RootLayout() {
               <Stack.Screen
                 name="client/new"
                 options={{
-                  title: 'Nouvel Adhérent ("Enfant")',
-                  headerBackTitle: 'Retour',
+                  headerShown: false,
+                }}
+              />
+              <Stack.Screen
+                name="cycle-management"
+                options={{
+                  headerShown: false,
                 }}
               />
               <Stack.Screen

@@ -18,9 +18,8 @@ import { Header } from '@/components/Header';
 import { Badge } from '@/components/Badge';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { RenewCycleModal, RenewCycleFormData } from '@/components/RenewCycleModal';
 import { useAuth } from '@/context/AuthContext';
-import { getActiveBusinessConfig, renewSolCycle } from '@/db/businessRepository';
+import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
@@ -28,9 +27,11 @@ import { getFrequencyLabel } from '@/lib/dateCalculations';
 import { calculatePot, calculateCycleTotalHands } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function SolMatrixScreen() {
   const { activeCollector, userRole } = useAuth();
+  const { width, isSmallScreen, isTablet, horizontalPadding } = useResponsive();
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -41,10 +42,6 @@ export default function SolMatrixScreen() {
   const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
 
-  // Cycle Renewal State
-  const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
-  const [isRenewPinOpen, setIsRenewPinOpen] = useState(false);
-  const [pendingRenewData, setPendingRenewData] = useState<RenewCycleFormData | null>(null);
 
   const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
@@ -141,48 +138,6 @@ export default function SolMatrixScreen() {
     }
   };
 
-  const handleInitiateRenew = () => {
-    triggerLightImpact();
-    setIsRenewModalOpen(true);
-  };
-
-  const handleConfirmRenewForm = (data: RenewCycleFormData) => {
-    setIsRenewModalOpen(false);
-    setPendingRenewData(data);
-    setIsRenewPinOpen(true);
-  };
-
-  const handlePinSuccessRenew = async () => {
-    setIsRenewPinOpen(false);
-    if (!pendingRenewData || !business) return;
-
-    try {
-      await renewSolCycle({
-        businessId: business.id,
-        collectorId: activeCollector?.id,
-        mode: pendingRenewData.mode,
-        userId: activeCollector?.id || 'admin',
-        userRole: (userRole as any) || 'MANAGER',
-        name: pendingRenewData.name,
-        contributionAmount: pendingRenewData.contributionAmount,
-        frequency: pendingRenewData.frequency,
-        totalSlots: pendingRenewData.totalSlots,
-      });
-
-      triggerSuccessFeedback();
-      Alert.alert(
-        'Nouveau Cycle Activé !',
-        pendingRenewData.mode === 'RENEW_SAME_MEMBERS'
-          ? `Le cycle [${pendingRenewData.name}] a été renouvelé avec succès avec les ${members.length} adhérents reconduits.\n\nTous les compteurs sont réinitialisés à 0 pour démarrer les encaissements dès aujourd'hui.`
-          : `Le nouveau carnet [${pendingRenewData.name}] a été initialisé avec succès.\n\nVous pouvez désormais inscrire de nouveaux adhérents pour ce cycle.`
-      );
-      loadData();
-    } catch (err: any) {
-      Alert.alert('Erreur', err?.message || 'Échec du renouvellement du cycle Sol.');
-    } finally {
-      setPendingRenewData(null);
-    }
-  };
 
   const totalHandsTouched = members.reduce(
     (sum, m) => sum + (m.receivedHandsCount || (m.hasReceivedHand ? m.handsCount || 1 : 0)),
@@ -199,7 +154,13 @@ export default function SolMatrixScreen() {
       />
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingHorizontal: horizontalPadding },
+          isTablet && styles.scrollContentTablet,
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -249,15 +210,6 @@ export default function SolMatrixScreen() {
             </View>
           </View>
 
-          {/* Hero Renew Button */}
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={handleInitiateRenew}
-            style={styles.heroRenewActionBtn}
-          >
-            <Icon name="sync" size={13} color="#FDE68A" style={{ marginRight: 6 }} />
-            <Text style={styles.heroRenewActionBtnText}>Clôturer / Renouveler le Sol</Text>
-          </TouchableOpacity>
         </View>
 
         {/* 100% Completion Notification Card */}
@@ -270,18 +222,10 @@ export default function SolMatrixScreen() {
               <View style={{ flex: 1, marginLeft: 10 }}>
                 <Text style={styles.cycleCompletedTitle}>CYCLE SOL TERMINÉ À 100%</Text>
                 <Text style={styles.cycleCompletedDesc}>
-                  Toutes les {totalHandsCount} mains ont été distribuées ! Vous pouvez maintenant clôturer et relancer un nouveau cycle avec les mêmes adhérents ou un nouveau montant.
+                  Toutes les {totalHandsCount} mains ont été distribuées pour ce cycle.
                 </Text>
               </View>
             </View>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={handleInitiateRenew}
-              style={styles.cycleRenewBannerBtn}
-            >
-              <Icon name="sync" size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.cycleRenewBannerBtnText}>Lancer un Nouveau Cycle</Text>
-            </TouchableOpacity>
           </View>
         )}
 
@@ -329,7 +273,7 @@ export default function SolMatrixScreen() {
 
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                      <Text style={styles.memberName}>{member.fullName}</Text>
+                      <Text style={styles.memberName} numberOfLines={1} adjustsFontSizeToFit>{member.fullName}</Text>
                       {memberHandsCount > 1 && (
                         <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
                           <Text style={{ fontSize: 10, fontWeight: '800', color: '#B45309' }}>
@@ -388,7 +332,7 @@ export default function SolMatrixScreen() {
         onRequestClose={() => setIsPayoutModalOpen(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { maxWidth: Math.min(420, width - 32) }]}>
             <View style={styles.modalHeader}>
               <TouchableOpacity
                 onPress={() => setIsPayoutModalOpen(false)}
@@ -461,26 +405,6 @@ export default function SolMatrixScreen() {
       />
 
       {/* Cycle Renewal Modal */}
-      <RenewCycleModal
-        visible={isRenewModalOpen}
-        onClose={() => setIsRenewModalOpen(false)}
-        onConfirm={handleConfirmRenewForm}
-        currentBusiness={business}
-        membersCount={members.length}
-        totalHands={totalHandsCount}
-      />
-
-      {/* 4-Digit PIN Security Modal for Cycle Renewal */}
-      <PinVerificationModal
-        visible={isRenewPinOpen}
-        title="Validation Sécurisée du Renouvellement"
-        subtitle={`Saisissez votre code PIN gestionnaire pour confirmer le lancement du cycle "${pendingRenewData?.name || 'Nouveau Cycle'}".`}
-        onSuccess={handlePinSuccessRenew}
-        onCancel={() => {
-          setIsRenewPinOpen(false);
-          setPendingRenewData(null);
-        }}
-      />
     </SafeAreaView>
   );
 }
@@ -494,6 +418,11 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 90,
   },
+  scrollContentTablet: {
+    maxWidth: 768,
+    width: '100%',
+    alignSelf: 'center',
+  },
   heroCard: {
     backgroundColor: SOL_COLORS.secondary,
     borderRadius: 20,
@@ -501,22 +430,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderWidth: 1.5,
     borderColor: '#334155',
-  },
-  heroRenewActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    paddingVertical: 10,
-    borderRadius: 12,
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(253, 230, 138, 0.3)',
-  },
-  heroRenewActionBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#FDE68A',
   },
   cycleCompletedBanner: {
     backgroundColor: '#ECFDF5',
@@ -551,19 +464,6 @@ const styles = StyleSheet.create({
     color: '#047857',
     marginTop: 2,
     lineHeight: 16,
-  },
-  cycleRenewBannerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#059669',
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  cycleRenewBannerBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
   },
   heroHeader: {
     flexDirection: 'row',

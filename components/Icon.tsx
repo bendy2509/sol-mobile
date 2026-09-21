@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, ColorValue } from 'react-native';
 
 export type IconName =
   | 'dashboard'
@@ -31,7 +31,7 @@ export type IconName =
 interface IconProps {
   name: IconName;
   size?: number;
-  color?: string;
+  color?: ColorValue;
   style?: any;
 }
 

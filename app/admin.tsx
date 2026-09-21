@@ -42,10 +42,12 @@ import { getAuditLogs } from '@/services/auditService';
 import { getSyncQueueSummary, triggerManualSync } from '@/services/syncQueueService';
 import { AuditLog, AuditLogAction, SyncState, Transaction, UserRole, UserStatus } from '@/types';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function AdminScreen() {
   const router = useRouter();
-  const { logout, getAdminProfile, updateAdminProfile } = useAuth();
+  const { logout, getAdminProfile, updateAdminProfile, impersonateManager, exitImpersonation } = useAuth();
+  const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
 
   const [activeTab, setActiveTab] = useState<'USERS' | 'TRANSACTIONS' | 'AUDIT_LOGS' | 'SYNC_STATUS' | 'SETTINGS'>('USERS');
   const [stats, setStats] = useState<AdminGlobalStats>({
@@ -119,6 +121,11 @@ export default function AdminScreen() {
   // Restore Modal State
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
   const [restoreJsonInput, setRestoreJsonInput] = useState('');
+
+  // Dedicated Reset PIN Modal State for Manager
+  const [isResetPinModalOpen, setIsResetPinModalOpen] = useState(false);
+  const [targetManagerForPinReset, setTargetManagerForPinReset] = useState<ManagerFullOverview | null>(null);
+  const [adminNewPinInput, setAdminNewPinInput] = useState('');
 
   // Super-Admin Transaction Cancellation State
   const [selectedTxToCancel, setSelectedTxToCancel] = useState<Transaction | null>(null);
@@ -384,6 +391,46 @@ export default function AdminScreen() {
     );
   };
 
+  const handleOpenResetPinModal = (item: ManagerFullOverview) => {
+    triggerLightImpact();
+    setTargetManagerForPinReset(item);
+    setAdminNewPinInput('');
+    setIsResetPinModalOpen(true);
+  };
+
+  const handleConfirmResetPin = () => {
+    if (!targetManagerForPinReset) return;
+    if (adminNewPinInput.trim().length !== 4) {
+      Alert.alert('Erreur', 'Le code PIN doit comporter exactement 4 chiffres.');
+      return;
+    }
+
+    setIsResetPinModalOpen(false);
+
+    requirePinForAction(
+      'Réinitialiser le Code PIN',
+      `Saisissez votre code PIN Admin pour réinitialiser le code d'accès de ${targetManagerForPinReset.collector.fullName} :`,
+      async () => {
+        try {
+          await updateManagerDetails(targetManagerForPinReset.collector.id, {
+            pin: adminNewPinInput.trim(),
+          });
+          triggerSuccessFeedback();
+          Alert.alert(
+            'Code PIN Réinitialisé',
+            `Le code PIN de ${targetManagerForPinReset.collector.fullName} a été réinitialisé à : ${adminNewPinInput.trim()}.\n\nVeuillez le communiquer au gestionnaire.`
+          );
+          setAdminNewPinInput('');
+          setTargetManagerForPinReset(null);
+          loadData();
+        } catch (err: any) {
+          triggerErrorFeedback();
+          Alert.alert('Erreur', err?.message || 'Échec de la réinitialisation du code PIN.');
+        }
+      }
+    );
+  };
+
   // Super-Admin Transaction Cancellation Workflow
   const handleInitiateCancelTx = (tx: Transaction) => {
     triggerMediumImpact();
@@ -628,16 +675,17 @@ export default function AdminScreen() {
   const handleOpenBusinessAsManager = async (item: ManagerFullOverview) => {
     triggerLightImpact();
     if (item.business) {
-      await setActiveCollectorId(item.collector.id);
-      await setActiveBusinessId(item.business.id);
       Alert.alert(
-        'Espace Activé',
-        `Vous êtes maintenant positionné sur le carnet "${item.business.name}" de ${item.collector.fullName} (${item.collector.role || 'MANAGER'}).`,
+        'Mode Superviseur',
+        `Vous allez basculer sur le carnet "${item.business.name}" de ${item.collector.fullName} (${item.collector.role || 'MANAGER'}).\n\nVous pourrez revenir au Dashboard Admin à tout moment via la bannière "Retour Admin" en haut de l'écran.`,
         [
           { text: 'Annuler', style: 'cancel' },
           {
             text: 'Ouvrir Espace',
-            onPress: () => router.replace('/(tabs)' as any),
+            onPress: async () => {
+              await impersonateManager(item.collector, item.business!);
+              router.replace('/(tabs)' as any);
+            },
           },
         ]
       );
@@ -697,26 +745,26 @@ export default function AdminScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Top Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && styles.headerTablet, isSmallScreen && { paddingHorizontal: 12 }]}>
         <View style={styles.headerLeft}>
           <View style={styles.adminBadge}>
             <Icon name="shield" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
             <Text style={styles.adminBadgeText}>SUPER-ADMINISTRATEUR</Text>
           </View>
-          <Text style={styles.headerTitle}>Contrôle & Super-Audit</Text>
-          <Text style={styles.headerSub}>Plateforme Centrale SOL Mobile</Text>
+          <Text style={[styles.headerTitle, isSmallScreen && { fontSize: 16 }]} numberOfLines={1}>Contrôle & Super-Audit</Text>
+          <Text style={styles.headerSub} numberOfLines={1}>Plateforme Centrale SOL Mobile</Text>
         </View>
 
-        <View style={styles.headerActions}>
+        <View style={[styles.headerActions, isSmallScreen && { gap: 4 }]}>
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={handleExportPdfReport}
             disabled={isExportingPdf}
-            style={styles.pdfExportBtn}
+            style={[styles.pdfExportBtn, isSmallScreen && { paddingHorizontal: 8 }]}
           >
             <Icon name="print" size={14} color="#1D4ED8" style={{ marginRight: 4 }} />
             <Text style={styles.pdfExportText}>
-              {isExportingPdf ? 'PDF...' : 'Rapport PDF'}
+              {isExportingPdf ? 'PDF...' : isSmallScreen ? 'Rapport' : 'Rapport PDF'}
             </Text>
           </TouchableOpacity>
 
@@ -1061,6 +1109,10 @@ export default function AdminScreen() {
                     <TouchableOpacity onPress={() => handleOpenEditModal(item)} style={styles.actionEditBtn}>
                       <Icon name="user" size={12} color="#475569" style={{ marginRight: 4 }} />
                       <Text style={styles.actionEditText}>Modifier / Rôle</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleOpenResetPinModal(item)} style={styles.actionResetPinBtn}>
+                      <Icon name="shield" size={12} color="#B45309" style={{ marginRight: 4 }} />
+                      <Text style={styles.actionResetPinText}>🔑 PIN</Text>
                     </TouchableOpacity>
                     {isPending && (
                       <TouchableOpacity onPress={() => handleQuickStatusChange(collector.id, collector.fullName, 'ACTIVE')} style={styles.actionApproveBtn}>
@@ -1592,6 +1644,65 @@ export default function AdminScreen() {
         </View>
       </Modal>
 
+      {/* Reset Manager PIN Modal */}
+      <Modal visible={isResetPinModalOpen} transparent animationType="fade" onRequestClose={() => setIsResetPinModalOpen(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Réinitialiser le Code PIN</Text>
+              <TouchableOpacity
+                onPress={() => setIsResetPinModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSub}>
+              Définir un nouveau code PIN à 4 chiffres pour <Text style={{ fontWeight: '800', color: SOL_COLORS.textPrimary }}>{targetManagerForPinReset?.collector.fullName}</Text> ({targetManagerForPinReset?.collector.phoneNumber}).
+            </Text>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>NOUVEAU CODE PIN (4 CHIFFRES) *</Text>
+              <TextInput
+                style={[styles.formInput, { textAlign: 'center', fontSize: 18, fontWeight: '900', letterSpacing: 4 }]}
+                value={adminNewPinInput}
+                onChangeText={setAdminNewPinInput}
+                placeholder="****"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+                maxLength={4}
+                secureTextEntry
+              />
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TouchableOpacity
+                onPress={() => setAdminNewPinInput('1234')}
+                style={styles.quickPinBtn}
+              >
+                <Text style={styles.quickPinBtnText}>Définir "1234"</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setAdminNewPinInput('0000')}
+                style={styles.quickPinBtn}
+              >
+                <Text style={styles.quickPinBtnText}>Définir "0000"</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity onPress={() => setIsResetPinModalOpen(false)} style={styles.modalCancelBtn}>
+                <Text style={styles.modalCancelBtnText}>Annuler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleConfirmResetPin} style={styles.actionResetPinConfirmBtn}>
+                <Text style={styles.modalConfirmBtnText}>Valider avec PIN Admin</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Universal Sensitive Action PIN Modal */}
       <PinVerificationModal
         visible={isPinModalOpen}
@@ -1620,6 +1731,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#1E293B',
     ...SHADOWS.sm,
+  },
+  headerTablet: {
+    maxWidth: 900,
+    width: '100%',
+    alignSelf: 'center',
   },
   headerLeft: {
     flex: 1,
@@ -2035,6 +2151,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#FECDD3',
+  },
+  actionResetPinBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 10,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  actionResetPinText: { fontSize: 11, fontWeight: '800', color: '#B45309' },
+  quickPinBtn: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  quickPinBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  actionResetPinConfirmBtn: {
+    flex: 1.5,
+    height: 44,
+    backgroundColor: '#D97706',
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   txCard: {
     flexDirection: 'row',

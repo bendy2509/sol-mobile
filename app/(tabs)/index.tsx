@@ -9,6 +9,7 @@ import {
   RefreshControl,
   Alert,
   Modal,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -23,6 +24,7 @@ import { BeneficiaryBanner } from '@/components/dashboard/BeneficiaryBanner';
 import { DashboardFilters } from '@/components/dashboard/DashboardFilters';
 import { getDashboardMetrics } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
+import { recordAuditLog } from '@/services/auditService';
 import { getActiveCollector } from '@/db/sqlite';
 import { generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfService';
 import { useAuth } from '@/context/AuthContext';
@@ -31,11 +33,13 @@ import { DashboardMetrics, FilterStatus, Member, SortOption } from '@/types';
 import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function DashboardScreen() {
   const router = useRouter();
-  const { userRole } = useAuth();
+  const { userRole, isImpersonating, exitImpersonation } = useAuth();
   const { triggerSync } = useSync();
+  const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [metrics, setMetrics] = useState<DashboardMetrics>({
@@ -220,6 +224,34 @@ export default function DashboardScreen() {
       ? Math.min(100, Math.round((metrics.handsTouchedCount / metrics.totalHandsExpected) * 100))
       : 0;
 
+  // Hardware BackHandler for Admin Impersonation Mode
+  useFocusEffect(
+    useCallback(() => {
+      if (!isImpersonating && userRole !== 'ADMIN') return;
+
+      const onBackPress = () => {
+        Alert.alert(
+          'Mode Superviseur',
+          'Voulez-vous quitter ce carnet et retourner au Dashboard Administrateur ?',
+          [
+            { text: 'Rester ici', style: 'cancel' },
+            {
+              text: 'Retour Admin',
+              onPress: async () => {
+                await exitImpersonation();
+                router.replace('/admin' as any);
+              },
+            },
+          ]
+        );
+        return true;
+      };
+
+      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => subscription.remove();
+    }, [isImpersonating, userRole, exitImpersonation, router])
+  );
+
   const renderMemberItem = useCallback(
     ({ item }: { item: Member }) => (
       <MemberCard
@@ -247,7 +279,11 @@ export default function DashboardScreen() {
         maxToRenderPerBatch={10}
         windowSize={5}
         removeClippedSubviews={true}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingHorizontal: horizontalPadding },
+          isTablet && styles.listContentTablet,
+        ]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -264,50 +300,50 @@ export default function DashboardScreen() {
             <DashboardMetricsGrid metrics={metrics} membersCount={metrics.totalMembersCount} />
 
             {/* 3. Quick Action Buttons */}
-            <View style={styles.quickActionsRow}>
+            <View style={[styles.quickActionsRow, isSmallScreen && { gap: isVerySmallScreen ? 4 : 6 }]}>
               <TouchableOpacity
                 activeOpacity={0.8}
-                onPress={() => router.push('/collect' as any)}
-                style={styles.quickActionBtn}
+                onPress={() => router.navigate('/(tabs)/collect' as any)}
+                style={[styles.quickActionBtn, isSmallScreen && styles.quickActionBtnSmall]}
               >
-                <View style={[styles.quickActionIconCircle, { backgroundColor: SOL_COLORS.primaryLight }]}>
-                  <Icon name="cash" size={16} color={SOL_COLORS.primaryDark} />
+                <View style={[styles.quickActionIconCircle, isSmallScreen && styles.quickActionIconCircleSmall, { backgroundColor: SOL_COLORS.primaryLight }]}>
+                  <Icon name="cash" size={isSmallScreen ? 14 : 16} color={SOL_COLORS.primaryDark} />
                 </View>
-                <Text style={styles.quickActionLabel}>Encaisser</Text>
+                <Text style={[styles.quickActionLabel, isSmallScreen && styles.quickActionLabelSmall]} numberOfLines={1} adjustsFontSizeToFit>Encaisser</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={() => router.push('/client/new' as any)}
-                style={styles.quickActionBtn}
+                style={[styles.quickActionBtn, isSmallScreen && styles.quickActionBtnSmall]}
               >
-                <View style={[styles.quickActionIconCircle, { backgroundColor: SOL_COLORS.infoLight }]}>
-                  <Icon name="user" size={16} color={SOL_COLORS.info} />
+                <View style={[styles.quickActionIconCircle, isSmallScreen && styles.quickActionIconCircleSmall, { backgroundColor: SOL_COLORS.infoLight }]}>
+                  <Icon name="user" size={isSmallScreen ? 14 : 16} color={SOL_COLORS.info} />
                 </View>
-                <Text style={styles.quickActionLabel}>+ Enfant</Text>
+                <Text style={[styles.quickActionLabel, isSmallScreen && styles.quickActionLabelSmall]} numberOfLines={1} adjustsFontSizeToFit>+ Enfant</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 activeOpacity={0.8}
-                onPress={() => router.push('/sol' as any)}
-                style={styles.quickActionBtn}
+                onPress={() => router.navigate('/(tabs)/sol' as any)}
+                style={[styles.quickActionBtn, isSmallScreen && styles.quickActionBtnSmall]}
               >
-                <View style={[styles.quickActionIconCircle, { backgroundColor: SOL_COLORS.accentLight }]}>
-                  <Icon name="crown" size={16} color={SOL_COLORS.accent} />
+                <View style={[styles.quickActionIconCircle, isSmallScreen && styles.quickActionIconCircleSmall, { backgroundColor: SOL_COLORS.accentLight }]}>
+                  <Icon name="crown" size={isSmallScreen ? 14 : 16} color={SOL_COLORS.accent} />
                 </View>
-                <Text style={styles.quickActionLabel}>Cycle Sol</Text>
+                <Text style={[styles.quickActionLabel, isSmallScreen && styles.quickActionLabelSmall]} numberOfLines={1} adjustsFontSizeToFit>Cycle Sol</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={handleGenerateBusinessReport}
                 disabled={isGeneratingReport}
-                style={styles.quickActionBtn}
+                style={[styles.quickActionBtn, isSmallScreen && styles.quickActionBtnSmall]}
               >
-                <View style={[styles.quickActionIconCircle, { backgroundColor: '#F3E8FF' }]}>
-                  <Icon name="print" size={16} color="#7C3AED" />
+                <View style={[styles.quickActionIconCircle, isSmallScreen && styles.quickActionIconCircleSmall, { backgroundColor: '#F3E8FF' }]}>
+                  <Icon name="print" size={isSmallScreen ? 14 : 16} color="#7C3AED" />
                 </View>
-                <Text style={styles.quickActionLabel}>Rapport PDF</Text>
+                <Text style={[styles.quickActionLabel, isSmallScreen && styles.quickActionLabelSmall]} numberOfLines={1} adjustsFontSizeToFit>Rapport PDF</Text>
               </TouchableOpacity>
             </View>
 
@@ -433,6 +469,16 @@ export default function DashboardScreen() {
         subtitle={`Saisissez votre code PIN pour confirmer la remise de ${formatCurrency(metrics.totalPotAmount)}.`}
         onSuccess={handlePinSuccessPayout}
         onCancel={() => setIsPinModalOpen(false)}
+        onLockout={() => {
+          recordAuditLog({
+            action: 'LOGIN_FAILURE',
+            entityType: 'SYSTEM',
+            entityId: payoutTargetMember?.id || 'unknown',
+            reason: `3 tentatives PIN échouées lors de la remise de main pour ${payoutTargetMember?.fullName || 'un adhérent'}.`,
+            userId: 'c011ec70-0000-0000-0000-000000000001', // Fallback local
+            userRole: 'MANAGER',
+          });
+        }}
       />
     </SafeAreaView>
   );
@@ -447,177 +493,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 90,
   },
+  listContentTablet: {
+    maxWidth: 768,
+    width: '100%',
+    alignSelf: 'center',
+  },
   dashboardHeader: {
     paddingTop: 12,
   },
-  heroCard: {
-    backgroundColor: SOL_COLORS.secondary,
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 12,
-    ...SHADOWS.md,
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-  },
-  heroPillHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  heroLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#CBD5E1',
-    letterSpacing: 0.5,
-  },
-  heroAmount: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    marginTop: 2,
-    letterSpacing: -0.5,
-  },
-  heroSubFormula: {
-    fontSize: 11,
-    color: '#93C5FD',
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  heroUnitBadge: {
-    backgroundColor: SOL_COLORS.secondaryLight,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  heroUnitText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: SOL_COLORS.primaryLight,
-  },
-  heroStatsRow: {
-    flexDirection: 'row',
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
-    padding: 10,
-    marginTop: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  heroStatItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  heroStatItemLabel: {
-    fontSize: 8,
-    fontWeight: '900',
-    color: '#94A3B8',
-    letterSpacing: 0.3,
-  },
-  heroStatItemValRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  heroStatItemVal: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#F1F5F9',
-  },
-  heroStatItemValGreen: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#34D399',
-    marginTop: 2,
-  },
-  heroStatDivider: {
-    width: 1,
-    height: 22,
-    backgroundColor: '#334155',
-  },
-  heroProgressSection: {
-    marginTop: 14,
-  },
-  progressLabelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  progressLabel: {
-    fontSize: 12,
-    color: '#CBD5E1',
-    fontWeight: '600',
-  },
-  progressPct: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: SOL_COLORS.primaryLight,
-  },
-  progressBarBg: {
-    height: 8,
-    backgroundColor: '#1E293B',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#10B981',
-    borderRadius: 4,
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 12,
-  },
-  metricCard: {
-    width: '48.3%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  metricCardAlert: {
-    borderColor: '#FECDD3',
-    backgroundColor: '#FFF1F2',
-  },
-  metricCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  metricIconBox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  metricCardTitle: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: SOL_COLORS.textSecondary,
-    letterSpacing: 0.3,
-  },
-  metricCardValue: {
-    fontSize: 16,
-    fontWeight: '900',
-    marginTop: 2,
-  },
-  metricCardSub: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: SOL_COLORS.textMuted,
-    marginTop: 2,
-  },
+
   quickActionsRow: {
     flexDirection: 'row',
     gap: 8,
@@ -633,6 +517,10 @@ const styles = StyleSheet.create({
     borderColor: SOL_COLORS.border,
     ...SHADOWS.sm,
   },
+  quickActionBtnSmall: {
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
   quickActionIconCircle: {
     width: 40,
     height: 40,
@@ -641,160 +529,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 6,
   },
+  quickActionIconCircleSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginBottom: 4,
+  },
 
   quickActionLabel: {
     fontSize: 11,
     fontWeight: '800',
     color: SOL_COLORS.textPrimary,
   },
-  heroPayoutBanner: {
-    backgroundColor: '#FEF3C7',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    marginBottom: 12,
-    ...SHADOWS.sm,
-  },
-  heroPayoutHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  heroPayoutBadgePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  heroPayoutTitle: {
+  quickActionLabelSmall: {
     fontSize: 10,
-    fontWeight: '900',
-    color: '#B45309',
-    letterSpacing: 0.3,
   },
-  heroPayoutUnitPill: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#92400E',
-    backgroundColor: '#FDE68A',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  heroPayoutBody: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  heroBeneficiaryAvatarCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#D97706',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroBeneficiaryAvatarText: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  heroBeneficiaryName: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  heroBeneficiarySub: {
-    fontSize: 11,
-    color: '#92400E',
-    marginTop: 2,
-    fontWeight: '700',
-  },
-  heroPayoutBtn: {
-    backgroundColor: '#D97706',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-  },
-  heroPayoutBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 46,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    marginBottom: 10,
-    ...SHADOWS.sm,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    color: SOL_COLORS.textPrimary,
-  },
-  filterScroll: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 14,
-  },
-  filterChip: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  filterChipActive: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primaryDark,
-  },
-  filterChipAlertActive: {
-    backgroundColor: SOL_COLORS.danger,
-    borderColor: SOL_COLORS.dangerDark,
-  },
-  filterChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: SOL_COLORS.textSecondary,
-  },
-  filterChipTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  filterChipTextAlertActive: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: SOL_COLORS.textMuted,
-    letterSpacing: 0.5,
-  },
-  sortToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  sortToggleText: {
-    fontSize: 11,
-    color: SOL_COLORS.primaryDark,
-    fontWeight: '700',
-  },
+
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',

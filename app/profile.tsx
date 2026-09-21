@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   Modal,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -21,14 +22,34 @@ import { BusinessConfig } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { hashPin, verifyPinHash } from '@/lib/crypto';
+import { safeBack } from '@/lib/navigation';
 import { SOL_COLORS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { activeCollector, userRole, logout, refreshSession } = useAuth();
+  const { activeCollector, userRole, logout, refreshSession, isImpersonating, exitImpersonation } = useAuth();
+  const { contentMaxWidth, horizontalPadding, width } = useResponsive();
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
+
+  useEffect(() => {
+    const onBackPress = () => {
+      safeBack(router, '/(tabs)');
+      return true;
+    };
+    const backSub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => backSub.remove();
+  }, [router]);
   const [isChangePinModalOpen, setIsChangePinModalOpen] = useState(false);
+
+  // Edit Profile Form State
+  const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
+  const [editFullName, setEditFullName] = useState('');
+  const [editPhoneNumber, setEditPhoneNumber] = useState('');
+  const [editZone, setEditZone] = useState('');
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   // Change PIN Form State
   const [oldPin, setOldPin] = useState('');
@@ -43,6 +64,39 @@ export default function ProfileScreen() {
     }
     load();
   }, []);
+
+  const handleSaveProfileSubmit = async () => {
+    setProfileError(null);
+    if (!editFullName.trim()) {
+      setProfileError('Le nom complet est obligatoire.');
+      return;
+    }
+    if (!editPhoneNumber.trim()) {
+      setProfileError('Le numéro de téléphone est obligatoire.');
+      return;
+    }
+
+    setIsSavingProfile(true);
+    try {
+      const db = await getDatabase();
+      if (activeCollector) {
+        await db.runAsync(
+          `UPDATE collectors SET full_name = ?, phone_number = ?, zone = ?, sync_status = 'PENDING' WHERE id = ?`,
+          [editFullName.trim(), editPhoneNumber.trim(), editZone.trim() || null, activeCollector.id]
+        );
+        await refreshSession();
+      }
+
+      triggerSuccessFeedback();
+      Alert.alert('Succès', 'Vos informations ont été mises à jour avec succès.');
+      setIsEditProfileModalOpen(false);
+    } catch (err: any) {
+      triggerErrorFeedback();
+      setProfileError(err?.message || 'Erreur lors de la mise à jour des informations.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   const handleChangePinSubmit = async () => {
     setPinError(null);
@@ -106,9 +160,51 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <Header title="Mon Profil" subtitle="Informations du compte & sécurité" />
+      <Header
+        title="Mon Profil"
+        subtitle="Informations du compte & sécurité"
+        showBack={true}
+        showProfile={false}
+        showScanner={false}
+        fallbackBackRoute="/(tabs)"
+      />
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Supervisor Card for Admin */}
+        {(isImpersonating || userRole === 'ADMIN') && (
+          <View style={styles.supervisorCard}>
+            <View style={styles.supervisorHeader}>
+              <View style={styles.supervisorIconBox}>
+                <Icon name="crown" size={18} color="#B45309" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.supervisorTitle}>MODE SUPERVISEUR ACTIF</Text>
+                <Text style={styles.supervisorSub}>
+                  Vous gérez l'espace de {activeCollector?.fullName || 'Gestionnaire'}.
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={async () => {
+                triggerMediumImpact();
+                await exitImpersonation();
+                router.replace('/admin' as any);
+              }}
+              style={styles.supervisorReturnBtn}
+            >
+              <Icon name="arrow-left" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+              <Text style={styles.supervisorReturnBtnText}>Quitter & Retourner au Dashboard Admin</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Profile Card */}
         <View style={styles.profileCard}>
           <View style={styles.avatarCircle}>
@@ -116,11 +212,32 @@ export default function ProfileScreen() {
           </View>
           <Text style={styles.profileName}>{activeCollector?.fullName || 'Responsable SOL'}</Text>
           <Text style={styles.profilePhone}>{activeCollector?.phoneNumber || '+509 XX XX XXXX'}</Text>
+          {activeCollector?.zone ? (
+            <Text style={styles.profileZone}>
+              Zone : <Text style={styles.profileZoneBold}>{activeCollector.zone}</Text>
+            </Text>
+          ) : null}
           <View style={styles.roleBadge}>
             <Text style={styles.roleBadgeText}>
               {userRole === 'ADMIN' ? 'ADMINISTRATEUR' : 'RESPONSABLE DU SOL'}
             </Text>
           </View>
+
+          {/* Edit Profile Info Button */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => {
+              setEditFullName(activeCollector?.fullName || '');
+              setEditPhoneNumber(activeCollector?.phoneNumber || '');
+              setEditZone(activeCollector?.zone || '');
+              setProfileError(null);
+              setIsEditProfileModalOpen(true);
+            }}
+            style={styles.editProfileBtn}
+          >
+            <Icon name="user" size={14} color="#1D4ED8" style={{ marginRight: 6 }} />
+            <Text style={styles.editProfileBtnText}>Modifier mes informations</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Business Activity Details */}
@@ -183,6 +300,30 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Cycle Management (Danger Zone) */}
+        {(userRole === 'MANAGER' || userRole === 'ADMIN') && (
+          <View style={styles.dangerZoneCard}>
+            <View style={styles.sectionHeader}>
+              <Icon name="alert" size={16} color={SOL_COLORS.danger} />
+              <Text style={[styles.sectionTitle, { color: SOL_COLORS.danger }]}>ZONE SENSIBLE</Text>
+            </View>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => router.push('/cycle-management' as any)}
+              style={styles.cycleManagementBtn}
+            >
+              <View style={styles.menuItemLeft}>
+                <Icon name="sync" size={18} color={SOL_COLORS.danger} />
+                <View style={{ marginLeft: 10 }}>
+                  <Text style={styles.cycleManagementBtnText}>Clôturer & Rouvrir le Cycle</Text>
+                  <Text style={styles.cycleManagementBtnSub}>Renouvellement ou remise à zéro du SOL</Text>
+                </View>
+              </View>
+              <Icon name="arrow-right" size={14} color={SOL_COLORS.danger} />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Logout Button */}
         <TouchableOpacity
           activeOpacity={0.8}
@@ -202,7 +343,7 @@ export default function ProfileScreen() {
         onRequestClose={() => setIsChangePinModalOpen(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { maxWidth: Math.min(420, width - 32) }]}>
             <View style={styles.modalHeaderRow}>
               <Text style={styles.modalTitle}>Modifier mon Code PIN</Text>
               <TouchableOpacity
@@ -279,6 +420,85 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Edit Profile Modal */}
+      <Modal
+        visible={isEditProfileModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsEditProfileModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxWidth: Math.min(420, width - 32) }]}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Modifier mes informations</Text>
+              <TouchableOpacity
+                onPress={() => setIsEditProfileModalOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Fermer"
+              >
+                <Icon name="close" size={20} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalSub}>
+              Mettez à jour vos données personnelles. Elles seront prises en compte immédiatement sur l'application.
+            </Text>
+
+            {profileError && <Text style={styles.errorText}>{profileError}</Text>}
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>NOM COMPLET</Text>
+              <TextInput
+                style={[styles.textInput, { textAlign: 'left' }]}
+                placeholder="Ex: Jean Baptiste"
+                placeholderTextColor="#94A3B8"
+                value={editFullName}
+                onChangeText={setEditFullName}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>NUMÉRO DE TÉLÉPHONE</Text>
+              <TextInput
+                style={[styles.textInput, { textAlign: 'left' }]}
+                keyboardType="phone-pad"
+                placeholder="+509 XXXX XXXX"
+                placeholderTextColor="#94A3B8"
+                value={editPhoneNumber}
+                onChangeText={setEditPhoneNumber}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>ZONE D'ACTIVITÉ / MARCHÉ (OPTIONNEL)</Text>
+              <TextInput
+                style={[styles.textInput, { textAlign: 'left' }]}
+                placeholder="Ex: Marché Salomon, Pétion-Ville..."
+                placeholderTextColor="#94A3B8"
+                value={editZone}
+                onChangeText={setEditZone}
+              />
+            </View>
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                onPress={() => setIsEditProfileModalOpen(false)}
+                style={styles.modalCancelBtn}
+              >
+                <Text style={styles.modalCancelBtnText}>Annuler</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleSaveProfileSubmit}
+                disabled={isSavingProfile}
+                style={styles.modalSaveBtn}
+              >
+                <Text style={styles.modalSaveBtnText}>{isSavingProfile ? 'Enregistrement...' : 'Enregistrer'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -321,6 +541,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 2,
   },
+  profileZone: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  profileZoneBold: {
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+  },
   roleBadge: {
     backgroundColor: '#EFF6FF',
     paddingHorizontal: 10,
@@ -333,6 +563,23 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#1D4ED8',
     letterSpacing: 0.5,
+  },
+  editProfileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  editProfileBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#1D4ED8',
   },
   sectionCard: {
     backgroundColor: '#FFFFFF',
@@ -394,6 +641,31 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: SOL_COLORS.textPrimary,
+  },
+  dangerZoneCard: {
+    backgroundColor: '#FFF1F2',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#FECDD3',
+    marginBottom: 14,
+  },
+  cycleManagementBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  cycleManagementBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: SOL_COLORS.dangerDark,
+  },
+  cycleManagementBtnSub: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: SOL_COLORS.danger,
+    marginTop: 1,
   },
   logoutBtn: {
     flexDirection: 'row',
@@ -503,5 +775,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: '#FFFFFF',
+  },
+  supervisorCard: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+  },
+  supervisorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  supervisorIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FDE68A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  supervisorTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#92400E',
+    letterSpacing: 0.5,
+  },
+  supervisorSub: {
+    fontSize: 12,
+    color: '#78350F',
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  supervisorReturnBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#B45309',
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  supervisorReturnBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

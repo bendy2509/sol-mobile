@@ -222,6 +222,34 @@ class SyncEngine {
         }
       }
 
+      // 3.5. Push Pending Client Deletions to Supabase
+      try {
+        const pendingDeletions = await db.getAllAsync<{ id: string; qr_code_token?: string }>(
+          `SELECT id, qr_code_token FROM deleted_clients WHERE sync_status = 'PENDING'`
+        );
+        for (const del of pendingDeletions) {
+          try {
+            await supabase.from('transactions').delete().eq('client_id', del.id);
+            try {
+              await supabase.from('sol_group_members').delete().eq('client_id', del.id);
+            } catch {}
+            let delError;
+            if (del.qr_code_token) {
+              const res = await supabase.from('clients').delete().or(`id.eq.${del.id},qr_code_token.eq.${del.qr_code_token}`);
+              delError = res.error;
+            } else {
+              const res = await supabase.from('clients').delete().eq('id', del.id);
+              delError = res.error;
+            }
+            if (!delError) {
+              await db.runAsync(`UPDATE deleted_clients SET sync_status = 'SYNCED' WHERE id = ?`, [del.id]);
+            }
+          } catch {}
+        }
+      } catch (delSyncErr) {
+        console.warn('Deleted clients sync notice:', delSyncErr);
+      }
+
       // 4. Push Pending Clients (Reconcile by qr_code_token)
       const pendingClients = await db.getAllAsync<{
         id: string;
@@ -329,6 +357,13 @@ class SyncEngine {
 
       // 6. Pull Remote Clients
       try {
+        const deletedRows = await db.getAllAsync<{ id: string; qr_code_token?: string; phone_number?: string }>(
+          `SELECT id, qr_code_token, phone_number FROM deleted_clients`
+        );
+        const deletedIdsSet = new Set((deletedRows || []).map((d) => d.id).filter(Boolean));
+        const deletedTokensSet = new Set((deletedRows || []).map((d) => d.qr_code_token).filter(Boolean));
+        const deletedPhonesSet = new Set((deletedRows || []).map((d) => d.phone_number).filter(Boolean));
+
         const { data: remoteClients } = await supabase
           .from('clients')
           .select('*')
@@ -337,6 +372,24 @@ class SyncEngine {
 
         if (remoteClients && remoteClients.length > 0) {
           for (const rc of remoteClients) {
+            // Never re-insert a client that was deleted locally!
+            const isDeleted =
+              deletedIdsSet.has(rc.id) ||
+              (rc.qr_code_token && deletedTokensSet.has(rc.qr_code_token)) ||
+              (rc.phone_number && deletedPhonesSet.has(rc.phone_number));
+
+            if (isDeleted) {
+              try {
+                await supabase.from('transactions').delete().eq('client_id', rc.id);
+                if (rc.qr_code_token) {
+                  await supabase.from('clients').delete().or(`id.eq.${rc.id},qr_code_token.eq.${rc.qr_code_token}`);
+                } else {
+                  await supabase.from('clients').delete().eq('id', rc.id);
+                }
+              } catch {}
+              continue;
+            }
+
             // Merge remote client with any existing local fields to avoid overwriting local hands_count/received_hands_count/payout_ranks
             try {
               const existingLocal = await db.getFirstAsync<{ hands_count?: number; payout_ranks?: string; received_hands_count?: number }>(

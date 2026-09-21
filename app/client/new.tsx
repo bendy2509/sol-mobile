@@ -27,12 +27,16 @@ import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { recordAuditLog } from '@/services/auditService';
+import { safeBack } from '@/lib/navigation';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function NewClientScreen() {
   const router = useRouter();
   const { activeCollector, userRole } = useAuth();
   const { triggerSync } = useSync();
+  const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
@@ -197,10 +201,10 @@ export default function NewClientScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Top Header with Back Navigation */}
-      <View style={styles.topHeader}>
+      <View style={[styles.topHeader, isTablet && styles.topHeaderTablet]}>
         <TouchableOpacity
           activeOpacity={0.7}
-          onPress={() => router.back()}
+          onPress={() => safeBack(router)}
           style={styles.backBtn}
         >
           <Icon name="arrow-left" size={18} color={SOL_COLORS.textPrimary} />
@@ -219,7 +223,11 @@ export default function NewClientScreen() {
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingHorizontal: horizontalPadding },
+            isTablet && styles.scrollContentTablet,
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
@@ -232,7 +240,7 @@ export default function NewClientScreen() {
                 </Text>
               </View>
               <View style={styles.previewInfo}>
-                <Text style={styles.previewName} numberOfLines={1}>
+                <Text style={styles.previewName} numberOfLines={1} adjustsFontSizeToFit>
                   {fullName.trim() || "Nom de l'Adhérent"}
                 </Text>
                 <Text style={styles.previewPhone}>
@@ -247,34 +255,28 @@ export default function NewClientScreen() {
               </View>
             </View>
 
-            {/* Financial Grid Info */}
+            {/* Financial Grid Info (Real-Time Feedback) */}
             <View style={styles.financialStatsRow}>
               <View style={styles.statItem}>
-                <Text style={styles.statLabel}>VALEUR D'UNE MAIN</Text>
-                <Text style={styles.statValueGreen}>{formatCurrency(unitAmount)}</Text>
+                <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit>COTISATION (1 MAIN)</Text>
+                <Text style={styles.statValuePrimary} numberOfLines={1} adjustsFontSizeToFit>{formatCurrency(unitAmount)}</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statItem}>
-                <Text style={styles.statLabel}>TOTAL DU CYCLE</Text>
-                <Text style={styles.statValuePrimary}>
-                  {totalCycleHands} {totalCycleHands > 1 ? 'mains' : 'main'} ({existingTotalCycleHands} + {handsCount})
+                <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit>TIRAGES PRÉVUS</Text>
+                <Text style={styles.statValueGreen} numberOfLines={1} adjustsFontSizeToFit>
+                  {handsCount} {handsCount > 1 ? 'tirages' : 'tirage'} de {formatCurrency(totalPotAmount)}
                 </Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statItem}>
-                <Text style={styles.statLabel}>CAGNOTTE / MAIN</Text>
-                <Text style={styles.statValueGreen}>{formatCurrency(totalPotAmount)}</Text>
               </View>
             </View>
 
-            {handsCount > 1 && (
-              <View style={styles.multiHandsPreviewPill}>
-                <Icon name="crown" size={13} color="#D97706" style={{ marginRight: 6 }} />
-                <Text style={styles.multiHandsPreviewPillText}>
-                  {handsCount} mains (Rangs : #{multiRanks}) • Total dû : {formatCurrency(memberTotalDue)} • Droit à {handsCount} tirages de {formatCurrency(totalPotAmount)}
-                </Text>
-              </View>
-            )}
+            {/* Projection Temps Réel */}
+            <View style={styles.projectionBox}>
+              <Icon name="alert" size={14} color="#0D9488" style={{ marginTop: 2, marginRight: 8 }} />
+              <Text style={styles.projectionText}>
+                <Text style={{ fontWeight: '800' }}>Impact SOL :</Text> En prenant {handsCount} main{handsCount > 1 ? 's' : ''}, la cagnotte globale s'ajuste pour tout le monde à <Text style={{ fontWeight: '800' }}>{formatCurrency(totalPotAmount)}</Text> (basée sur le nouvel effectif de {totalCycleHands} mains). Cet adhérent paiera <Text style={{ fontWeight: '800' }}>{formatCurrency(memberTotalDue)} au total</Text> sur la durée du cycle.
+              </Text>
+            </View>
           </View>
 
           {/* Form Card */}
@@ -353,8 +355,12 @@ export default function NewClientScreen() {
                       }}
                       style={[styles.handsQuickBtn, isSelected && styles.handsQuickBtnActive]}
                     >
-                      <Text style={[styles.handsQuickBtnText, isSelected && styles.handsQuickBtnTextActive]}>
-                        {num === 1 ? '1 Main (1 Part)' : `${num} Mains`}
+                      <Text
+                        style={[styles.handsQuickBtnText, isSelected && styles.handsQuickBtnTextActive]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                      >
+                        {num === 1 ? (isSmallScreen ? '1 Main' : '1 Main (1 Part)') : `${num} Mains`}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -502,9 +508,19 @@ export default function NewClientScreen() {
       <PinVerificationModal
         visible={isPinModalOpen}
         title="Validation de l'Inscription"
-        subtitle={`Saisissez votre code PIN gestionnaire pour confirmer l'ajout de ${fullName.trim()} (Main #${assignedRank}).`}
+        subtitle={`Saisissez votre code PIN gestionnaire pour confirmer l'ajout de ${fullName.trim() || 'un adhérent'} (Main #${assignedRank}).`}
         onSuccess={executeSaveClient}
         onCancel={() => setIsPinModalOpen(false)}
+        onLockout={() => {
+          recordAuditLog({
+            action: 'LOGIN_FAILURE',
+            entityType: 'SYSTEM',
+            entityId: 'unknown',
+            reason: `3 tentatives PIN échouées lors de la création du profil "${fullName.trim()}".`,
+            userId: activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001',
+            userRole: 'MANAGER',
+          });
+        }}
       />
     </SafeAreaView>
   );
@@ -525,6 +541,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: SOL_COLORS.border,
     ...SHADOWS.sm,
+  },
+  topHeaderTablet: {
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   backBtn: {
     width: 40,
@@ -553,6 +574,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 40,
+  },
+  scrollContentTablet: {
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   previewHeroCard: {
     backgroundColor: SOL_COLORS.secondary,
@@ -635,9 +661,26 @@ const styles = StyleSheet.create({
   multiHandsPreviewPillText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#FDE68A',
+    color: '#92400E',
     flex: 1,
     lineHeight: 14,
+  },
+  projectionBox: {
+    flexDirection: 'row',
+    backgroundColor: '#F0FDFA',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+    marginTop: 10,
+    alignItems: 'flex-start',
+  },
+  projectionText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#0F766E',
+    fontWeight: '500',
   },
   statItem: {
     flex: 1,

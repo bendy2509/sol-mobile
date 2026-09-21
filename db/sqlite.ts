@@ -26,6 +26,7 @@ interface WebTableStore {
   cash_closures: any[];
   audit_logs: any[];
   sync_logs: any[];
+  deleted_clients: any[];
 }
 
 class WebSQLiteAdapter {
@@ -39,6 +40,7 @@ class WebSQLiteAdapter {
     cash_closures: [],
     audit_logs: [],
     sync_logs: [],
+    deleted_clients: [],
   };
 
   async init() {
@@ -51,6 +53,9 @@ class WebSQLiteAdapter {
             if (!c.hands_count || c.hands_count < 1) c.hands_count = 1;
             if (c.received_hands_count === undefined || c.received_hands_count === null) c.received_hands_count = 0;
           });
+        }
+        if (!Array.isArray(this.data.deleted_clients)) {
+          this.data.deleted_clients = [];
         }
       }
     } catch {}
@@ -205,6 +210,21 @@ class WebSQLiteAdapter {
           attempts_count: Number(attempts_count || 0), last_error: last_error || null,
           created_at, synced_at: synced_at || null
         });
+      } else if (tableName === 'deleted_clients') {
+        let id: string, qr_code_token: string | null = null, phone_number: string | null = null, collector_id: string, deleted_at: string, sync_status = 'PENDING';
+        if (params.length >= 6) {
+          [id, qr_code_token, phone_number, collector_id, deleted_at, sync_status] = params;
+        } else {
+          [id, collector_id, deleted_at, sync_status] = params;
+        }
+        if (!Array.isArray(this.data.deleted_clients)) this.data.deleted_clients = [];
+        const existingIdx = this.data.deleted_clients.findIndex((d) => d.id === id || (qr_code_token && d.qr_code_token === qr_code_token));
+        const entry = { id, qr_code_token, phone_number, collector_id, deleted_at, sync_status: sync_status || 'PENDING' };
+        if (existingIdx >= 0) {
+          this.data.deleted_clients[existingIdx] = entry;
+        } else {
+          this.data.deleted_clients.unshift(entry);
+        }
       }
       await this.persist();
       return { lastInsertRowId: 1, changes: 1 };
@@ -308,6 +328,9 @@ class WebSQLiteAdapter {
             } else if (whereUpper.includes('BUSINESS_ID = ?')) {
               const bId = params[paramIdx++];
               this.data[tableName] = tableData.filter((item: any) => item.business_id !== bId) as any;
+            } else if (whereUpper.includes('CLIENT_ID = ?')) {
+              const cId = params[paramIdx++];
+              this.data[tableName] = tableData.filter((item: any) => item.client_id !== cId) as any;
             } else if (whereUpper.includes('ID = ?')) {
               const targetId = params[paramIdx++];
               this.data[tableName] = tableData.filter((item: any) => item.id !== targetId) as any;
@@ -414,6 +437,11 @@ class WebSQLiteAdapter {
         return [{ count: filtered.length }] as any;
       }
       let result = [...this.data.clients];
+      if (!Array.isArray(this.data.deleted_clients)) this.data.deleted_clients = [];
+      const deletedIds = new Set(this.data.deleted_clients.map((d: any) => d.id));
+      const deletedTokens = new Set(this.data.deleted_clients.map((d: any) => d.qr_code_token).filter(Boolean));
+      result = result.filter((c) => !deletedIds.has(c.id) && (!c.qr_code_token || !deletedTokens.has(c.qr_code_token)));
+
       if (cleanSql.includes('WHERE id = ?')) {
         result = result.filter((c) => c.id === params[0]);
       } else if (cleanSql.includes('WHERE collector_id = ?')) {
@@ -495,6 +523,15 @@ class WebSQLiteAdapter {
         logs = logs.filter((l) => l.status === params[0]);
       }
       return logs as any;
+    }
+
+    if (upperSql.includes('FROM DELETED_CLIENTS')) {
+      if (!Array.isArray(this.data.deleted_clients)) this.data.deleted_clients = [];
+      let list = [...this.data.deleted_clients];
+      if (cleanSql.includes("WHERE sync_status = 'PENDING'")) {
+        list = list.filter((d) => d.sync_status === 'PENDING');
+      }
+      return list as any;
     }
 
     return [] as any;
@@ -600,6 +637,10 @@ async function runMigrations(db: UniversalSQLiteDatabase): Promise<void> {
 
     // 4. Business configs migrations
     await safeAddColumn(db, 'business_configs', 'cycle_status', "cycle_status TEXT DEFAULT 'ACTIVE'");
+
+    // 5. Deleted clients migrations
+    await safeAddColumn(db, 'deleted_clients', 'qr_code_token', 'qr_code_token TEXT');
+    await safeAddColumn(db, 'deleted_clients', 'phone_number', 'phone_number TEXT');
   } catch (migrationErr) {
     console.warn('SQLite migration notice:', migrationErr);
   }
@@ -748,6 +789,15 @@ async function initDatabaseInternal(db: any): Promise<void> {
       last_error TEXT,
       created_at TEXT NOT NULL,
       synced_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS deleted_clients (
+      id TEXT PRIMARY KEY,
+      qr_code_token TEXT,
+      phone_number TEXT,
+      collector_id TEXT,
+      deleted_at TEXT NOT NULL,
+      sync_status TEXT DEFAULT 'PENDING'
     );
   `);
 

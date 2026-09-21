@@ -17,6 +17,7 @@ import { Icon } from '@/components/Icon';
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 interface DiagnosticState {
   isHealthy: boolean;
@@ -28,6 +29,7 @@ interface DiagnosticState {
 }
 
 export default function BackupDiagnosticsScreen() {
+  const { contentMaxWidth, horizontalPadding } = useResponsive();
   const [loading, setLoading] = useState(true);
   const [diagnostics, setDiagnostics] = useState<DiagnosticState | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -130,9 +132,18 @@ export default function BackupDiagnosticsScreen() {
         title="Diagnostic & Sauvegarde"
         subtitle="Contrôle d’intégrité locale et sécurité des écritures"
         showBack
+        showProfile={false}
+        showScanner={false}
+        fallbackBackRoute="/(tabs)"
       />
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Statut de Santé Global */}
         <View style={[styles.statusCard, diagnostics?.isHealthy ? styles.statusCardOk : styles.statusCardError]}>
           <View style={styles.statusIconWrap}>

@@ -14,7 +14,7 @@ import {
   updateCollectorStatus,
 } from '@/db/sqlite';
 import { getActiveBusinessConfig, saveBusinessConfig } from '@/db/businessRepository';
-import { triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
+import { triggerErrorFeedback, triggerSuccessFeedback, triggerLightImpact } from '@/lib/haptics';
 import { arePhoneNumbersEqual, normalizePhoneNumber } from '@/lib/phoneUtils';
 import { hashPin, verifyPinHash, isBcryptHash } from '@/lib/crypto';
 import { recordAuditLog } from '@/services/auditService';
@@ -52,6 +52,10 @@ interface AuthContextType {
   approveAccount: (collectorId?: string) => Promise<void>;
   getAllManagers: () => Promise<Collector[]>;
   getAllBusinesses: () => Promise<BusinessConfig[]>;
+  isImpersonating: boolean;
+  impersonatedCollector: Collector | null;
+  impersonateManager: (collector: Collector, business: BusinessConfig) => Promise<void>;
+  exitImpersonation: () => Promise<void>;
   switchRole: (role: UserRole) => void;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
@@ -138,6 +142,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isPendingApproval, setIsPendingApproval] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isImpersonating, setIsImpersonating] = useState<boolean>(false);
+  const [impersonatedCollector, setImpersonatedCollector] = useState<Collector | null>(null);
 
   const touchSession = useCallback(async () => {
     await recordUserActivity();
@@ -173,6 +179,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (storedRole) {
         setUserRole(storedRole);
       }
+
+      const impersonatingFlag = await AsyncStorage.getItem('SOL_IS_IMPERSONATING');
+      setIsImpersonating(impersonatingFlag === 'true');
 
       // Check session expiration
       if (loggedInFlag === 'true') {
@@ -711,9 +720,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUserRole(role);
   };
 
+  const impersonateManager = async (collector: Collector, business: BusinessConfig) => {
+    await AsyncStorage.setItem('SOL_IS_IMPERSONATING', 'true');
+    await setActiveCollectorId(collector.id);
+    await setActiveBusinessId(business.id);
+    setIsImpersonating(true);
+    setImpersonatedCollector(collector);
+    await refreshSession();
+    triggerSuccessFeedback();
+  };
+
+  const exitImpersonation = async () => {
+    await AsyncStorage.removeItem('SOL_IS_IMPERSONATING');
+    setIsImpersonating(false);
+    setImpersonatedCollector(null);
+    await AsyncStorage.setItem('SOL_USER_ROLE', 'ADMIN');
+    setUserRole('ADMIN');
+    await refreshSession();
+    triggerLightImpact();
+  };
+
   const logout = async () => {
     await AsyncStorage.removeItem('SOL_IS_LOGGED_IN');
     await AsyncStorage.removeItem('SOL_LAST_ACTIVITY_TIME');
+    await AsyncStorage.removeItem('SOL_IS_IMPERSONATING');
+    setIsImpersonating(false);
+    setImpersonatedCollector(null);
     setIsAuthenticated(false);
     setIsPendingApproval(false);
     setUserRole('MANAGER');
@@ -739,6 +771,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         approveAccount,
         getAllManagers,
         getAllBusinesses,
+        isImpersonating,
+        impersonatedCollector,
+        impersonateManager,
+        exitImpersonation,
         switchRole,
         logout,
         refreshSession,

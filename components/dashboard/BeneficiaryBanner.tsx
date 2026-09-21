@@ -4,6 +4,7 @@ import { Member } from '@/types';
 import { Icon } from '@/components/Icon';
 import { formatCurrency, getInitials } from '@/lib/formatters';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 interface BeneficiaryBannerProps {
   beneficiary: Member;
@@ -16,35 +17,50 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({
   potAmount,
   onPayout,
 }) => {
+  const { isSmallScreen, isVerySmallScreen } = useResponsive();
+
   return (
-    <View style={styles.banner}>
+    <View style={[styles.banner, isSmallScreen && { padding: 10 }]}>
       <View style={styles.bannerHeader}>
         <View style={styles.bannerBadgePill}>
           <Icon name="crown" size={13} color="#D97706" style={{ marginRight: 4 }} />
-          <Text style={styles.bannerTitle}>PROCHAIN BÉNÉFICIAIRE DE LA MAIN</Text>
+          <Text style={styles.bannerTitle} numberOfLines={1} adjustsFontSizeToFit>
+            PROCHAIN BÉNÉFICIAIRE DE LA MAIN
+          </Text>
         </View>
-        <Text style={styles.bannerAmountPill}>{formatCurrency(potAmount)}</Text>
+        <Text style={styles.bannerAmountPill} numberOfLines={1} adjustsFontSizeToFit>
+          {formatCurrency(potAmount)}
+        </Text>
       </View>
-      <View style={styles.bannerBody}>
-        <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>{getInitials(beneficiary.fullName)}</Text>
+      <View style={[styles.bannerBody, isVerySmallScreen && styles.bannerBodyStacked]}>
+        <View style={styles.bannerLeftSection}>
+          <View style={[styles.avatarCircle, isSmallScreen && styles.avatarCircleSmall]}>
+            <Text style={[styles.avatarText, isSmallScreen && { fontSize: 14 }]}>
+              {getInitials(beneficiary.fullName)}
+            </Text>
+          </View>
+          <View style={styles.bannerInfo}>
+            <Text style={styles.beneficiaryName} numberOfLines={1} adjustsFontSizeToFit>
+              {beneficiary.fullName}
+            </Text>
+            <Text style={styles.beneficiarySub} numberOfLines={2} adjustsFontSizeToFit>
+              {beneficiary.handsCount && beneficiary.handsCount > 1
+                ? `${beneficiary.handsCount} mains souscrites • Rangs #${beneficiary.payoutRanks || beneficiary.payoutRank} • Main ${(beneficiary.receivedHandsCount || 0) + 1}/${beneficiary.handsCount}`
+                : `Main #${beneficiary.rankOrder || 1}`} • Cagnotte : {formatCurrency(potAmount)}
+            </Text>
+          </View>
         </View>
-        <View style={styles.bannerInfo}>
-          <Text style={styles.beneficiaryName} numberOfLines={1}>
-            {beneficiary.fullName}
-          </Text>
-          <Text style={styles.beneficiarySub}>
-            {beneficiary.handsCount && beneficiary.handsCount > 1
-              ? `${beneficiary.handsCount} mains souscrites • Rangs #${beneficiary.payoutRanks || beneficiary.payoutRank} • Main ${(beneficiary.receivedHandsCount || 0) + 1}/${beneficiary.handsCount}`
-              : `Main #${beneficiary.rankOrder || 1}`} • Cagnotte : {formatCurrency(potAmount)}
-          </Text>
-        </View>
+
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={() => onPayout(beneficiary)}
-          style={styles.payoutBtn}
+          style={[
+            styles.payoutBtn,
+            isSmallScreen && styles.payoutBtnSmall,
+            isVerySmallScreen && styles.payoutBtnFullWidth,
+          ]}
         >
-          <Text style={styles.payoutBtnText}>
+          <Text style={styles.payoutBtnText} numberOfLines={1} adjustsFontSizeToFit>
             {beneficiary.handsCount && beneficiary.handsCount > 1
               ? `Décaisser (${(beneficiary.receivedHandsCount || 0) + 1}/${beneficiary.handsCount})`
               : 'Décaisser'}
@@ -70,12 +86,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 10,
+    gap: 8,
   },
   bannerBadgePill: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginRight: 8,
   },
   bannerTitle: {
     fontSize: 10,
@@ -96,15 +112,32 @@ const styles = StyleSheet.create({
   bannerBody: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  bannerBodyStacked: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  bannerLeftSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
   avatarCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#D97706',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
+  },
+  avatarCircleSmall: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    marginRight: 8,
   },
   avatarText: {
     fontSize: 16,
@@ -128,11 +161,20 @@ const styles = StyleSheet.create({
   payoutBtn: {
     backgroundColor: '#D97706',
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderRadius: 12,
-    minHeight: 48,
+    minHeight: 44,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  payoutBtnSmall: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minHeight: 38,
+  },
+  payoutBtnFullWidth: {
+    width: '100%',
+    marginTop: 8,
   },
   payoutBtnText: {
     color: '#FFFFFF',
@@ -140,4 +182,3 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
-

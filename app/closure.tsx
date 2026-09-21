@@ -22,9 +22,14 @@ import { CashClosure, DashboardStats } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
+import { useAuth } from '@/context/AuthContext';
+import { generateCashClosureReceiptPdf, sharePdfFile } from '@/services/pdfService';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function CashClosureScreen() {
   const router = useRouter();
+  const { activeCollector, activeBusiness } = useAuth();
+  const { isTablet, horizontalPadding } = useResponsive();
 
   const [todayStats, setTodayStats] = useState<DashboardStats>({
     totalCollectedToday: 0,
@@ -40,6 +45,7 @@ export default function CashClosureScreen() {
   const [closureHistory, setClosureHistory] = useState<CashClosure[]>([]);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -63,6 +69,33 @@ export default function CashClosureScreen() {
   const numDeclared = parseFloat(declaredCash) || 0;
   const discrepancy = numDeclared - theoreticalBalance;
   const hasDiscrepancy = Math.abs(discrepancy) > 0.01;
+
+  const handleShareClosurePdf = async (closure: CashClosure) => {
+    setIsExportingPdf(true);
+    try {
+      const diff = closure.totalCashDeclared - closure.totalSystemCalculated;
+      const pdfUri = await generateCashClosureReceiptPdf({
+        closureId: closure.id,
+        businessName: activeBusiness?.name,
+        collectorName: activeCollector?.fullName || 'Gestionnaire Caisse',
+        collectorPhone: activeCollector?.phoneNumber || '',
+        collectorZone: activeCollector?.zone,
+        closureDate: closure.closureDate,
+        totalCashDeclared: closure.totalCashDeclared,
+        totalSystemCalculated: closure.totalSystemCalculated,
+        discrepancy: diff,
+        discrepancyReason: closure.discrepancyReason,
+        status: closure.status,
+        generatedAt: closure.createdAt || new Date().toISOString(),
+      });
+      await sharePdfFile(pdfUri, `Bordereau Clôture - ${closure.closureDate}`);
+    } catch (err: any) {
+      console.error('Failed to generate closure PDF:', err);
+      Alert.alert('Erreur', 'Impossible de générer le bordereau PDF.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
 
   const handleOpenPinValidation = () => {
     if (isNaN(numDeclared) || numDeclared < 0) {
@@ -88,7 +121,7 @@ export default function CashClosureScreen() {
     setIsSubmitting(true);
 
     try {
-      await createCashClosure({
+      const createdClosure = await createCashClosure({
         totalCashDeclared: numDeclared,
         discrepancyReason: hasDiscrepancy ? discrepancyNote.trim() : undefined,
       });
@@ -96,7 +129,14 @@ export default function CashClosureScreen() {
       triggerSuccessFeedback();
       Alert.alert(
         'Clôture Enregistrée avec Succès !',
-        `La journée a été clôturée avec un solde physique déclaré de ${formatCurrency(numDeclared)}.`
+        `La journée a été clôturée avec un solde physique déclaré de ${formatCurrency(numDeclared)}.`,
+        [
+          { text: 'OK', style: 'default' },
+          {
+            text: '📄 Bordereau PDF',
+            onPress: () => handleShareClosurePdf(createdClosure),
+          },
+        ]
       );
       setDiscrepancyNote('');
       loadData();
@@ -112,6 +152,10 @@ export default function CashClosureScreen() {
       <Header
         title="Clôture Journalière"
         subtitle="Arrêté de caisse & contrôle des espèces"
+        showBack={true}
+        showProfile={false}
+        showScanner={false}
+        fallbackBackRoute="/(tabs)"
       />
 
       <KeyboardAvoidingView
@@ -119,7 +163,11 @@ export default function CashClosureScreen() {
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingHorizontal: horizontalPadding },
+            isTablet && styles.scrollContentTablet,
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
@@ -245,8 +293,18 @@ export default function CashClosureScreen() {
                     <Text style={styles.historyDate}>
                       Clôture du {formatDateShort(item.closureDate)}
                     </Text>
-                    <View style={styles.historyBadge}>
-                      <Text style={styles.historyBadgeText}>{item.status}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <View style={styles.historyBadge}>
+                        <Text style={styles.historyBadgeText}>{item.status}</Text>
+                      </View>
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={() => handleShareClosurePdf(item)}
+                        style={styles.pdfBadgeBtn}
+                      >
+                        <Icon name="print" size={12} color="#1D4ED8" />
+                        <Text style={styles.pdfBadgeText}>Bordereau PDF</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
 
@@ -296,6 +354,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 40,
+  },
+  scrollContentTablet: {
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   summaryCard: {
     backgroundColor: '#FFFFFF',
@@ -489,6 +552,22 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     color: '#047857',
+  },
+  pdfBadgeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  pdfBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#1D4ED8',
   },
   historyDetailRow: {
     flexDirection: 'row',

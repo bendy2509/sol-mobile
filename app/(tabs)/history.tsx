@@ -31,10 +31,12 @@ import { Transaction, TransactionType } from '@/types';
 import { formatCurrency, formatDate } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function HistoryScreen() {
   const { userRole, activeCollector, getAdminProfile } = useAuth();
   const { triggerSync } = useSync();
+  const { width, isSmallScreen, isTablet, horizontalPadding } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
   const isAdmin = userRole === 'ADMIN';
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -271,7 +273,7 @@ Reçu certifié et archivé avec succès. Merci !`;
             </View>
 
             <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.clientName}>{item.clientName || 'Adhérent SOL'}</Text>
+              <Text style={styles.clientName} numberOfLines={1} adjustsFontSizeToFit>{item.clientName || 'Adhérent SOL'}</Text>
               <Text style={styles.txTypeLabel}>{getTransactionTypeLabel(item.type)}</Text>
               <Text style={styles.txDate}>{formatDate(item.createdAtLocal)}</Text>
             </View>
@@ -407,7 +409,11 @@ Reçu certifié et archivé avec succès. Merci !`;
         maxToRenderPerBatch={15}
         windowSize={7}
         removeClippedSubviews={true}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingHorizontal: horizontalPadding },
+          isTablet && styles.listContentTablet,
+        ]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -434,7 +440,7 @@ Reçu certifié et archivé avec succès. Merci !`;
         onRequestClose={() => setIsDetailModalOpen(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { maxWidth: Math.min(420, width - 32) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Détail de l'Opération</Text>
               <TouchableOpacity onPress={() => setIsDetailModalOpen(false)}>
@@ -669,6 +675,11 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 80,
+  },
+  listContentTablet: {
+    maxWidth: 768,
+    width: '100%',
+    alignSelf: 'center',
   },
   txCard: {
     flexDirection: 'row',

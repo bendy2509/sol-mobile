@@ -38,12 +38,14 @@ import {
   calculateHandsCovered,
 } from '@/services/financialService';
 import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfService';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function CollectScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ clientId?: string }>();
   const { activeCollector, userRole } = useAuth();
   const { triggerSync } = useSync();
+  const { isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding, width } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
@@ -90,12 +92,16 @@ export default function CollectScreen() {
 
       const targetId = params.clientId || selectedClient?.id;
       if (targetId) {
-        const found = list.find((c) => c.id === targetId) || (await getClientById(targetId));
+        const found = list.find((c) => c.id === targetId);
         if (found) {
           setSelectedClient(found);
+        } else {
+          setSelectedClient(list.length > 0 ? list[0] : null);
         }
       } else if (list.length > 0 && !selectedClient) {
         setSelectedClient(list[0]);
+      } else if (list.length === 0) {
+        setSelectedClient(null);
       }
     } catch (err) {
       console.warn('Error loading collect data:', err);
@@ -312,8 +318,13 @@ export default function CollectScreen() {
       />
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingHorizontal: horizontalPadding },
+          isTablet && styles.scrollContentTablet,
+        ]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Top Info Banner */}
         {business && (
@@ -442,7 +453,7 @@ export default function CollectScreen() {
               <Text style={styles.stepperBtnSymbol}>−</Text>
             </TouchableOpacity>
 
-            <View style={styles.stepperDisplay}>
+            <View style={[styles.stepperDisplay, isSmallScreen && { paddingHorizontal: 12 }]}>
               <Text style={styles.stepperValueText}>{handsCount}</Text>
               <Text style={styles.stepperSubText}>main{handsCount > 1 ? 's' : ''}</Text>
             </View>
@@ -472,6 +483,7 @@ export default function CollectScreen() {
                   disabled={isExceeding || limits.isCycleCompleted}
                   style={[
                     styles.presetCard,
+                    isSmallScreen && { flexBasis: '48%' },
                     isSelected && styles.presetCardSelected,
                     isExceeding && styles.presetCardDisabled,
                   ]}
@@ -721,7 +733,7 @@ export default function CollectScreen() {
         onRequestClose={() => setIsReceiptOpen(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.receiptCard}>
+          <View style={[styles.receiptCard, { maxWidth: Math.min(420, width - 32) }]}>
             <View style={styles.receiptHeader}>
               <TouchableOpacity
                 onPress={() => setIsReceiptOpen(false)}
@@ -788,7 +800,7 @@ export default function CollectScreen() {
                 activeOpacity={0.8}
                 onPress={() => {
                   setIsReceiptOpen(false);
-                  router.push('/(tabs)' as any);
+                  router.navigate('/(tabs)' as any);
                 }}
                 style={styles.receiptDoneBtn}
               >
@@ -810,6 +822,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 40,
+  },
+  scrollContentTablet: {
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   businessBanner: {
     flexDirection: 'row',

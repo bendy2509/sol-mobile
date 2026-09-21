@@ -44,6 +44,7 @@ export async function getMembersWithPaymentStatus(options?: {
       sync_status
     FROM clients
     WHERE collector_id = ?
+      AND id NOT IN (SELECT id FROM deleted_clients)
   `;
   const params: (string | number)[] = [collectorId];
 

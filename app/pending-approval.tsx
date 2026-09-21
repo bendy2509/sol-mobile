@@ -14,10 +14,12 @@ import { Icon } from '@/components/Icon';
 import { SOL_COLORS } from '@/constants/Colors';
 import { formatCurrency } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function PendingApprovalScreen() {
   const router = useRouter();
   const { activeCollector, userSession, approveAccount, refreshSession, logout } = useAuth();
+  const { horizontalPadding } = useResponsive();
 
   const [isChecking, setIsChecking] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
@@ -57,7 +59,10 @@ export default function PendingApprovalScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { maxWidth: 520, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Pending Icon & Title */}

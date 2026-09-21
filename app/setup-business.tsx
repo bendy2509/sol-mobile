@@ -20,9 +20,11 @@ import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { Icon } from '@/components/Icon';
 import { SOL_COLORS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function SetupBusinessScreen() {
   const router = useRouter();
+  const { isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -114,7 +116,11 @@ export default function SetupBusinessScreen() {
         style={{ flex: 1 }}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingHorizontal: horizontalPadding },
+            isTablet && styles.scrollContentTablet,
+          ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -132,7 +138,7 @@ export default function SetupBusinessScreen() {
           {/* Activity Type Selector */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>1. TYPE D'ACTIVITÉ</Text>
-            <View style={styles.typeSelectorRow}>
+            <View style={[styles.typeSelectorRow, isVerySmallScreen && { flexDirection: 'column' }]}>
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => handleTypeChange('SABOTAY')}
@@ -261,19 +267,22 @@ export default function SetupBusinessScreen() {
               </View>
             </View>
 
-            {/* Total Members (Enfants) */}
+            {/* Initial Estimate / Dynamic Notice */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
-                NOMBRE TOTAL D'ADHÉRENTS / PARTICIPANTS ("ENFANTS") *
+                CAPACITÉ INITIALE ESTIMÉE (OPTIONNELLE)
               </Text>
               <TextInput
                 style={styles.textInput}
-                placeholder="ex: 12"
+                placeholder="ex: 10"
                 placeholderTextColor="#94A3B8"
                 value={totalSlots}
                 onChangeText={setTotalSlots}
                 keyboardType="number-pad"
               />
+              <Text style={{ fontSize: 11, color: '#0F2942', backgroundColor: '#EFF6FF', padding: 8, borderRadius: 8, marginTop: 6, borderWidth: 1, borderColor: '#BFDBFE' }}>
+                💡 <strong>Principe du SOL/SABOTAY :</strong> Le nombre total de mains n'est pas figé à l'avance. Chaque enfant inscrit incrémente le cycle du nombre de mains qu'il souscrit (ex: 3 enfants d'1 main + 1 enfant de 3 mains = 4 enfants et 6 mains).
+              </Text>
             </View>
 
             {/* Start Date */}
@@ -297,13 +306,13 @@ export default function SetupBusinessScreen() {
                 </Text>
               </View>
               <Text style={styles.computedEndDateValue}>
-                {calculateCycleTotalDays(parseInt(totalSlots, 10) || 1, frequency)} jours de cycle
+                {calculateCycleTotalDays(parseInt(totalSlots, 10) || 1, frequency)} jours de cycle estimés
               </Text>
               <Text style={styles.computedExplanation}>
-                Formule : {totalSlots} enfants × {getFrequencyIntervalDays(frequency)} jour(s) = {calculateCycleTotalDays(parseInt(totalSlots, 10) || 1, frequency)} jours.
+                S'ajustera dynamiquement au nombre effectif de mains souscrites par les enfants.
               </Text>
               <Text style={[styles.computedExplanation, { marginTop: 4, fontWeight: '700', color: '#1D4ED8' }]}>
-                Date de fin calculée : {formatDateShort(endDate)} ({endDate})
+                Date de fin prévisionnelle : {formatDateShort(endDate)} ({endDate})
               </Text>
             </View>
 
@@ -345,6 +354,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 18,
     paddingBottom: 50,
+  },
+  scrollContentTablet: {
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   header: {
     alignItems: 'center',

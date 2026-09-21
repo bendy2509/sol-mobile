@@ -4,6 +4,7 @@ import { DashboardMetrics } from '@/types';
 import { Icon } from '@/components/Icon';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 interface DashboardMetricsGridProps {
   metrics: DashboardMetrics;
@@ -14,56 +15,69 @@ export const DashboardMetricsGrid: React.FC<DashboardMetricsGridProps> = ({
   metrics,
   membersCount,
 }) => {
+  const { isSmallScreen, isTablet } = useResponsive();
+
+  const cardWidthStyle = isTablet
+    ? { width: '23.5%' as const }
+    : isSmallScreen
+    ? { width: '48%' as const }
+    : { width: '48.3%' as const };
+
   return (
     <View style={styles.metricsGrid}>
       {/* Card 1: Aujourd'hui */}
-      <View style={styles.metricCard}>
+      <View style={[styles.metricCard, cardWidthStyle]}>
         <View style={styles.metricCardHeader}>
-          <Text style={styles.metricCardTitle}>AUJOURD'HUI</Text>
+          <Text style={styles.metricCardTitle} numberOfLines={1} adjustsFontSizeToFit>AUJOURD'HUI</Text>
           <View style={[styles.metricIconBox, { backgroundColor: '#ECFDF5' }]}>
             <Icon name="cash" size={13} color={SOL_COLORS.successDark} />
           </View>
         </View>
-        <Text style={[styles.metricCardValue, { color: SOL_COLORS.successDark }]}>
+        <Text style={[styles.metricCardValue, { color: SOL_COLORS.successDark }]} numberOfLines={1} adjustsFontSizeToFit>
           {metrics.handsCollectedToday} main{metrics.handsCollectedToday > 1 ? 's' : ''}
         </Text>
-        <Text style={styles.metricCardSub}>
+        <Text style={styles.metricCardSub} numberOfLines={1} adjustsFontSizeToFit>
           {formatCurrency(metrics.handsCollectedToday * metrics.unitAmount)} • {metrics.paidTodayCount}/{membersCount} à jour
         </Text>
       </View>
 
       {/* Card 2: Effectif */}
-      <View style={styles.metricCard}>
+      <View style={[styles.metricCard, cardWidthStyle]}>
         <View style={styles.metricCardHeader}>
-          <Text style={styles.metricCardTitle}>EFFECTIF DU SOL</Text>
+          <Text style={styles.metricCardTitle} numberOfLines={1} adjustsFontSizeToFit>EFFECTIF DU SOL</Text>
           <View style={[styles.metricIconBox, { backgroundColor: '#EFF6FF' }]}>
             <Icon name="crown" size={13} color={SOL_COLORS.info} />
           </View>
         </View>
-        <Text style={[styles.metricCardValue, { color: SOL_COLORS.primary }]}>
+        <Text style={[styles.metricCardValue, { color: SOL_COLORS.primary }]} numberOfLines={1} adjustsFontSizeToFit>
           {metrics.totalHandsExpected} mains
         </Text>
-        <Text style={styles.metricCardSub}>{metrics.totalMembersCount} enfants inscrits</Text>
+        <Text style={styles.metricCardSub} numberOfLines={1} adjustsFontSizeToFit>
+          {metrics.totalMembersCount} enfants inscrits
+        </Text>
       </View>
 
       {/* Card 3: Calendrier */}
-      <View style={styles.metricCard}>
+      <View style={[styles.metricCard, cardWidthStyle]}>
         <View style={styles.metricCardHeader}>
-          <Text style={styles.metricCardTitle}>CALENDRIER</Text>
+          <Text style={styles.metricCardTitle} numberOfLines={1} adjustsFontSizeToFit>CALENDRIER</Text>
           <View style={[styles.metricIconBox, { backgroundColor: '#F0F9FF' }]}>
             <Icon name="clock" size={13} color="#0284C7" />
           </View>
         </View>
-        <Text style={[styles.metricCardValue, { color: SOL_COLORS.textPrimary }]}>
+        <Text style={[styles.metricCardValue, { color: SOL_COLORS.textPrimary }]} numberOfLines={1} adjustsFontSizeToFit>
           {metrics.daysRemaining} jours
         </Text>
-        <Text style={styles.metricCardSub}>Fin : {formatDateShort(metrics.endDate)}</Text>
+        <Text style={styles.metricCardSub} numberOfLines={1} adjustsFontSizeToFit>
+          Fin : {formatDateShort(metrics.endDate)}
+        </Text>
       </View>
 
       {/* Card 4: Retards */}
       <View
         style={[
           styles.metricCard,
+          cardWidthStyle,
           metrics.overdueMembersCount > 0 && styles.metricCardAlert,
         ]}
       >
@@ -73,6 +87,8 @@ export const DashboardMetricsGrid: React.FC<DashboardMetricsGridProps> = ({
               styles.metricCardTitle,
               metrics.overdueMembersCount > 0 && { color: SOL_COLORS.dangerDark },
             ]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
           >
             RETARDS
           </Text>
@@ -96,6 +112,8 @@ export const DashboardMetricsGrid: React.FC<DashboardMetricsGridProps> = ({
               ? { color: SOL_COLORS.dangerDark }
               : { color: SOL_COLORS.textPrimary },
           ]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
         >
           {metrics.overdueMembersCount} {metrics.overdueMembersCount > 1 ? 'enfants' : 'enfant'}
         </Text>
@@ -104,6 +122,8 @@ export const DashboardMetricsGrid: React.FC<DashboardMetricsGridProps> = ({
             styles.metricCardSub,
             metrics.overdueMembersCount > 0 && { color: SOL_COLORS.dangerDark },
           ]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
         >
           {metrics.overdueMembersCount > 0
             ? `${metrics.overdueHandsCount} main(s) • ${formatCurrency(metrics.overdueHandsCount * metrics.unitAmount)}`
@@ -122,7 +142,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   metricCard: {
-    width: '48.3%',
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 12,
@@ -152,6 +171,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: SOL_COLORS.textSecondary,
     letterSpacing: 0.3,
+    flex: 1,
   },
   metricCardValue: {
     fontSize: 17,

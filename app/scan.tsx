@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { getClientByQrToken } from '@/db/clientRepository';
 import { Icon } from '@/components/Icon';
 import { triggerSuccessFeedback } from '@/lib/haptics';
+import { safeBack } from '@/lib/navigation';
 import { SOL_COLORS } from '@/constants/Colors';
 
 export default function ScanScreen() {
@@ -98,7 +99,7 @@ export default function ScanScreen() {
           <Text style={styles.grantBtnText}>Autoriser la Caméra</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => safeBack(router)}
           style={styles.cancelBtn}
         >
           <Text style={styles.cancelBtnText}>Annuler</Text>
@@ -110,7 +111,7 @@ export default function ScanScreen() {
   return (
     <View style={styles.container}>
       <CameraView
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
         enableTorch={torch}
         barcodeScannerSettings={{
           barcodeTypes: ['qr'],
@@ -121,9 +122,19 @@ export default function ScanScreen() {
       {/* Target Framing Overlay */}
       <View style={styles.overlay}>
         <View style={styles.overlayTop}>
-          <Text style={styles.instructionText}>
-            Centrez le code QR de l'adhérent dans le cadre
-          </Text>
+          <View style={styles.scannerHeaderRow}>
+            <TouchableOpacity
+              onPress={() => safeBack(router)}
+              style={styles.scannerCloseBtn}
+              accessibilityLabel="Fermer le scanner"
+            >
+              <Icon name="close" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.instructionText}>
+              Centrez le code QR de l'adhérent dans le cadre
+            </Text>
+            <View style={{ width: 36 }} />
+          </View>
         </View>
 
         <View style={styles.overlayCenter}>
@@ -252,17 +263,33 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
   },
   overlayTop: {
-    paddingTop: 40,
+    paddingTop: 50,
+    paddingHorizontal: 16,
     alignItems: 'center',
+  },
+  scannerHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  scannerCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   instructionText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
+    textAlign: 'center',
   },
   overlayCenter: {
     alignItems: 'center',

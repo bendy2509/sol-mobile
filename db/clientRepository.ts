@@ -5,6 +5,7 @@ import { getActiveCollectorId, getDatabase, isClientPhoneTaken } from './sqlite'
 import { getActiveBusinessConfig } from './businessRepository';
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
 import { calculateCycleEndDate } from '@/lib/dateCalculations';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export async function getAllClients(options?: {
   search?: string;
@@ -40,6 +41,7 @@ export async function getAllClients(options?: {
       sync_status
     FROM clients 
     WHERE collector_id = ?
+      AND id NOT IN (SELECT id FROM deleted_clients)
   `;
   const params: (string | number)[] = [collectorId];
 
@@ -516,9 +518,104 @@ export async function updateClientDetails(
   params.push(clientId);
 
   await db.runAsync(`UPDATE clients SET ${fields.join(', ')} WHERE id = ?`, params);
+
+  // Recalculate cycle total hands and update active business_configs
+  try {
+    const clientRow = await db.getFirstAsync<{ collector_id: string }>(
+      `SELECT collector_id FROM clients WHERE id = ?`,
+      [clientId]
+    );
+    const collectorId = clientRow?.collector_id || (await getActiveCollectorId());
+    const activeBusiness = await getActiveBusinessConfig(collectorId);
+    if (activeBusiness) {
+      const allHandsRow = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
+        [collectorId]
+      );
+      const updatedTotalSlots = Math.max(1, Number(allHandsRow?.total || 0));
+      const newEndDate = calculateCycleEndDate(
+        activeBusiness.startDate,
+        updatedTotalSlots,
+        activeBusiness.frequency
+      );
+      await db.runAsync(
+        `UPDATE business_configs SET total_slots = ?, end_date = ? WHERE id = ?`,
+        [updatedTotalSlots, newEndDate, activeBusiness.id]
+      );
+    }
+  } catch (bizErr) {
+    console.warn('Could not recalculate cycle total slots after client update:', bizErr);
+  }
 }
 
 export async function deleteClient(clientId: string): Promise<void> {
   const db = await getDatabase();
+  const now = new Date().toISOString();
+
+  // 1. Fetch client info before deletion for tombstone & collector attribution
+  const client = await db.getFirstAsync<{ id: string; collector_id: string; full_name: string; qr_code_token?: string; phone_number?: string }>(
+    `SELECT id, collector_id, full_name, qr_code_token, phone_number FROM clients WHERE id = ?`,
+    [clientId]
+  );
+  const collectorId = client?.collector_id || (await getActiveCollectorId());
+  const token = client?.qr_code_token || null;
+  const phone = client?.phone_number || null;
+
+  // 2. Insert into deleted_clients tombstone table so syncEngine never resurrects it
+  await db.runAsync(
+    `INSERT OR REPLACE INTO deleted_clients (id, qr_code_token, phone_number, collector_id, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, 'PENDING')`,
+    [clientId, token, phone, collectorId, now]
+  );
+
+  // 3. Delete related transactions locally
+  await db.runAsync(`DELETE FROM transactions WHERE client_id = ?`, [clientId]);
+
+  // 4. Delete client locally
   await db.runAsync(`DELETE FROM clients WHERE id = ?`, [clientId]);
+
+  // 5. Update business total_slots if active business exists
+  try {
+    const activeBusiness = await getActiveBusinessConfig(collectorId);
+    if (activeBusiness) {
+      const allHandsRow = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
+        [collectorId]
+      );
+      const updatedTotalSlots = Math.max(1, Number(allHandsRow?.total || 0));
+      const newEndDate = calculateCycleEndDate(
+        activeBusiness.startDate,
+        updatedTotalSlots,
+        activeBusiness.frequency
+      );
+      await db.runAsync(
+        `UPDATE business_configs SET total_slots = ?, end_date = ? WHERE id = ?`,
+        [updatedTotalSlots, newEndDate, activeBusiness.id]
+      );
+    }
+  } catch (bizErr) {
+    console.warn('Could not update cycle total slots after deletion:', bizErr);
+  }
+
+  // 6. Delete from Supabase if online (by ID and by unique qr_code_token)
+  if (isSupabaseConfigured) {
+    try {
+      await supabase.from('transactions').delete().eq('client_id', clientId);
+      try {
+        await supabase.from('sol_group_members').delete().eq('client_id', clientId);
+      } catch {}
+      let delError;
+      if (token) {
+        const res = await supabase.from('clients').delete().or(`id.eq.${clientId},qr_code_token.eq.${token}`);
+        delError = res.error;
+      } else {
+        const res = await supabase.from('clients').delete().eq('id', clientId);
+        delError = res.error;
+      }
+      if (!delError) {
+        await db.runAsync(`UPDATE deleted_clients SET sync_status = 'SYNCED' WHERE id = ?`, [clientId]);
+      }
+    } catch (err) {
+      console.warn('Supabase delete error (will be synced later):', err);
+    }
+  }
 }

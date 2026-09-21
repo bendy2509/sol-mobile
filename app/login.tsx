@@ -15,10 +15,13 @@ import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { Icon } from '@/components/Icon';
 import { triggerLightImpact, triggerMediumImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function LoginScreen() {
   const router = useRouter();
   const { loginWithPin } = useAuth();
+  const { isSmallScreen, isVerySmallScreen, horizontalPadding, height } = useResponsive();
+  const isCompactHeight = height < 700;
 
   const [activeField, setActiveField] = useState<'PHONE' | 'PIN'>('PHONE');
   const [phoneDigits, setPhoneDigits] = useState('37123456');
@@ -143,7 +146,10 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { maxWidth: 480, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
+        ]}
         showsVerticalScrollIndicator={false}
         bounces={false}
       >
@@ -296,6 +302,7 @@ export default function LoginScreen() {
                       }}
                       style={[
                         styles.keyButton,
+                        isCompactHeight && { height: 42 },
                         isAction && styles.actionKeyButton,
                       ]}
                     >

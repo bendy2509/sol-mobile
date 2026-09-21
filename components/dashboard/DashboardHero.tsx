@@ -4,6 +4,7 @@ import { DashboardMetrics } from '@/types';
 import { Icon } from '@/components/Icon';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 interface DashboardHeroProps {
   metrics: DashboardMetrics;
@@ -11,48 +12,63 @@ interface DashboardHeroProps {
 }
 
 export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProgressPct }) => {
+  const { isSmallScreen, isVerySmallScreen } = useResponsive();
   const potTotal = metrics.totalHandsExpected * metrics.unitAmount;
   const handsRemaining = Math.max(0, metrics.totalHandsExpected - (metrics.handsTouchedCount || 0));
 
   return (
-    <View style={styles.heroCard}>
+    <View style={[styles.heroCard, isSmallScreen && { padding: 14 }]}>
       {/* Ligne Supérieure : Indicateur de Type & Montant Unitaire */}
       <View style={styles.topMetaRow}>
         <View style={styles.badgePill}>
           <Icon name="crown" size={13} color="#FDE68A" style={styles.badgeIcon} />
-          <Text style={styles.badgeText}>CAGNOTTE DU SOL (BAY MEN)</Text>
+          <Text style={styles.badgeText} numberOfLines={1} adjustsFontSizeToFit>
+            CAGNOTTE DU SOL (BAY MEN)
+          </Text>
         </View>
         <View style={styles.unitPill}>
-          <Text style={styles.unitText}>{formatCurrency(metrics.unitAmount)} / main</Text>
+          <Text style={styles.unitText} numberOfLines={1} adjustsFontSizeToFit>
+            {formatCurrency(metrics.unitAmount)} / main
+          </Text>
         </View>
       </View>
 
       {/* Montant Central en Contraste Solaire Maximum */}
       <View style={styles.amountContainer}>
-        <Text style={styles.amountMain} numberOfLines={1} adjustsFontSizeToFit>
+        <Text
+          style={[styles.amountMain, isSmallScreen && { fontSize: 28 }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
           {formatCurrency(potTotal)}
         </Text>
-        <Text style={styles.formulaEquation}>
+        <Text style={styles.formulaEquation} numberOfLines={1} adjustsFontSizeToFit>
           Formule : {metrics.totalHandsExpected} mains souscrites × {formatCurrency(metrics.unitAmount)}
         </Text>
       </View>
 
       {/* Bloc Statistique à 3 Piliers Solaires */}
-      <View style={styles.statsDeck}>
+      <View style={[styles.statsDeck, isSmallScreen && { paddingHorizontal: 6, paddingVertical: 10 }]}>
         <View style={styles.statColumn}>
-          <Text style={styles.statMicroLabel}>ENFANTS</Text>
+          <Text style={styles.statMicroLabel} numberOfLines={1} adjustsFontSizeToFit>
+            ENFANTS
+          </Text>
           <View style={styles.statValueGroup}>
             <Icon name="users" size={12} color="#94A3B8" style={styles.statGroupIcon} />
-            <Text style={styles.statValueNumber}>{metrics.totalMembersCount}</Text>
+            <Text style={styles.statValueNumber} numberOfLines={1} adjustsFontSizeToFit>
+              {metrics.totalMembersCount}
+            </Text>
           </View>
         </View>
 
         <View style={styles.verticalDivider} />
 
         <View style={styles.statColumn}>
-          <Text style={styles.statMicroLabel}>MAINS ROTATION</Text>
+          <Text style={styles.statMicroLabel} numberOfLines={1} adjustsFontSizeToFit>
+            MAINS ROTATION
+          </Text>
           <View style={styles.statValueGroup}>
-            <Text style={styles.statValueNumber}>
+            <Text style={styles.statValueNumber} numberOfLines={1} adjustsFontSizeToFit>
               {metrics.handsTouchedCount} / {metrics.totalHandsExpected}
             </Text>
           </View>
@@ -61,8 +77,10 @@ export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProg
         <View style={styles.verticalDivider} />
 
         <View style={styles.statColumn}>
-          <Text style={styles.statMicroLabel}>RESTANTES</Text>
-          <Text style={styles.statValueHighlight}>
+          <Text style={styles.statMicroLabel} numberOfLines={1} adjustsFontSizeToFit>
+            RESTANTES
+          </Text>
+          <Text style={styles.statValueHighlight} numberOfLines={1} adjustsFontSizeToFit>
             {handsRemaining} main{handsRemaining > 1 ? 's' : ''}
           </Text>
         </View>
@@ -80,7 +98,9 @@ export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProg
         {metrics.endDate ? (
           <View style={styles.cycleEndRow}>
             <Icon name="calendar" size={11} color="#94A3B8" style={{ marginRight: 4 }} />
-            <Text style={styles.cycleEndText}>Échéance prévue : {formatDateShort(metrics.endDate)}</Text>
+            <Text style={styles.cycleEndText} numberOfLines={1} adjustsFontSizeToFit>
+              Échéance prévue : {formatDateShort(metrics.endDate)}
+            </Text>
           </View>
         ) : null}
       </View>
@@ -103,6 +123,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 10,
+    gap: 8,
   },
   badgePill: {
     flexDirection: 'row',
@@ -113,6 +134,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(253, 230, 138, 0.25)',
+    flexShrink: 1,
   },
   badgeIcon: {
     marginRight: 6,
@@ -130,6 +152,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#334155',
+    flexShrink: 0,
   },
   unitText: {
     fontSize: 12,
@@ -165,6 +188,7 @@ const styles = StyleSheet.create({
   statColumn: {
     flex: 1,
     alignItems: 'center',
+    paddingHorizontal: 2,
   },
   statMicroLabel: {
     fontSize: 9,
@@ -239,6 +263,3 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
 });
-
-
-

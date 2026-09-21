@@ -5,6 +5,7 @@ import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusine
 import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalculations';
 import { recordAuditLog } from '@/services/auditService';
 import { calculateCycleTotalHands } from '@/services/financialService';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -166,7 +167,10 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
   });
 
   if (params.mode === 'RENEW_SAME_MEMBERS') {
-    // A. Reset financial timeline counters for all existing children of this collector
+    // Purge any clients that were previously deleted so they can never resurface
+    await db.runAsync(`DELETE FROM clients WHERE id IN (SELECT id FROM deleted_clients)`);
+
+    // A. Reset financial timeline counters for all remaining active children of this collector
     await db.runAsync(
       `UPDATE clients 
        SET current_balance = 0,
@@ -179,13 +183,17 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
            paid_until_date = ?,
            daily_amount = ?,
            sync_status = 'PENDING'
-       WHERE collector_id = ? OR business_id = ?`,
+       WHERE (collector_id = ? OR business_id = ?)
+         AND id NOT IN (SELECT id FROM deleted_clients)`,
       [todayStr, unitAmount, collectorId, params.businessId]
     );
 
-    // Calculate dynamic end date based on actual registered hands
+    // Calculate dynamic end date based on actual registered hands (excluding deleted)
     const totalHandsRow = await db.getFirstAsync<{ total: number }>(
-      `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? OR business_id = ?`,
+      `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total 
+       FROM clients 
+       WHERE (collector_id = ? OR business_id = ?) 
+         AND id NOT IN (SELECT id FROM deleted_clients)`,
       [collectorId, params.businessId]
     );
     const totalCycleHands = Math.max(1, Number(totalHandsRow?.total || 0), params.totalSlots || 10);
@@ -230,6 +238,41 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
     };
   } else {
     // B. Start completely fresh: Remove existing clients for this collector / business
+    // Record all existing clients in deleted_clients tombstone table so syncEngine never re-pulls them!
+    const existingClients = await db.getAllAsync<{ id: string; qr_code_token?: string; phone_number?: string }>(
+      `SELECT id, qr_code_token, phone_number FROM clients WHERE collector_id = ? OR business_id = ?`,
+      [collectorId, params.businessId]
+    );
+
+    for (const ec of existingClients) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO deleted_clients (id, qr_code_token, phone_number, collector_id, deleted_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, 'PENDING')`,
+        [ec.id, ec.qr_code_token || null, ec.phone_number || null, collectorId, now]
+      );
+
+      if (isSupabaseConfigured) {
+        try {
+          await supabase.from('transactions').delete().eq('client_id', ec.id);
+          try {
+            await supabase.from('sol_group_members').delete().eq('client_id', ec.id);
+          } catch {}
+          if (ec.qr_code_token) {
+            await supabase.from('clients').delete().or(`id.eq.${ec.id},qr_code_token.eq.${ec.qr_code_token}`);
+          } else {
+            await supabase.from('clients').delete().eq('id', ec.id);
+          }
+        } catch (sbErr) {
+          console.warn('START_FRESH remote client cleanup notice:', sbErr);
+        }
+      }
+    }
+
+    // Delete transactions and clients locally
+    await db.runAsync(
+      `DELETE FROM transactions WHERE client_id IN (SELECT id FROM clients WHERE collector_id = ? OR business_id = ?)`,
+      [collectorId, params.businessId]
+    );
     await db.runAsync(`DELETE FROM clients WHERE collector_id = ? OR business_id = ?`, [collectorId, params.businessId]);
 
     const totalSlots = Math.max(1, Number(params.totalSlots) || 10);
@@ -493,18 +536,20 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   }
 
   const totalMembersCount = members.length;
-  // Use direct SQL SUM for guaranteed accuracy — avoids any ORM mapping ambiguity
+  // Direct SQL SUM of all active clients for guaranteed accuracy
   const totalHandsRow = await db.getFirstAsync<{ total: number }>(
-    `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+    `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
     [collectorId]
   );
   const calculatedTotal = calculateCycleTotalHands(members);
-  const totalCycleHands = Math.max(
-    1,
-    calculatedTotal,
-    Number(totalHandsRow?.total || 0),
-    totalSlots || 10
-  );
+  const dbHandsTotal = Number(totalHandsRow?.total || 0);
+
+  // The total number of hands in SOL/SABOTAY is determined by the sum of hands of each enrolled child,
+  // NOT predetermined in advance.
+  const totalCycleHands = (totalMembersCount > 0 || dbHandsTotal > 0)
+    ? Math.max(calculatedTotal, dbHandsTotal)
+    : (totalSlots > 0 ? totalSlots : 0);
+
   const effectiveChildrenCount = totalCycleHands;
   const unpaidTodayCount = Math.max(0, totalMembersCount - paidTodayCount);
   const handsRemaining = Math.max(0, effectiveChildrenCount - handsCollectedTotal);

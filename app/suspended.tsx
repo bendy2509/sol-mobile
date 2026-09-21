@@ -17,10 +17,12 @@ import { Icon } from '@/components/Icon';
 import { getActiveCollector } from '@/db/sqlite';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 export default function SuspendedScreen() {
   const router = useRouter();
   const { logout, refreshSession, activeCollector } = useAuth();
+  const { horizontalPadding } = useResponsive();
 
   const [adminName, setAdminName] = useState('Administration SOL');
   const [adminPhone, setAdminPhone] = useState('+50900000000');
@@ -92,7 +94,13 @@ export default function SuspendedScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { maxWidth: 520, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Warning Icon Badge */}
         <View style={styles.iconCircle}>
           <Icon name="shield" size={48} color="#DC2626" />

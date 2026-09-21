@@ -23,9 +23,11 @@ import { useSync } from '@/context/SyncContext';
 import { Client, BusinessConfig } from '@/types';
 import { formatCurrency, formatDate, getInitials } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
+import { safeBack } from '@/lib/navigation';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
 
 import { calculateCycleTotalHands } from '@/services/financialService';
 
@@ -34,6 +36,7 @@ export default function PayoutScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { activeCollector, userRole } = useAuth();
   const { triggerSync } = useSync();
+  const { isSmallScreen, contentMaxWidth, horizontalPadding } = useResponsive();
 
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
@@ -213,20 +216,28 @@ export default function PayoutScreen() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => router.back()}
-          style={styles.backBtn}
-        >
-          <Icon name="arrow-left" size={18} color="#FFFFFF" />
-        </TouchableOpacity>
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={styles.headerTitle}>Décaissement ("Bay Men")</Text>
-          <Text style={styles.headerSub}>{business?.name || 'Carnet SOL'}</Text>
+        <View style={[styles.headerInner, { maxWidth: contentMaxWidth }]}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => safeBack(router)}
+            style={styles.backBtn}
+          >
+            <Icon name="arrow-left" size={18} color="#FFFFFF" />
+          </TouchableOpacity>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.headerTitle} numberOfLines={1}>Décaissement ("Bay Men")</Text>
+            <Text style={styles.headerSub} numberOfLines={1}>{business?.name || 'Carnet SOL'}</Text>
+          </View>
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Recipient Profile Card */}
         <View style={styles.card}>
           <View style={styles.profileRow}>
@@ -277,7 +288,13 @@ export default function PayoutScreen() {
             {/* Pot Breakdown Card */}
             <View style={styles.card}>
               <Text style={styles.sectionLabel}>MONTANT DE LA CAGNOTTE DU TIRAGE</Text>
-              <Text style={styles.potAmountDisplay}>{formatCurrency(totalPotAmount)}</Text>
+              <Text
+                style={styles.potAmountDisplay}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
+                {formatCurrency(totalPotAmount)}
+              </Text>
               <Text style={styles.potBreakdownText}>
                 Base dynamique : {totalCycleHands} mains effectives au cycle × {formatCurrency(unitAmount)} par main
               </Text>
@@ -361,6 +378,16 @@ export default function PayoutScreen() {
         onSuccess={handleConfirmPayout}
         title="Validation par Code PIN"
         subtitle={`Saisissez votre code PIN gestionnaire pour confirmer le décaissement de ${formatCurrency(totalPotAmount)} à ${client.fullName}.`}
+        onLockout={() => {
+          recordAuditLog({
+            action: 'LOGIN_FAILURE',
+            entityType: 'SYSTEM',
+            entityId: client.id || 'unknown',
+            reason: `3 tentatives PIN échouées lors du décaissement pour ${client.fullName} (Montant: ${formatCurrency(totalPotAmount)}).`,
+            userId: activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001',
+            userRole: 'MANAGER',
+          });
+        }}
       />
     </SafeAreaView>
   );
@@ -383,12 +410,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 14,
     backgroundColor: SOL_COLORS.primary,
     ...SHADOWS.sm,
+  },
+  headerInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    alignSelf: 'center',
   },
   backBtn: {
     width: 36,
