@@ -27,6 +27,7 @@ interface WebTableStore {
   audit_logs: any[];
   sync_logs: any[];
   deleted_clients: any[];
+  closed_cycles: any[];
 }
 
 class WebSQLiteAdapter {
@@ -41,6 +42,7 @@ class WebSQLiteAdapter {
     audit_logs: [],
     sync_logs: [],
     deleted_clients: [],
+    closed_cycles: [],
   };
 
   async init() {
@@ -799,6 +801,28 @@ async function initDatabaseInternal(db: any): Promise<void> {
       deleted_at TEXT NOT NULL,
       sync_status TEXT DEFAULT 'PENDING'
     );
+
+    CREATE TABLE IF NOT EXISTS closed_cycles (
+      id TEXT PRIMARY KEY,
+      collector_id TEXT NOT NULL,
+      business_id TEXT NOT NULL,
+      business_name TEXT NOT NULL,
+      cycle_number INTEGER DEFAULT 1,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      closed_at TEXT NOT NULL,
+      unit_amount REAL NOT NULL,
+      total_slots INTEGER NOT NULL,
+      total_hands INTEGER NOT NULL,
+      total_pot REAL NOT NULL,
+      total_collected REAL NOT NULL,
+      total_distributed REAL NOT NULL,
+      net_reserve REAL DEFAULT 0,
+      completion_rate REAL DEFAULT 0,
+      members_count INTEGER NOT NULL,
+      snapshot_data TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
 
   // 2. Ensure all table columns exist on upgraded/existing databases
@@ -816,6 +840,8 @@ async function initDatabaseInternal(db: any): Promise<void> {
     'CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);',
     'CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);',
     'CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_logs(status);',
+    'CREATE INDEX IF NOT EXISTS idx_closed_cycles_collector ON closed_cycles(collector_id);',
+    'CREATE INDEX IF NOT EXISTS idx_closed_cycles_business ON closed_cycles(business_id);',
   ];
 
   for (const idxSql of indexStatements) {

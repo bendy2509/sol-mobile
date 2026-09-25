@@ -142,6 +142,11 @@ function generateBarcodeSvg(value?: string | null, width = 260, height = 36): st
 
 /**
  * Universal HTML-to-PDF / Print renderer compatible with Android, iOS and Web.
+ *
+ * On Android (including Expo Go), printToFileAsync writes to an internal sandbox
+ * path (file:///data/user/0/.../cache/print/) that expo-sharing cannot access.
+ * We bypass file creation entirely and call printAsync({ html }) directly, which
+ * opens the native Android print dialog (allows Save as PDF / print).
  */
 async function renderHtmlDocument(html: string): Promise<string> {
   if (Platform.OS === 'web') {
@@ -149,6 +154,13 @@ async function renderHtmlDocument(html: string): Promise<string> {
     return 'web-printed';
   }
 
+  // Android: open system print dialog directly — no file creation needed.
+  if (Platform.OS === 'android') {
+    await Print.printAsync({ html });
+    return 'android-printed';
+  }
+
+  // iOS: use file-based approach so the share sheet can attach the PDF.
   try {
     const result = await Print.printToFileAsync({ html });
     if (result && result.uri) {
@@ -410,7 +422,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Reçu Officiel SOL - ${data.clientName || 'Adhérent'}</title>
+  <title>SOL – Reçu de Cotisation – ${data.clientName || 'Adhérent'} – ${data.businessName || data.collectorName} – ${data.createdAt ? data.createdAt.slice(0,10) : ''} – Réf. ${(data.transactionId || '').toUpperCase().slice(0,12)}</title>
   <style>
     ${BASE_PRINT_CSS}
     .receipt-frame {
@@ -558,7 +570,7 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Décharge de Décaissement SOL - ${data.clientName || 'Adhérent'}</title>
+  <title>SOL – Décharge de Décaissement – ${data.clientName || 'Adhérent'} – ${data.businessName || data.collectorName} – ${data.createdAt ? data.createdAt.slice(0,10) : ''} – Réf. ${(data.transactionId || '').toUpperCase().slice(0,12)}</title>
   <style>
     ${BASE_PRINT_CSS}
     .receipt-frame {
@@ -727,7 +739,7 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Rapport d'Évolution SOL - ${data.businessName || data.collectorName}</title>
+  <title>SOL – Rapport d'Évolution – ${data.collectorName} (${data.businessName || 'Caisse'}) – ${data.generatedAt ? data.generatedAt.slice(0,10) : ''} – Cycle ${data.cycleNumber || 1}</title>
   <style>
     ${BASE_PRINT_CSS}
     .kpi-grid {
@@ -931,7 +943,7 @@ export async function generateAdminGlobalReportPdf(data: AdminReportPdfData): Pr
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Rapport Global de Supervision - SOL Mobile</title>
+  <title>SOL – Rapport Global de Supervision – ${data.adminName} – ${data.generatedAt ? data.generatedAt.slice(0,10) : ''} – ${data.totalManagers} Gestionnaires – ${data.totalClients} Adhérents</title>
   <style>
     ${BASE_PRINT_CSS}
     .kpi-grid {
@@ -1091,7 +1103,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Procès-Verbal de Clôture - ${data.collectorName}</title>
+  <title>SOL – PV de Clôture de Caisse – ${data.collectorName} (${data.businessName || 'Caisse'}) – ${data.closureDate ? data.closureDate.slice(0,10) : ''} – Réf. ${safeClosureId.slice(0,12)}</title>
   <style>
     ${BASE_PRINT_CSS}
     .receipt-frame {
@@ -1246,11 +1258,21 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
 
 /**
  * Shares or opens native print dialog for a generated PDF file.
+ *
+ * Android PDFs are handled directly in renderHtmlDocument (printAsync({ html }))
+ * so this function is a no-op for Android sentinels.
+ * iOS uses file-based sharing via expo-sharing.
  */
 export async function sharePdfFile(pdfUri: string, dialogTitle: string = 'Partager le document PDF'): Promise<void> {
-  if (pdfUri === 'web-printed' || pdfUri === 'fallback-printed') {
+  // Sentinels: print was already triggered upstream — nothing left to do.
+  if (
+    pdfUri === 'web-printed' ||
+    pdfUri === 'android-printed' ||
+    pdfUri === 'fallback-printed'
+  ) {
     return;
   }
+
   if (Platform.OS === 'web') {
     if (pdfUri.startsWith('http') || pdfUri.startsWith('blob:') || pdfUri.startsWith('data:')) {
       window.open(pdfUri, '_blank');
@@ -1258,17 +1280,18 @@ export async function sharePdfFile(pdfUri: string, dialogTitle: string = 'Partag
     return;
   }
 
+  // iOS: share the generated file via the native share sheet.
   try {
     const isAvailable = await Sharing.isAvailableAsync();
-    if (isAvailable) {
-      await Sharing.shareAsync(pdfUri, {
-        mimeType: 'application/pdf',
-        dialogTitle,
-        UTI: 'com.adobe.pdf',
-      });
-    } else {
+    if (!isAvailable) {
       await Print.printAsync({ uri: pdfUri });
+      return;
     }
+    await Sharing.shareAsync(pdfUri, {
+      mimeType: 'application/pdf',
+      dialogTitle,
+      UTI: 'com.adobe.pdf',
+    });
   } catch (error) {
     console.warn('[PDF] shareAsync failed, falling back to printAsync:', error);
     try {

@@ -16,13 +16,16 @@ import {
 import { getActiveBusinessConfig, saveBusinessConfig } from '@/db/businessRepository';
 import { triggerErrorFeedback, triggerSuccessFeedback, triggerLightImpact } from '@/lib/haptics';
 import { arePhoneNumbersEqual, normalizePhoneNumber } from '@/lib/phoneUtils';
-import { hashPin, verifyPinHash, isBcryptHash } from '@/lib/crypto';
+import { hashPin, verifyPinHash, isBcryptHash, DEFAULT_ADMIN_PIN_HASH } from '@/lib/crypto';
 import { recordAuditLog } from '@/services/auditService';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 export interface AdminProfile {
   fullName: string;
   phoneNumber: string;
+  email?: string;
+  address?: string;
+  supportHours?: string;
   pin: string;
 }
 
@@ -257,10 +260,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshSession]);
 
   const getAdminProfile = async (): Promise<AdminProfile> => {
-    const fullName = (await AsyncStorage.getItem('SOL_ADMIN_NAME')) || 'Superviseur Général';
-    const phoneNumber = (await AsyncStorage.getItem('SOL_ADMIN_PHONE')) || '+50900000000';
-    const pin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || hashPin('9999');
-    return { fullName, phoneNumber, pin };
+    const fullName = (await AsyncStorage.getItem('SOL_ADMIN_NAME')) || 'Administration Centrale SOL';
+    const phoneNumber = (await AsyncStorage.getItem('SOL_ADMIN_PHONE')) || '+509 34 56 7890';
+    const email = (await AsyncStorage.getItem('SOL_ADMIN_EMAIL')) || 'support@solmobile.ht';
+    const address = (await AsyncStorage.getItem('SOL_ADMIN_ADDRESS')) || 'Port-au-Prince, Haïti';
+    const supportHours = (await AsyncStorage.getItem('SOL_ADMIN_SUPPORT_HOURS')) || 'Lun - Sam : 08h00 - 18h00';
+    const pin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || DEFAULT_ADMIN_PIN_HASH;
+    return { fullName, phoneNumber, email, address, supportHours, pin };
   };
 
   const updateAdminProfile = async (data: Partial<AdminProfile>): Promise<void> => {
@@ -275,6 +281,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       await AsyncStorage.setItem('SOL_ADMIN_PHONE', norm);
     }
+    if (data.email !== undefined) {
+      await AsyncStorage.setItem('SOL_ADMIN_EMAIL', data.email.trim());
+    }
+    if (data.address !== undefined) {
+      await AsyncStorage.setItem('SOL_ADMIN_ADDRESS', data.address.trim());
+    }
+    if (data.supportHours !== undefined) {
+      await AsyncStorage.setItem('SOL_ADMIN_SUPPORT_HOURS', data.supportHours.trim());
+    }
     if (data.pin !== undefined && data.pin.length === 4) {
       await AsyncStorage.setItem('SOL_ADMIN_PIN', hashPin(data.pin));
     }
@@ -285,7 +300,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       action: 'UPDATE_SECURITY',
       entityType: 'COLLECTOR',
       entityId: 'admin',
-      newData: { fullName: data.fullName, phoneNumber: data.phoneNumber },
+      newData: { fullName: data.fullName, phoneNumber: data.phoneNumber, email: data.email, address: data.address },
       reason: 'Mise à jour des coordonnées Admin',
     }).catch(() => {});
 
@@ -319,7 +334,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Retrieve dynamic Admin credentials
       const adminPhone = (await AsyncStorage.getItem('SOL_ADMIN_PHONE')) || '+50900000000';
-      const adminStoredPin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || hashPin('9999');
+      const adminStoredPin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || DEFAULT_ADMIN_PIN_HASH;
 
       // 1. Check if the entered phone number belongs to the Administrator
       const isAdminPhone =
@@ -534,7 +549,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (userRole === 'ADMIN') {
-      const adminStoredPin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || hashPin('9999');
+      const adminStoredPin = (await AsyncStorage.getItem('SOL_ADMIN_PIN')) || DEFAULT_ADMIN_PIN_HASH;
       if (verifyPinHash(pin, adminStoredPin)) {
         await resetFailedPinAttempts();
         triggerSuccessFeedback();

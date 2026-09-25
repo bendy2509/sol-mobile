@@ -18,9 +18,10 @@ import { Header } from '@/components/Header';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { useAuth } from '@/context/AuthContext';
-import { getActiveBusinessConfig, renewSolCycle } from '@/db/businessRepository';
+import { getActiveBusinessConfig, renewSolCycle, getClosedCycles } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
-import { BusinessConfig, Member, PaymentFrequency } from '@/types';
+import { generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfService';
+import { BusinessConfig, ClosedCycle, Member, PaymentFrequency } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerErrorFeedback, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
@@ -41,6 +42,10 @@ export default function CycleManagementScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Closed Cycles History State
+  const [closedCycles, setClosedCycles] = useState<ClosedCycle[]>([]);
+  const [downloadingCycleId, setDownloadingCycleId] = useState<string | null>(null);
+
   // Editable new cycle params
   const [newCycleName, setNewCycleName] = useState('');
   const [newContribution, setNewContribution] = useState('');
@@ -50,12 +55,14 @@ export default function CycleManagementScreen() {
     async function load() {
       setIsLoading(true);
       try {
-        const [biz, mems] = await Promise.all([
+        const [biz, mems, pastCycles] = await Promise.all([
           getActiveBusinessConfig(),
           getMembersWithPaymentStatus(),
+          getClosedCycles(activeCollector?.id).catch(() => []),
         ]);
         setBusiness(biz);
         setMembers(mems);
+        setClosedCycles(pastCycles);
         if (biz) {
           setNewCycleName(biz.name);
           setNewContribution(String(biz.contributionAmount));
@@ -68,7 +75,54 @@ export default function CycleManagementScreen() {
       }
     }
     load();
-  }, []);
+  }, [activeCollector?.id]);
+
+  const handleDownloadClosedCyclePdf = async (cycle: ClosedCycle) => {
+    setDownloadingCycleId(cycle.id);
+    try {
+      let pdfData: any = null;
+      if (cycle.snapshotData) {
+        try {
+          pdfData = JSON.parse(cycle.snapshotData);
+        } catch (parseErr) {
+          console.warn('Failed to parse snapshotData:', parseErr);
+        }
+      }
+
+      if (!pdfData) {
+        pdfData = {
+          businessName: cycle.businessName,
+          collectorName: activeCollector?.fullName || 'Responsable SOL',
+          collectorPhone: activeCollector?.phoneNumber || '',
+          collectorZone: activeCollector?.zone,
+          unitAmount: cycle.unitAmount,
+          totalSlots: cycle.totalSlots,
+          registeredChildrenCount: cycle.membersCount,
+          totalPotAmount: cycle.totalPot,
+          cycleStartDate: cycle.startDate,
+          cycleEndDate: cycle.endDate,
+          cycleNumber: cycle.cycleNumber,
+          handsCollectedTotal: cycle.totalHands,
+          totalCashCollected: cycle.totalCollected,
+          totalDistributed: cycle.totalDistributed,
+          netReserveBalance: cycle.netReserve,
+          completionRate: cycle.completionRate,
+          members: [],
+          generatedAt: new Date().toISOString(),
+        };
+      }
+
+      const pdfUri = await generateManagerBusinessReportPdf(pdfData);
+      await sharePdfFile(pdfUri, `Bilan_Cycle_${cycle.cycleNumber}_${cycle.businessName}`);
+      triggerSuccessFeedback();
+    } catch (err: any) {
+      console.error('Download cycle PDF error:', err);
+      triggerErrorFeedback();
+      Alert.alert('Erreur', 'Impossible de générer le rapport PDF du cycle.');
+    } finally {
+      setDownloadingCycleId(null);
+    }
+  };
 
   const isManager = userRole === 'MANAGER' || userRole === 'ADMIN';
 
@@ -498,6 +552,95 @@ export default function CycleManagementScreen() {
             )}
           </TouchableOpacity>
         )}
+
+        {/* Closed Cycles History Section */}
+        <View style={styles.historySection}>
+          <View style={styles.historyHeaderRow}>
+            <View style={[styles.cardIconBox, { backgroundColor: '#EDE9FE' }]}>
+              <Icon name="history" size={16} color="#7C3AED" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.historySectionTitle}>HISTORIQUE DES CYCLES CLÔTURÉS</Text>
+              <Text style={styles.historySectionSub}>
+                Archives complètes de vos cycles précédents avec bilans financiers téléchargeables en PDF à tout moment.
+              </Text>
+            </View>
+          </View>
+
+          {closedCycles.length === 0 ? (
+            <View style={styles.emptyHistoryCard}>
+              <Icon name="sol" size={32} color="#94A3B8" />
+              <Text style={styles.emptyHistoryTitle}>Aucun cycle archivé pour l'instant</Text>
+              <Text style={styles.emptyHistorySub}>
+                Dès que vous clôturez ou renouvelez un cycle, l'ensemble de ses données financières et la liste des participants seront archivés ici.
+              </Text>
+            </View>
+          ) : (
+            closedCycles.map((cycle) => {
+              const isDownloading = downloadingCycleId === cycle.id;
+              return (
+                <View key={cycle.id} style={styles.cycleHistoryCard}>
+                  <View style={styles.cycleHistoryCardHeader}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                        <Text style={styles.cycleHistoryNumber}>Cycle #{cycle.cycleNumber}</Text>
+                        <View style={styles.cycleHistoryBadge}>
+                          <Text style={styles.cycleHistoryBadgeText}>ARCHIVÉ</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.cycleHistoryName}>{cycle.businessName}</Text>
+                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => handleDownloadClosedCyclePdf(cycle)}
+                      disabled={isDownloading}
+                      style={[styles.downloadPdfBtn, isDownloading && { opacity: 0.6 }]}
+                    >
+                      {isDownloading ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Icon name="print" size={13} color="#FFFFFF" style={{ marginRight: 5 }} />
+                          <Text style={styles.downloadPdfBtnText}>Bilan PDF</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.cycleHistoryDatesRow}>
+                    <Text style={styles.cycleHistoryDateLabel}>Période : </Text>
+                    <Text style={styles.cycleHistoryDateVal}>
+                      {formatDateShort(cycle.startDate)} → {formatDateShort(cycle.closedAt || cycle.endDate)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.cycleHistoryStatsGrid}>
+                    <View style={styles.cycleHistoryStatItem}>
+                      <Text style={styles.cycleHistoryStatLabel}>Cotisation</Text>
+                      <Text style={styles.cycleHistoryStatVal}>{formatCurrency(cycle.unitAmount)}</Text>
+                    </View>
+                    <View style={styles.cycleHistoryStatItem}>
+                      <Text style={styles.cycleHistoryStatLabel}>Membres / Mains</Text>
+                      <Text style={styles.cycleHistoryStatVal}>{cycle.membersCount} / {cycle.totalHands}</Text>
+                    </View>
+                    <View style={styles.cycleHistoryStatItem}>
+                      <Text style={styles.cycleHistoryStatLabel}>Total Collecté</Text>
+                      <Text style={[styles.cycleHistoryStatVal, { color: '#059669' }]}>
+                        {formatCurrency(cycle.totalCollected)}
+                      </Text>
+                    </View>
+                    <View style={styles.cycleHistoryStatItem}>
+                      <Text style={styles.cycleHistoryStatLabel}>Total Décaissement</Text>
+                      <Text style={[styles.cycleHistoryStatVal, { color: '#2563EB' }]}>
+                        {formatCurrency(cycle.totalDistributed)}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
       </ScrollView>
 
       {/* Confirmation Modal */}
@@ -941,5 +1084,144 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '900',
     color: '#FFFFFF',
+  },
+  // Closed Cycles History Styles
+  historySection: {
+    marginTop: 24,
+    marginBottom: 20,
+  },
+  historyHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 14,
+  },
+  historySectionTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#5B21B6',
+    letterSpacing: 0.5,
+  },
+  historySectionSub: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  emptyHistoryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderStyle: 'dashed',
+  },
+  emptyHistoryTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  emptyHistorySub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
+    textAlign: 'center',
+    lineHeight: 17,
+  },
+  cycleHistoryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+    ...SHADOWS.sm,
+  },
+  cycleHistoryCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  cycleHistoryNumber: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#7C3AED',
+  },
+  cycleHistoryBadge: {
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+  },
+  cycleHistoryBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#7C3AED',
+    letterSpacing: 0.5,
+  },
+  cycleHistoryName: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: SOL_COLORS.textPrimary,
+  },
+  downloadPdfBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1D4ED8',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  downloadPdfBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  cycleHistoryDatesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  cycleHistoryDateLabel: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  cycleHistoryDateVal: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+  },
+  cycleHistoryStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+  },
+  cycleHistoryStatItem: {
+    flex: 1,
+    minWidth: 120,
+  },
+  cycleHistoryStatLabel: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  cycleHistoryStatVal: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: SOL_COLORS.textPrimary,
+    marginTop: 2,
   },
 });

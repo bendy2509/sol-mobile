@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Animated,
+  ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { Icon } from '@/components/Icon';
@@ -40,6 +41,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [failureCount, setFailureCount] = useState(0);
   const [isLocked, setIsLocked] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
   // Shake animation for wrong PIN
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -63,12 +65,13 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
       setErrorMessage(null);
       setFailureCount(0);
       setIsLocked(false);
+      setIsVerifying(false);
       shakeAnim.setValue(0);
     }
   }, [visible]);
 
   const handleDigit = async (digit: string) => {
-    if (isLocked) return;
+    if (isLocked || isVerifying) return;
     triggerLightImpact();
     if (pin.length < 4) {
       const nextPin = pin + digit;
@@ -76,41 +79,46 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
       setErrorMessage(null);
 
       if (nextPin.length === 4) {
-        const isValid = await verifyPin(nextPin);
-        if (isValid) {
-          triggerSuccessFeedback();
-          onSuccess();
-        } else {
-          triggerErrorFeedback();
-          triggerShake();
-          setPin('');
-
-          const nextFailures = failureCount + 1;
-          setFailureCount(nextFailures);
-
-          if (nextFailures >= MAX_ATTEMPTS) {
-            setIsLocked(true);
-            setErrorMessage(
-              `Accès verrouillé — ${MAX_ATTEMPTS} tentatives incorrectes. Opération annulée par sécurité.`
-            );
-            // Fermeture automatique après 2 secondes
-            setTimeout(() => {
-              onLockout?.();
-              onCancel();
-            }, 2000);
+        setIsVerifying(true);
+        // Allow the 4th filled dot and spinner to render on screen before starting verification
+        setTimeout(async () => {
+          const isValid = await verifyPin(nextPin);
+          setIsVerifying(false);
+          if (isValid) {
+            triggerSuccessFeedback();
+            onSuccess();
           } else {
-            const remaining = MAX_ATTEMPTS - nextFailures;
-            setErrorMessage(
-              `Code PIN incorrect — ${remaining} tentative${remaining > 1 ? 's' : ''} restante${remaining > 1 ? 's' : ''}.`
-            );
+            triggerErrorFeedback();
+            triggerShake();
+            setPin('');
+
+            const nextFailures = failureCount + 1;
+            setFailureCount(nextFailures);
+
+            if (nextFailures >= MAX_ATTEMPTS) {
+              setIsLocked(true);
+              setErrorMessage(
+                `Accès verrouillé — ${MAX_ATTEMPTS} tentatives incorrectes. Opération annulée par sécurité.`
+              );
+              // Fermeture automatique après 2 secondes
+              setTimeout(() => {
+                onLockout?.();
+                onCancel();
+              }, 2000);
+            } else {
+              const remaining = MAX_ATTEMPTS - nextFailures;
+              setErrorMessage(
+                `Code PIN incorrect — ${remaining} tentative${remaining > 1 ? 's' : ''} restante${remaining > 1 ? 's' : ''}.`
+              );
+            }
           }
-        }
+        }, 30);
       }
     }
   };
 
   const handleBackspace = () => {
-    if (isLocked) return;
+    if (isLocked || isVerifying) return;
     triggerLightImpact();
     if (pin.length > 0) {
       setPin(pin.slice(0, -1));
@@ -119,7 +127,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   };
 
   const handleClear = () => {
-    if (isLocked) return;
+    if (isLocked || isVerifying) return;
     triggerLightImpact();
     setPin('');
     setErrorMessage(null);
@@ -202,6 +210,13 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             </Animated.View>
           )}
 
+          {isVerifying && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <ActivityIndicator size="small" color={SOL_COLORS.primary} style={{ marginRight: 6 }} />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: SOL_COLORS.primary }}>Vérification...</Text>
+            </View>
+          )}
+
           {errorMessage && (
             <View style={[styles.errorContainer, (isSmallScreen || isShortScreen) && { marginBottom: 10, paddingVertical: 8 }, isLocked && styles.errorContainerLocked]}>
               <Icon name="alert" size={14} color={isLocked ? '#991B1B' : SOL_COLORS.danger} style={{ marginRight: 6 }} />
@@ -210,7 +225,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           )}
 
           {/* Keypad — opacité réduite si verrouillé */}
-          <View style={[styles.keypad, (isSmallScreen || isShortScreen) && { gap: 8 }, isLocked && styles.keypadLocked]}>
+          <View style={[styles.keypad, (isSmallScreen || isShortScreen) && { gap: 8 }, (isLocked || isVerifying) && styles.keypadLocked]}>
             {numpadKeys.map((row, rIdx) => (
               <View key={rIdx} style={[styles.keypadRow, (isSmallScreen || isShortScreen) && { gap: 8 }]}>
                 {row.map((key) => {
@@ -218,7 +233,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
                   return (
                     <TouchableOpacity
                       key={key}
-                      activeOpacity={isLocked ? 1 : 0.65}
+                      activeOpacity={(isLocked || isVerifying) ? 1 : 0.65}
                       onPress={() => {
                         if (key === 'C') handleClear();
                         else if (key === 'DEL') handleBackspace();
@@ -230,7 +245,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
                         isAction && styles.keyBtnAction,
                       ]}
                       accessibilityLabel={key === 'DEL' ? 'Supprimer' : key === 'C' ? 'Effacer' : key}
-                      disabled={isLocked}
+                      disabled={isLocked || isVerifying}
                     >
                       {key === 'DEL' ? (
                         <Icon name="arrow-left" size={(isSmallScreen || isShortScreen) ? 18 : 20} color={SOL_COLORS.textSecondary} />

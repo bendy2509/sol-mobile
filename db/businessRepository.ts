@@ -1,6 +1,6 @@
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
-import { BusinessConfig, CycleStatus, DashboardMetrics, Member, PaymentFrequency } from '@/types';
+import { BusinessConfig, ClosedCycle, CycleStatus, DashboardMetrics, Member, PaymentFrequency } from '@/types';
 import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusinessId } from './sqlite';
 import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalculations';
 import { recordAuditLog } from '@/services/auditService';
@@ -165,6 +165,13 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
       startDate: todayStr,
     }),
   });
+
+  // 2. Archive complete state of the closed cycle for manager history and PDF downloads
+  try {
+    await saveClosedCycleSnapshot(collectorId, params.businessId, params.reason);
+  } catch (archiveErr) {
+    console.warn('Notice: Could not archive closed cycle snapshot:', archiveErr);
+  }
 
   if (params.mode === 'RENEW_SAME_MEMBERS') {
     // Purge any clients that were previously deleted so they can never resurface
@@ -470,6 +477,18 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const totalPayoutTxCount = Number(payoutTxRow?.count || 0);
   const effectiveHandsTouched = Math.max(handsTouchedCount, totalPayoutTxCount);
 
+  // Batch query: All client IDs who paid today (1 fast query instead of looping N queries)
+  const todayTxRows = await db.getAllAsync<{ client_id: string }>(
+    `SELECT client_id FROM transactions 
+     WHERE collector_id = ? 
+       AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
+       AND is_reversed = 0 
+       AND created_at_local >= ?
+     GROUP BY client_id`,
+    [collectorId, startOfDayIso]
+  );
+  const paidTodayClientIds = new Set(todayTxRows.map((t) => t.client_id));
+
   for (const m of members) {
     const parsedRanksCount = m.payout_ranks ? String(m.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
     const memberHandsCount = Math.max(1, Number(m.hands_count || 1), parsedRanksCount);
@@ -482,13 +501,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     const hasTouched = receivedCount >= memberHandsCount;
 
     // Check if member paid today
-    const paidTodayTx = await db.getFirstAsync<{ count: number }>(
-      `SELECT count(*) as count FROM transactions 
-       WHERE client_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
-         AND is_reversed = 0 AND created_at_local >= ?`,
-      [m.id, startOfDayIso]
-    );
-    const hasPaidToday = (paidTodayTx?.count || 0) > 0;
+    const hasPaidToday = paidTodayClientIds.has(m.id);
     const isCoveredInAdvance = m.paid_until_date && m.paid_until_date >= todayStr;
 
     if (hasPaidToday || isCoveredInAdvance) {
@@ -586,4 +599,225 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     currentRound: Math.min(effectiveChildrenCount, effectiveHandsTouched + 1),
     totalRounds: effectiveChildrenCount,
   };
+}
+
+/**
+ * Saves a complete snapshot of the closing/renewing cycle into closed_cycles table.
+ * Preserves all members, payments, and financial metrics so managers can download PDF reports anytime.
+ */
+export async function saveClosedCycleSnapshot(
+  collectorIdParam?: string,
+  businessIdParam?: string,
+  reason?: string
+): Promise<ClosedCycle | null> {
+  const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+  const business = await getActiveBusinessConfig(collectorId);
+  if (!business) return null;
+
+  const businessId = businessIdParam || business.id;
+  const now = new Date().toISOString();
+
+  // 1. Get collector details
+  const collector = await db.getFirstAsync<{ full_name: string; phone_number: string; zone?: string }>(
+    `SELECT full_name, phone_number, zone FROM collectors WHERE id = ?`,
+    [collectorId]
+  );
+
+  // 2. Fetch all clients and metrics for this cycle
+  const clientRows = await db.getAllAsync<{
+    id: string;
+    full_name: string;
+    phone_number: string;
+    payout_rank: number | null;
+    hands_count: number;
+    received_hands_count: number;
+    has_received_hand: number;
+    has_received_payout: number;
+    total_paid_amount: number;
+    current_balance: number;
+    paid_hands_count: number;
+  }>(
+    `SELECT id, full_name, phone_number, payout_rank, hands_count, received_hands_count, has_received_hand, has_received_payout, total_paid_amount, current_balance, paid_hands_count
+     FROM clients 
+     WHERE (collector_id = ? OR business_id = ?) 
+       AND id NOT IN (SELECT id FROM deleted_clients)
+     ORDER BY payout_rank ASC, full_name ASC`,
+    [collectorId, businessId]
+  );
+
+  const unitAmount = business.contributionAmount || 250;
+  let totalCycleHands = 0;
+  let totalCashCollected = 0;
+  let totalDistributed = 0;
+  let handsCollectedTotal = 0;
+
+  const membersSnapshot = clientRows.map((c, index) => {
+    const hCount = Math.max(1, Number(c.hands_count || 1));
+    const paidAmount = Number(c.total_paid_amount || c.current_balance || 0);
+    const hasReceived = (c.received_hands_count || 0) >= hCount || c.has_received_payout === 1 || c.has_received_hand === 1;
+    const handsCovered = Number(c.paid_hands_count || Math.floor(paidAmount / (unitAmount || 1)));
+
+    totalCycleHands += hCount;
+    totalCashCollected += paidAmount;
+    handsCollectedTotal += handsCovered;
+    if (hasReceived) {
+      totalDistributed += unitAmount * totalCycleHands;
+    }
+
+    return {
+      rank: c.payout_rank || (index + 1),
+      fullName: c.full_name,
+      phoneNumber: c.phone_number,
+      totalPaid: paidAmount,
+      handsCovered,
+      coverageStatus: handsCovered >= hCount ? 'À JOUR' : 'RETARD',
+      hasReceivedPayout: hasReceived,
+    };
+  });
+
+  const effectiveHands = totalCycleHands > 0 ? totalCycleHands : (business.totalSlots || 10);
+  const totalPotAmount = unitAmount * effectiveHands;
+  const netReserveBalance = totalCashCollected - totalDistributed;
+  const completionRate = effectiveHands > 0 ? Math.min(100, (handsCollectedTotal / (effectiveHands * effectiveHands)) * 100) : 0;
+
+  // 3. Determine cycle number
+  const countRow = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM closed_cycles WHERE collector_id = ?`,
+    [collectorId]
+  );
+  const cycleNumber = Number(countRow?.cnt || 0) + 1;
+
+  // 4. Detailed snapshot for ManagerBusinessReportPdfData
+  const pdfDataSnapshot = {
+    businessName: business.name,
+    collectorName: collector?.full_name || 'Responsable SOL',
+    collectorPhone: collector?.phone_number || '',
+    collectorZone: collector?.zone,
+    unitAmount,
+    totalSlots: effectiveHands,
+    registeredChildrenCount: clientRows.length,
+    totalPotAmount,
+    cycleStartDate: business.startDate,
+    cycleEndDate: business.endDate,
+    cycleNumber,
+    handsCollectedTotal,
+    totalCashCollected,
+    totalDistributed,
+    netReserveBalance,
+    completionRate,
+    members: membersSnapshot,
+    generatedAt: now,
+    reason: reason || 'Clôture et archivage du cycle SOL',
+  };
+
+  const snapshotJson = JSON.stringify(pdfDataSnapshot);
+  const id = uuidv4();
+
+  await db.runAsync(
+    `INSERT INTO closed_cycles (
+      id, collector_id, business_id, business_name, cycle_number,
+      start_date, end_date, closed_at, unit_amount, total_slots,
+      total_hands, total_pot, total_collected, total_distributed,
+      net_reserve, completion_rate, members_count, snapshot_data, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      collectorId,
+      businessId,
+      business.name,
+      cycleNumber,
+      business.startDate,
+      business.endDate,
+      now,
+      unitAmount,
+      business.totalSlots,
+      effectiveHands,
+      totalPotAmount,
+      totalCashCollected,
+      totalDistributed,
+      netReserveBalance,
+      completionRate,
+      clientRows.length,
+      snapshotJson,
+      now,
+    ]
+  );
+
+  return {
+    id,
+    collectorId,
+    businessId,
+    businessName: business.name,
+    cycleNumber,
+    startDate: business.startDate,
+    endDate: business.endDate,
+    closedAt: now,
+    unitAmount,
+    totalSlots: business.totalSlots,
+    totalHands: effectiveHands,
+    totalPot: totalPotAmount,
+    totalCollected: totalCashCollected,
+    totalDistributed,
+    netReserve: netReserveBalance,
+    completionRate,
+    membersCount: clientRows.length,
+    snapshotData: snapshotJson,
+    createdAt: now,
+  };
+}
+
+/**
+ * Retrieves all closed cycles for a collector.
+ */
+export async function getClosedCycles(collectorIdParam?: string): Promise<ClosedCycle[]> {
+  const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+
+  const rows = await db.getAllAsync<{
+    id: string;
+    collector_id: string;
+    business_id: string;
+    business_name: string;
+    cycle_number: number;
+    start_date: string;
+    end_date: string;
+    closed_at: string;
+    unit_amount: number;
+    total_slots: number;
+    total_hands: number;
+    total_pot: number;
+    total_collected: number;
+    total_distributed: number;
+    net_reserve: number;
+    completion_rate: number;
+    members_count: number;
+    snapshot_data: string;
+    created_at: string;
+  }>(
+    `SELECT * FROM closed_cycles WHERE collector_id = ? ORDER BY cycle_number DESC, closed_at DESC`,
+    [collectorId]
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    collectorId: r.collector_id,
+    businessId: r.business_id,
+    businessName: r.business_name,
+    cycleNumber: Number(r.cycle_number),
+    startDate: r.start_date,
+    endDate: r.end_date,
+    closedAt: r.closed_at,
+    unitAmount: Number(r.unit_amount),
+    totalSlots: Number(r.total_slots),
+    totalHands: Number(r.total_hands),
+    totalPot: Number(r.total_pot),
+    totalCollected: Number(r.total_collected),
+    totalDistributed: Number(r.total_distributed),
+    netReserve: Number(r.net_reserve || 0),
+    completionRate: Number(r.completion_rate || 0),
+    membersCount: Number(r.members_count || 0),
+    snapshotData: r.snapshot_data,
+    createdAt: r.created_at,
+  }));
 }

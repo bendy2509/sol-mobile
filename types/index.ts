@@ -198,6 +198,28 @@ export interface CashClosure {
   createdAt: string;
 }
 
+export interface ClosedCycle {
+  id: string; // UUIDv4
+  collectorId: string;
+  businessId: string;
+  businessName: string;
+  cycleNumber: number;
+  startDate: string;
+  endDate: string;
+  closedAt: string;
+  unitAmount: number;
+  totalSlots: number;
+  totalHands: number;
+  totalPot: number;
+  totalCollected: number;
+  totalDistributed: number;
+  netReserve: number;
+  completionRate: number;
+  membersCount: number;
+  snapshotData?: string; // JSON with complete member list & metrics for PDF generation
+  createdAt: string;
+}
+
 export type AuditLogAction =
   | 'CREATE_CONTRIBUTION'
   | 'REVERSE_CONTRIBUTION'

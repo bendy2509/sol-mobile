@@ -81,20 +81,31 @@ export async function getMembersWithPaymentStatus(options?: {
   const unitAmount = business?.contributionAmount || 250;
   const members: Member[] = [];
 
-  for (const r of rows) {
-    // Check if member paid today
-    const paidTodayRow = await db.getFirstAsync<{ count: number; last_date: string }>(
-      `SELECT count(*) as count, MAX(created_at_local) as last_date FROM transactions 
-       WHERE client_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
-      [r.id, startOfDayIso]
-    );
-    const hasPaidToday = (paidTodayRow?.count || 0) > 0;
+  // Batch query 1: All clients who made a payment today (1 fast query instead of N queries)
+  const paidTodayRows = await db.getAllAsync<{ client_id: string }>(
+    `SELECT client_id FROM transactions 
+     WHERE collector_id = ? 
+       AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
+       AND is_reversed = 0 
+       AND created_at_local >= ?
+     GROUP BY client_id`,
+    [collectorId, startOfDayIso]
+  );
+  const paidTodaySet = new Set(paidTodayRows.map((t) => t.client_id));
 
-    // Get last overall payment date
-    const lastTxRow = await db.getFirstAsync<{ last_date: string }>(
-      `SELECT MAX(created_at_local) as last_date FROM transactions WHERE client_id = ?`,
-      [r.id]
-    );
+  // Batch query 2: Last overall payment date for all clients (1 fast query instead of N queries)
+  const lastTxRows = await db.getAllAsync<{ client_id: string; last_date: string }>(
+    `SELECT client_id, MAX(created_at_local) as last_date 
+     FROM transactions 
+     WHERE collector_id = ? AND is_reversed = 0
+     GROUP BY client_id`,
+    [collectorId]
+  );
+  const lastTxMap = new Map(lastTxRows.map((t) => [t.client_id, t.last_date]));
+
+  for (const r of rows) {
+    const hasPaidToday = paidTodaySet.has(r.id);
+    const lastPaymentDate = lastTxMap.get(r.id) || null;
 
     const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
     const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
@@ -147,7 +158,7 @@ export async function getMembersWithPaymentStatus(options?: {
       syncStatus: (r.sync_status as any) || 'PENDING',
       paymentStatusToday,
       overdueRoundsCount,
-      lastPaymentDate: paidTodayRow?.last_date || lastTxRow?.last_date || null,
+      lastPaymentDate,
       totalPaidInCycle: totalPaid,
       handsCoveredAhead,
     });

@@ -116,6 +116,9 @@ export default function AdminScreen() {
   });
   const [adminEditName, setAdminEditName] = useState('');
   const [adminEditPhone, setAdminEditPhone] = useState('');
+  const [adminEditEmail, setAdminEditEmail] = useState('');
+  const [adminEditAddress, setAdminEditAddress] = useState('');
+  const [adminEditHours, setAdminEditHours] = useState('');
   const [adminEditPin, setAdminEditPin] = useState('');
 
   // Restore Modal State
@@ -154,6 +157,9 @@ export default function AdminScreen() {
       setAdminProfile(aProfile);
       setAdminEditName(aProfile.fullName);
       setAdminEditPhone(aProfile.phoneNumber);
+      setAdminEditEmail(aProfile.email || '');
+      setAdminEditAddress(aProfile.address || '');
+      setAdminEditHours(aProfile.supportHours || '');
       setAuditLogs(aLogs);
       setSyncSummary(sSummary);
     } catch (err) {
@@ -498,6 +504,9 @@ export default function AdminScreen() {
           await updateAdminProfile({
             fullName: adminEditName.trim(),
             phoneNumber: adminEditPhone.trim(),
+            email: adminEditEmail.trim() || undefined,
+            address: adminEditAddress.trim() || undefined,
+            supportHours: adminEditHours.trim() || undefined,
             pin: adminEditPin.trim().length === 4 ? adminEditPin.trim() : undefined,
           });
           triggerSuccessFeedback();
@@ -1313,17 +1322,33 @@ export default function AdminScreen() {
               Numéro de téléphone d'assistance affiché aux gestionnaires suspendus et sur les reçus officiels.
             </Text>
             <View style={styles.settingsRow}>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.settingsLabel}>Nom Admin :</Text>
                 <Text style={styles.settingsValue}>{adminProfile.fullName}</Text>
               </View>
-              <View>
-                <Text style={styles.settingsLabel}>Téléphone :</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingsLabel}>Téléphone Hotline :</Text>
                 <Text style={styles.settingsValue}>{adminProfile.phoneNumber}</Text>
               </View>
             </View>
+            <View style={[styles.settingsRow, { marginTop: 8 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingsLabel}>Email Support :</Text>
+                <Text style={styles.settingsValue}>{adminProfile.email || 'Non renseigné'}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingsLabel}>Adresse / Bureau :</Text>
+                <Text style={styles.settingsValue}>{adminProfile.address || 'Non renseignée'}</Text>
+              </View>
+            </View>
+            {adminProfile.supportHours ? (
+              <View style={{ marginTop: 6, marginBottom: 4 }}>
+                <Text style={styles.settingsLabel}>Horaires de Support :</Text>
+                <Text style={styles.settingsValue}>{adminProfile.supportHours}</Text>
+              </View>
+            ) : null}
             <TouchableOpacity activeOpacity={0.8} onPress={() => setIsAdminProfileModalOpen(true)} style={styles.settingsEditBtn}>
-              <Text style={styles.settingsEditBtnText}>Modifier Coordonnées Hotline</Text>
+              <Text style={styles.settingsEditBtnText}>Modifier Coordonnées Hotline & Support</Text>
             </TouchableOpacity>
           </View>
 
@@ -1586,12 +1611,24 @@ export default function AdminScreen() {
               </TouchableOpacity>
             </View>
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NOM DU SUPERVISEUR</Text>
+              <Text style={styles.formLabel}>NOM DU SUPERVISEUR / ADMINISTRATION</Text>
               <TextInput style={styles.formInput} value={adminEditName} onChangeText={setAdminEditName} placeholder="Nom Admin" />
             </View>
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NUMÉRO HOTLINE</Text>
-              <TextInput style={styles.formInput} value={adminEditPhone} onChangeText={setAdminEditPhone} keyboardType="phone-pad" />
+              <Text style={styles.formLabel}>NUMÉRO HOTLINE / ASSISTANCE</Text>
+              <TextInput style={styles.formInput} value={adminEditPhone} onChangeText={setAdminEditPhone} keyboardType="phone-pad" placeholder="+509 XX XX XXXX" />
+            </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>EMAIL DE SUPPORT</Text>
+              <TextInput style={styles.formInput} value={adminEditEmail} onChangeText={setAdminEditEmail} keyboardType="email-address" placeholder="support@solmobile.ht" autoCapitalize="none" />
+            </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>ADRESSE DU BUREAU / ZONE</Text>
+              <TextInput style={styles.formInput} value={adminEditAddress} onChangeText={setAdminEditAddress} placeholder="ex: Port-au-Prince, Haïti" />
+            </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>HORAIRES DE DISPONIBILITÉ</Text>
+              <TextInput style={styles.formInput} value={adminEditHours} onChangeText={setAdminEditHours} placeholder="ex: Lun - Sam : 08h00 - 18h00" />
             </View>
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>NOUVEAU CODE PIN ADMIN (4 CHIFFRES)</Text>

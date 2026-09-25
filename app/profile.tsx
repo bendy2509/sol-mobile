@@ -9,16 +9,18 @@ import {
   Alert,
   Modal,
   BackHandler,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { Header } from '@/components/Header';
 import { Icon } from '@/components/Icon';
-import { useAuth } from '@/context/AuthContext';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { useAuth, AdminProfile } from '@/context/AuthContext';
+import { getActiveBusinessConfig, getClosedCycles } from '@/db/businessRepository';
+import { getCashClosures } from '@/db/cashClosureRepository';
 import { getDatabase } from '@/db/sqlite';
-import { BusinessConfig } from '@/types';
+import { BusinessConfig, ClosedCycle } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { hashPin, verifyPinHash } from '@/lib/crypto';
@@ -28,10 +30,13 @@ import { useResponsive } from '@/hooks/useResponsive';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { activeCollector, userRole, logout, refreshSession, isImpersonating, exitImpersonation } = useAuth();
+  const { activeCollector, userRole, logout, refreshSession, isImpersonating, exitImpersonation, getAdminProfile } = useAuth();
   const { contentMaxWidth, horizontalPadding, width } = useResponsive();
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
+  const [adminContact, setAdminContact] = useState<AdminProfile | null>(null);
+  const [closedCyclesCount, setClosedCyclesCount] = useState(0);
+  const [cashClosuresCount, setCashClosuresCount] = useState(0);
 
   useEffect(() => {
     const onBackPress = () => {
@@ -59,11 +64,46 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     async function load() {
-      const biz = await getActiveBusinessConfig();
-      setBusiness(biz);
+      try {
+        const [biz, aProfile, cCycles, cClosures] = await Promise.all([
+          getActiveBusinessConfig(),
+          getAdminProfile ? getAdminProfile() : null,
+          getClosedCycles(activeCollector?.id).catch(() => []),
+          getCashClosures(activeCollector?.id).catch(() => []),
+        ]);
+        setBusiness(biz);
+        if (aProfile) setAdminContact(aProfile);
+        setClosedCyclesCount(cCycles.length);
+        setCashClosuresCount(cClosures.length);
+      } catch (err) {
+        console.warn('Profile load notice:', err);
+      }
     }
     load();
-  }, []);
+  }, [activeCollector?.id, getAdminProfile]);
+
+  const handleCallAdmin = (phone?: string) => {
+    if (!phone) return;
+    const cleanNumber = phone.replace(/[^0-9+]/g, '');
+    Linking.openURL(`tel:${cleanNumber}`).catch(() => {
+      Alert.alert('Assistance Téléphonique', `Contactez l'administration au : ${phone}`);
+    });
+  };
+
+  const handleWhatsAppAdmin = (phone?: string) => {
+    if (!phone) return;
+    const digitsOnly = phone.replace(/[^0-9]/g, '');
+    Linking.openURL(`https://wa.me/${digitsOnly}`).catch(() => {
+      Alert.alert('WhatsApp', `Numéro de support : ${phone}`);
+    });
+  };
+
+  const handleEmailAdmin = (email?: string) => {
+    if (!email) return;
+    Linking.openURL(`mailto:${email}`).catch(() => {
+      Alert.alert('Email Support', `Adresse email : ${email}`);
+    });
+  };
 
   const handleSaveProfileSubmit = async () => {
     setProfileError(null);
@@ -276,6 +316,137 @@ export default function ProfileScreen() {
             </View>
           </View>
         )}
+
+        {/* Admin Contact & Support Card */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <Icon name="phone" size={16} color="#059669" />
+            <Text style={[styles.sectionTitle, { color: '#065F46' }]}>CONTACT & SUPPORT ADMINISTRATEUR</Text>
+          </View>
+          <Text style={styles.sectionSubtext}>
+            Coordonnées officielles de l'administration pour toute demande d'assistance technique ou financière.
+          </Text>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Superviseur :</Text>
+            <Text style={styles.infoValueBold}>{adminContact?.fullName || 'Administration Centrale'}</Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Téléphone Hotline :</Text>
+            <Text style={[styles.infoValueBold, { color: '#059669' }]}>{adminContact?.phoneNumber || '+509 34 56 7890'}</Text>
+          </View>
+
+          {adminContact?.email ? (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Email Support :</Text>
+              <Text style={styles.infoValue}>{adminContact.email}</Text>
+            </View>
+          ) : null}
+
+          {adminContact?.address ? (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Bureau / Adresse :</Text>
+              <Text style={styles.infoValue}>{adminContact.address}</Text>
+            </View>
+          ) : null}
+
+          {adminContact?.supportHours ? (
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Disponibilité :</Text>
+              <Text style={styles.infoValue}>{adminContact.supportHours}</Text>
+            </View>
+          ) : null}
+
+          {/* Quick Action Contact Buttons */}
+          <View style={styles.contactBtnGrid}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => handleCallAdmin(adminContact?.phoneNumber)}
+              style={styles.contactActionBtnCall}
+            >
+              <Icon name="phone" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.contactActionBtnTextWhite}>Appeler</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => handleWhatsAppAdmin(adminContact?.phoneNumber)}
+              style={styles.contactActionBtnWa}
+            >
+              <Icon name="user" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
+              <Text style={styles.contactActionBtnTextWhite}>WhatsApp</Text>
+            </TouchableOpacity>
+
+            {adminContact?.email ? (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => handleEmailAdmin(adminContact.email)}
+                style={styles.contactActionBtnEmail}
+              >
+                <Icon name="share" size={14} color="#1E293B" style={{ marginRight: 6 }} />
+                <Text style={styles.contactActionBtnTextDark}>Email</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
+
+        {/* History & Closed Cycles Overview */}
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <Icon name="history" size={16} color="#7C3AED" />
+            <Text style={[styles.sectionTitle, { color: '#5B21B6' }]}>HISTORIQUE DES CYCLES & BORDEREAUX</Text>
+          </View>
+          <Text style={styles.sectionSubtext}>
+            Consultez et téléchargez les rapports complets de vos cycles clôturés et de vos journées passées.
+          </Text>
+
+          {/* Closed Cycles Entry */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => router.push('/cycle-management' as any)}
+            style={styles.historyLinkCard}
+          >
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                <Icon name="sol" size={15} color="#7C3AED" />
+                <Text style={styles.historyLinkTitle}>Cycles SOL Clôturés</Text>
+              </View>
+              <Text style={styles.historyLinkSub}>
+                {closedCyclesCount > 0
+                  ? `${closedCyclesCount} cycle(s) archivé(s) avec bilans PDF téléchargeables`
+                  : 'Aucun cycle clôturé pour le moment'}
+              </Text>
+            </View>
+            <View style={styles.historyBadgeBtn}>
+              <Text style={styles.historyBadgeBtnText}>Consulter</Text>
+              <Icon name="arrow-right" size={12} color="#7C3AED" />
+            </View>
+          </TouchableOpacity>
+
+          {/* Cash Closures Entry */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => router.push('/closure' as any)}
+            style={[styles.historyLinkCard, { marginTop: 10 }]}
+          >
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                <Icon name="cash" size={15} color="#059669" />
+                <Text style={styles.historyLinkTitle}>Clôtures de Caisse Journalières</Text>
+              </View>
+              <Text style={styles.historyLinkSub}>
+                {cashClosuresCount > 0
+                  ? `${cashClosuresCount} bordereau(x) de clôture disponibles`
+                  : 'Historique des réconciliations de caisse'}
+              </Text>
+            </View>
+            <View style={[styles.historyBadgeBtn, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+              <Text style={[styles.historyBadgeBtnText, { color: '#059669' }]}>Bordereaux</Text>
+              <Icon name="arrow-right" size={12} color="#059669" />
+            </View>
+          </TouchableOpacity>
+        </View>
 
         {/* Security & PIN Settings */}
         <View style={styles.sectionCard}>
@@ -822,5 +993,100 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
+  },
+  sectionSubtext: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  contactBtnGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+    flexWrap: 'wrap',
+  },
+  contactActionBtnCall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    flex: 1,
+    minWidth: 100,
+  },
+  contactActionBtnWa: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#25D366',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    flex: 1,
+    minWidth: 100,
+  },
+  contactActionBtnEmail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    flex: 1,
+    minWidth: 100,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  contactActionBtnTextWhite: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  contactActionBtnTextDark: {
+    color: '#1E293B',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  historyLinkCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  historyLinkTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: SOL_COLORS.textPrimary,
+  },
+  historyLinkSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  historyBadgeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+    marginLeft: 10,
+  },
+  historyBadgeBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#7C3AED',
   },
 });

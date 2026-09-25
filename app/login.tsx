@@ -99,17 +99,22 @@ export default function LoginScreen() {
         }
       }
     } else {
-      if (pin.length < 4) {
+      if (pin.length < 4 && !isSubmitting) {
         const newPin = pin + digit;
         setPin(newPin);
         if (newPin.length === 4) {
-          executeLogin(fullPhone, newPin);
+          setIsSubmitting(true);
+          // Yield to JS event loop so the 4th dot turns active immediately and loader renders
+          setTimeout(() => {
+            executeLogin(fullPhone, newPin);
+          }, 30);
         }
       }
     }
   };
 
   const handleBackspace = () => {
+    if (isSubmitting) return;
     triggerLightImpact();
     setErrorMessage(null);
 
@@ -127,6 +132,7 @@ export default function LoginScreen() {
   };
 
   const handleClear = () => {
+    if (isSubmitting) return;
     triggerLightImpact();
     setErrorMessage(null);
     if (activeField === 'PHONE') {
@@ -272,6 +278,13 @@ export default function LoginScreen() {
                 );
               })}
             </View>
+
+            {isSubmitting && (
+              <View style={styles.submittingRow}>
+                <ActivityIndicator size="small" color={SOL_COLORS.primary} style={{ marginRight: 8 }} />
+                <Text style={styles.submittingText}>Vérification du code PIN en cours...</Text>
+              </View>
+            )}
           </TouchableOpacity>
 
           {/* Error Message */}
@@ -616,5 +629,17 @@ const styles = StyleSheet.create({
   registerLinkHighlight: {
     color: SOL_COLORS.primaryDark,
     fontWeight: '800',
+  },
+  submittingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    paddingVertical: 4,
+  },
+  submittingText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: SOL_COLORS.primary,
   },
 });
