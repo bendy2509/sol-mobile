@@ -15,19 +15,24 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getClientById, updateClientDetails, deleteClient, getAllClients } from '@/db/clientRepository';
 import { getTransactionsByClient, reverseTransaction } from '@/db/transactionRepository';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { payoutMemberHand } from '@/db/memberRepository';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/Badge';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { ClosedCycleLockNotice } from '@/components/ClosedCycleLockNotice';
 import { BusinessConfig, Client, Transaction } from '@/types';
 import { formatCurrency, formatDate, formatDateShort, getInitials } from '@/lib/formatters';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { recordAuditLog } from '@/services/auditService';
-import { calculateCycleContributionLimits, calculateCycleTotalHands } from '@/services/financialService';
+import {
+  calculateCycleContributionLimits,
+  calculateCycleTotalHands,
+  isTransactionFromClosedCycle,
+} from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 import { useResponsive } from '@/hooks/useResponsive';
@@ -54,6 +59,7 @@ export default function ClientDetailScreen() {
   const [isReversalModalOpen, setIsReversalModalOpen] = useState(false);
   const [selectedTxForReversal, setSelectedTxForReversal] = useState<Transaction | null>(null);
   const [reversalReason, setReversalReason] = useState('');
+  const [cycleBoundary, setCycleBoundary] = useState<string | null>(null);
   const [editFullName, setEditFullName] = useState('');
   const [editPhoneNumber, setEditPhoneNumber] = useState('');
   const [editRank, setEditRank] = useState('');
@@ -69,13 +75,15 @@ export default function ClientDetailScreen() {
 
   const loadClientData = async () => {
     if (!id) return;
-    const [data, txs, activeBiz, clientList] = await Promise.all([
+    const [data, txs, activeBiz, clientList, boundary] = await Promise.all([
       getClientById(id),
       getTransactionsByClient(id),
       getActiveBusinessConfig(),
       getAllClients(),
+      getCurrentCycleBoundary(),
     ]);
     setClient(data);
+    setCycleBoundary(boundary);
     setTransactions(txs);
     setBusiness(activeBiz);
     setAllClients(clientList);
@@ -531,8 +539,11 @@ Reçu archivé avec succès sur SOL Mobile.`;
     });
   };
 
+  const isSelectedTxLocked =
+    !isAdmin && !!selectedTx && isTransactionFromClosedCycle(selectedTx.createdAtLocal, cycleBoundary);
+
   const handleInitiateCancel = () => {
-    if (!selectedTx) return;
+    if (!selectedTx || isSelectedTxLocked) return;
     setIsDetailModalOpen(false);
     setSelectedTxForReversal(selectedTx);
     setReversalReason('');
@@ -1010,7 +1021,11 @@ Reçu archivé avec succès sur SOL Mobile.`;
                     </View>
 
                     {/* Row 2: Cancel / Reversal */}
-                    {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
+                    {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxLocked && (
+                      <ClosedCycleLockNotice transaction={selectedTx} clientName={client.fullName} />
+                    )}
+
+                    {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && !isSelectedTxLocked && (
                       <TouchableOpacity
                         activeOpacity={0.8}
                         onPress={handleInitiateCancel}

@@ -8,8 +8,10 @@ import {
   UserRole,
 } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
-import { getActiveBusinessConfig } from './businessRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary } from './businessRepository';
 import {
+  CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE,
+  isTransactionFromClosedCycle,
   calculateCoverageDate,
   calculateHandsCount,
   calculateCycleContributionLimits,
@@ -483,10 +485,10 @@ export async function reverseTransaction(params: {
 }): Promise<Transaction> {
   const { transactionId, reason } = params;
 
-  // Security Guard: only ADMIN may reverse transactions
-  if (params.userRole && params.userRole !== 'ADMIN') {
+  // Security Guard: read-only profiles can never reverse transactions
+  if (params.userRole === 'READ_ONLY' || params.userRole === 'USER') {
     throw new Error(
-      "Accès refusé : Seul un administrateur peut annuler une transaction. Contactez votre administrateur SOL."
+      "Accès refusé : Votre profil est en consultation seule. Contactez votre gestionnaire ou l'administrateur SOL."
     );
   }
 
@@ -496,7 +498,6 @@ export async function reverseTransaction(params: {
 
   const db = await getDatabase();
   const collectorId = params.collectorId || (await getActiveCollectorId());
-  const activeBusiness = await getActiveBusinessConfig();
   const now = new Date().toISOString();
   const reversalId = uuidv4();
 
@@ -510,6 +511,7 @@ export async function reverseTransaction(params: {
     hands_covered: number;
     type: string;
     is_reversed: number;
+    created_at_local: string;
   }>(`SELECT * FROM transactions WHERE id = ?`, [transactionId]);
 
   if (!original) {
@@ -524,14 +526,23 @@ export async function reverseTransaction(params: {
     throw new Error("Impossible d'annuler une opération d'annulation.");
   }
 
+  // Closed-cycle Guard: past-cycle entries are immutable for managers, only ADMIN may reverse them on request
+  const ownerCollectorId = original.collector_id || collectorId;
+  const cycleBoundary = await getCurrentCycleBoundary(ownerCollectorId);
+  const isClosedCycleTx = isTransactionFromClosedCycle(original.created_at_local, cycleBoundary);
+  if (isClosedCycleTx && params.userRole !== 'ADMIN') {
+    throw new Error(`${CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE}.`);
+  }
+
+  const activeBusiness = await getActiveBusinessConfig(ownerCollectorId);
 
   // Fetch all transactions for this client to reconstruct financial timeline accurately
   const allClientTxs = await getTransactions({ clientId: original.client_id });
 
-  // Mark original as reversed in memory list
-  const updatedTxsList = allClientTxs.map((t) =>
-    t.id === original.id ? { ...t, isReversed: true } : t
-  );
+  // Keep only current-cycle entries (counters are reset at each renewal) and mark original as reversed
+  const updatedTxsList = allClientTxs
+    .filter((t) => !isTransactionFromClosedCycle(t.createdAtLocal, cycleBoundary))
+    .map((t) => (t.id === original.id ? { ...t, isReversed: true } : t));
 
   // Fetch client details for hands_count
   const clientRow = await db.getFirstAsync<{ hands_count: number | null }>(
@@ -579,7 +590,8 @@ export async function reverseTransaction(params: {
     );
 
     // 3. Update Client with exact reconstructed timeline values
-    await db.runAsync(
+    // (a closed-cycle reversal is archival only: current-cycle counters stay untouched)
+    if (!isClosedCycleTx) await db.runAsync(
       `UPDATE clients 
        SET current_balance = ?, total_paid_amount = ?, paid_hands_count = ?, 
            received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, 
@@ -607,7 +619,12 @@ export async function reverseTransaction(params: {
     entityType: 'TRANSACTION',
     entityId: reversalId,
     oldData: { originalId: original.id, amount: original.amount, type: original.type },
-    newData: { reconstructed, reversalId, cancelledTxId: original.id },
+    newData: {
+      reconstructed: isClosedCycleTx ? null : reconstructed,
+      reversalId,
+      cancelledTxId: original.id,
+      closedCycle: isClosedCycleTx,
+    },
     reason: reason.trim(),
   }).catch(() => {});
 

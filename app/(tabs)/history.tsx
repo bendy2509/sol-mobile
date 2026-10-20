@@ -20,9 +20,10 @@ import { Header } from '@/components/Header';
 import { Badge } from '@/components/Badge';
 import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { ClosedCycleLockNotice } from '@/components/ClosedCycleLockNotice';
 import { getAllTransactions, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveCollector } from '@/db/sqlite';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
 import { getClientById } from '@/db/clientRepository';
 import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useAuth } from '@/context/AuthContext';
@@ -31,6 +32,7 @@ import { Transaction, TransactionType } from '@/types';
 import { formatCurrency, formatDate } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { SOL_COLORS } from '@/constants/Colors';
+import { isTransactionFromClosedCycle } from '@/services/financialService';
 import { useResponsive } from '@/hooks/useResponsive';
 
 export default function HistoryScreen() {
@@ -50,6 +52,7 @@ export default function HistoryScreen() {
   const [isCancelPromptOpen, setIsCancelPromptOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [cycleBoundary, setCycleBoundary] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -61,6 +64,9 @@ export default function HistoryScreen() {
         allCollectors: isAdmin,
       });
       setTransactions(list);
+      if (!isAdmin) {
+        setCycleBoundary(await getCurrentCycleBoundary(activeCollector?.id));
+      }
     } catch (err) {
       console.warn('History load error:', err);
     }
@@ -180,12 +186,16 @@ Reçu certifié et archivé avec succès. Merci !`;
     });
   };
 
+  const isSelectedTxLocked =
+    !isAdmin && !!selectedTx && isTransactionFromClosedCycle(selectedTx.createdAtLocal, cycleBoundary);
+
   const handleInitiateCancel = () => {
     if (!selectedTx) return;
     if (selectedTx.type === 'REVERSAL') {
       Alert.alert('Action Impossible', 'Une opération d’annulation ne peut pas être elle-même annulée.');
       return;
     }
+    if (isSelectedTxLocked) return;
     setCancelReason('');
     setIsDetailModalOpen(false);
     setIsCancelPromptOpen(true);
@@ -511,7 +521,11 @@ Reçu certifié et archivé avec succès. Merci !`;
                     </View>
 
                     {/* Row 2: Cancel / Reversal */}
-                    {selectedTx.type !== 'REVERSAL' && !isReadOnly && (
+                    {selectedTx.type !== 'REVERSAL' && !isReadOnly && isSelectedTxLocked && (
+                      <ClosedCycleLockNotice transaction={selectedTx} />
+                    )}
+
+                    {selectedTx.type !== 'REVERSAL' && !isReadOnly && !isSelectedTxLocked && (
                       <TouchableOpacity
                         activeOpacity={0.8}
                         onPress={handleInitiateCancel}

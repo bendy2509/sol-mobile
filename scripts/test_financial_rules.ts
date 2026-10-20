@@ -12,6 +12,7 @@ import {
   calculateClientPaymentStatus,
   assertPayoutEligibility,
   calculateCycleTotalHands,
+  isTransactionFromClosedCycle,
 } from '../services/financialService';
 import { calculateCycleEndDate, calculateDaysRemaining, calculateCycleTotalDays } from '../lib/dateCalculations';
 import { Transaction } from '../types';
@@ -707,6 +708,17 @@ assert(dynamicGroupUpdated.length === 4, 'Still 4 children enrolled');
 const totalHandsAfterIncrease = calculateCycleTotalHands(dynamicGroupUpdated as any);
 assert(totalHandsAfterIncrease === 7, 'Increasing child 1 from 1 to 2 hands: total cycle hands increases from 6 to 7 mains');
 assert(calculatePotAmount(totalHandsAfterIncrease, 250) === 1750, 'Pot after increasing hand: 7 * 250 = 1,750 HTG');
+
+// 18. SECTION 18: CLOSED-CYCLE REVERSAL LOCK
+// Transactions recorded before the current cycle boundary belong to a closed cycle:
+// managers cannot reverse them, only the Admin can on request.
+const cycleBoundary = '2026-10-15T14:30:00.000Z';
+assert(isTransactionFromClosedCycle('2026-10-15T09:00:00.000Z', cycleBoundary) === true, 'Tx earlier the same day as renewal is from the closed cycle');
+assert(isTransactionFromClosedCycle('2026-09-01T12:00:00.000Z', cycleBoundary) === true, 'Tx from a previous month is from the closed cycle');
+assert(isTransactionFromClosedCycle('2026-10-15T14:30:00.000Z', cycleBoundary) === false, 'Tx exactly at the boundary belongs to the current cycle');
+assert(isTransactionFromClosedCycle('2026-10-16T08:00:00.000Z', cycleBoundary) === false, 'Tx after renewal belongs to the current cycle');
+assert(isTransactionFromClosedCycle('2026-09-01T12:00:00.000Z', null) === false, 'No boundary (first cycle, no archive) => never locked');
+assert(isTransactionFromClosedCycle('invalid-date', cycleBoundary) === false, 'Invalid tx date => not locked (no false lock)');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);

@@ -285,6 +285,27 @@ export function calculateCoverageDate(params: {
 export const calculateNextCoverage = calculateCoverageDate;
 
 /**
+ * Official lock notice shown when a manager tries to reverse a transaction from a closed cycle.
+ */
+export const CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE =
+  "Action d'un cycle clôturé - Seul l'administrateur peut l'annuler sur demande";
+
+/**
+ * Returns true when a transaction was recorded before the current cycle boundary
+ * (i.e. it belongs to a closed / archived cycle and is immutable for managers).
+ */
+export function isTransactionFromClosedCycle(
+  createdAtLocal: string | null | undefined,
+  cycleBoundaryIso: string | null | undefined
+): boolean {
+  if (!createdAtLocal || !cycleBoundaryIso) return false;
+  const txTime = new Date(createdAtLocal).getTime();
+  const boundaryTime = new Date(cycleBoundaryIso).getTime();
+  if (Number.isNaN(txTime) || Number.isNaN(boundaryTime)) return false;
+  return txTime < boundaryTime;
+}
+
+/**
  * Reconstructs a member child's exact financial timeline from raw transaction history.
  * Used during transaction reversals, audits, and consistency checks to guarantee zero state drift.
  */
