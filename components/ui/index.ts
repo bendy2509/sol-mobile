@@ -14,6 +14,8 @@ export { ListItem } from './ListItem';
 export type { ListItemProps } from './ListItem';
 export { MetricTile } from './MetricTile';
 export type { MetricTileProps, MetricTone } from './MetricTile';
+export { ProgressBar } from './ProgressBar';
+export type { ProgressBarProps } from './ProgressBar';
 export { Screen } from './Screen';
 export type { ScreenProps } from './Screen';
 export { SectionHeader } from './SectionHeader';

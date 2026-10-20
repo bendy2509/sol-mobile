@@ -10,13 +10,15 @@ export interface ScreenProps {
   scroll?: boolean;
   /** Sticky bottom zone (main action in the thumb zone), above the safe area. */
   footer?: React.ReactNode;
-  /** Optional element pinned above the content (banner, search). */
+  /** Element pinned above the content, full width (app header, banner). */
   header?: React.ReactNode;
   /** Safe-area edges handled here; tabs/stack headers already cover the top. */
   edges?: Edge[];
   /** Horizontal gutter on content (default true). */
   padded?: boolean;
   refreshControl?: React.ReactElement<RefreshControlProps>;
+  /** Pads the footer with the bottom safe area (false inside tabs: the tab bar already does). */
+  footerSafeArea?: boolean;
   contentStyle?: StyleProp<ViewStyle>;
 }
 
@@ -32,6 +34,7 @@ export function Screen({
   edges = ['left', 'right'],
   padded = true,
   refreshControl,
+  footerSafeArea = true,
   contentStyle,
 }: ScreenProps) {
   const { colors, spacing, layout, shadows } = useTheme();
@@ -47,7 +50,7 @@ export function Screen({
 
   return (
     <SafeAreaView edges={edges} style={{ flex: 1, backgroundColor: colors.background }}>
-      {header ? <View style={inner}>{header}</View> : null}
+      {header}
       {scroll ? (
         <ScrollView
           style={{ flex: 1 }}
@@ -63,7 +66,7 @@ export function Screen({
       )}
       {footer ? (
         <SafeAreaView
-          edges={['bottom']}
+          edges={footerSafeArea ? ['bottom'] : []}
           style={[{ backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border }, shadows.sheet]}
         >
           <View style={[inner, { paddingVertical: spacing.md, gap: spacing.sm }]}>{footer}</View>

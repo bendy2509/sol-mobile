@@ -81,13 +81,14 @@ Tout s'importe depuis `@/components/ui`.
 
 | Composant | Rôle | Points clés |
 |---|---|---|
-| `Screen` | Coque d'écran | Fond thématisé, safe area, largeur max centrée sur tablette, `keyboardShouldPersistTaps`. `footer` = zone d'action fixe en bas. `scroll={false}` quand la racine est une `FlatList`. |
+| `Screen` | Coque d’écran | Fond thématisé, safe area, largeur max centrée sur tablette, `keyboardShouldPersistTaps`. `header` pleine largeur, `footer` = zone d’action fixe en bas (`footerSafeArea={false}` dans les onglets). `scroll={false}` quand la racine est une `FlatList`. |
 | `Text` | Tout texte | `variant` (échelle typo) + `tone` (`muted`, `danger`, `onHero`…). `maxFontSizeMultiplier` 1.6. |
 | `Button` | Actions | `primary` / `secondary` / `danger` / `ghost`, tailles `md` 48 et `lg` 56, `icon`, `loading`, `disabled`. **`locked` + `lockedLabel`** pour les actions verrouillées (bordure en tirets + cadenas, non pressable). `haptic` pour le retour tactile. |
 | `Card` | Surface | Tons `default`, `sunken`, `hero`, `success`, `warning`, `danger`, `locked`, `supervisor`. `onPress` optionnel. |
 | `AmountText` | Montants HTG | Tailles `hero` / `large` / `medium` / `small`. `sign="credit"` → `+`, `sign="debit"` → `−`. Zéro neutre. Sélectionnable. |
 | `StatusBadge` | Statuts | `PAID_TODAY`, `PAID_IN_ADVANCE`, `UNPAID_TODAY`, `OVERDUE`, `UPCOMING_PAYOUT`, `HAND_RECEIVED`, **`LOCKED`**. `detail` (« 1 tour », « 2/3 mains »). `appearance="inline"` pour les listes denses. |
-| `ListItem` | Ligne de registre | `leading` · titre / sous-titre / `meta` · `trailing`, hauteur ≥ 64, séparateur, chevron. Mémoïsé pour `FlatList`. |
+| `ListItem` | Ligne de registre | `leading` · titre / sous-titre / `meta` · `trailing`, hauteur ≥ 64, séparateur, chevron, `selected` (choix courant d'un sélecteur). Mémoïsé pour `FlatList`. |
+| `ProgressBar` | Progression | Valeur 0 → 1, tons `primary` / `success` / `onHero`, rôle `progressbar` accessible. |
 | `Avatar` | Initiales ou rang | `rank` pour l'ordre de tirage, `highlighted` pour le bénéficiaire courant. |
 | `MetricTile` | Chiffre clé | `tone` `danger` / `warning` teinte la tuile entière (attention requise), `success` colore seulement la valeur. |
 | `SectionHeader` | Titre de section | « Adhérents (4) » + action texte (cible 48 dp). |

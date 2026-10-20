@@ -18,6 +18,8 @@ export interface ListItemProps {
   showChevron?: boolean;
   /** Draws the bottom divider (false on the last row of a group). */
   divider?: boolean;
+  /** Highlights the row (current choice in a picker). */
+  selected?: boolean;
   accessibilityLabel?: string;
 }
 
@@ -31,6 +33,7 @@ export const ListItem = React.memo(function ListItem({
   onPress,
   showChevron = false,
   divider = true,
+  selected = false,
   accessibilityLabel,
 }: ListItemProps) {
   const { colors, spacing } = useTheme();
@@ -63,6 +66,7 @@ export const ListItem = React.memo(function ListItem({
     paddingHorizontal: spacing.md,
     borderBottomWidth: divider ? 1 : 0,
     borderBottomColor: colors.divider,
+    backgroundColor: selected ? colors.primarySoft : undefined,
   };
 
   if (!onPress) return <View style={rowStyle}>{content}</View>;
@@ -72,6 +76,7 @@ export const ListItem = React.memo(function ListItem({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityState={{ selected }}
       style={({ pressed }) => [rowStyle, pressed && { backgroundColor: colors.surfacePressed }]}
     >
       {content}
