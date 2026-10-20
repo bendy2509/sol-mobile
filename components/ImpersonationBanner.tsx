@@ -1,14 +1,19 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
-import { Icon } from '@/components/Icon';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { Icon, Text } from '@/components/ui';
 import { triggerMediumImpact } from '@/lib/haptics';
+import { useTheme } from '@/theme';
 
+/**
+ * 👑 Supervisor mode banner. Uses the dedicated `supervisor` color (violet), which never
+ * appears in manager mode, so an admin can't mistake whose carnet they are acting on.
+ */
 export const ImpersonationBanner: React.FC = () => {
   const router = useRouter();
   const { isImpersonating, userRole, activeCollector, exitImpersonation } = useAuth();
+  const { colors, spacing, radius, layout } = useTheme();
 
   if (!isImpersonating && userRole !== 'ADMIN') {
     return null;
@@ -23,81 +28,46 @@ export const ImpersonationBanner: React.FC = () => {
   const managerName = activeCollector?.fullName || 'Gestionnaire';
 
   return (
-    <View style={styles.container}>
-      <View style={styles.contentRow}>
-        <View style={styles.badgeBox}>
-          <Icon name="crown" size={14} color="#B45309" />
-        </View>
-        <View style={styles.textContainer}>
-          <Text style={styles.bannerTitle}>MODE SUPERVISEUR</Text>
-          <Text style={styles.bannerSubtitle} numberOfLines={1}>
-            Espace : {managerName}
-          </Text>
-        </View>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={handleReturnToAdmin}
-          style={styles.returnBtn}
-          accessibilityLabel="Retourner au Dashboard Admin"
-        >
-          <Icon name="arrow-left" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-          <Text style={styles.returnBtnText}>Retour Admin</Text>
-        </TouchableOpacity>
+    <View
+      accessibilityRole="summary"
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.sm,
+        paddingVertical: spacing.sm,
+        paddingHorizontal: layout.gutter,
+        backgroundColor: colors.supervisor,
+        zIndex: 99,
+      }}
+    >
+      <Icon name="crown" size={20} color={colors.onSupervisor} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text variant="label" style={{ color: colors.onSupervisor }}>
+          Mode superviseur
+        </Text>
+        <Text variant="caption" style={{ color: colors.onSupervisor }} numberOfLines={1}>
+          Espace : {managerName}
+        </Text>
       </View>
+      <Pressable
+        onPress={handleReturnToAdmin}
+        accessibilityRole="button"
+        accessibilityLabel="Retourner au Dashboard Admin"
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: spacing.xs,
+          minHeight: layout.touchTarget - spacing.sm,
+          paddingHorizontal: spacing.md,
+          borderRadius: radius.md,
+          backgroundColor: pressed ? colors.supervisorSoft : colors.surface,
+        })}
+      >
+        <Icon name="arrow-left" size={16} color={colors.supervisor} />
+        <Text variant="label" style={{ color: colors.supervisor }}>
+          Retour admin
+        </Text>
+      </Pressable>
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#FEF3C7',
-    borderBottomWidth: 1,
-    borderBottomColor: '#FDE68A',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    zIndex: 99,
-  },
-  contentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  badgeBox: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#FDE68A',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-  },
-  textContainer: {
-    flex: 1,
-    marginRight: 8,
-  },
-  bannerTitle: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#92400E',
-    letterSpacing: 0.5,
-  },
-  bannerSubtitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#78350F',
-  },
-  returnBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#B45309',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    ...SHADOWS.sm,
-  },
-  returnBtnText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-});

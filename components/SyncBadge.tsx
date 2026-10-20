@@ -1,17 +1,25 @@
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, View, ActivityIndicator } from 'react-native';
+import { Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSync } from '@/context/SyncContext';
-import { Icon } from './Icon';
+import { Icon, Text, UiIconName } from '@/components/ui';
 import { triggerLightImpact } from '@/lib/haptics';
+import { useTheme } from '@/theme';
 
 interface SyncBadgeProps {
   onSyncComplete?: () => void;
+  /** Icon + count only (small screens); the full label stays in the accessibility label. */
+  compact?: boolean;
 }
 
-export const SyncBadge: React.FC<SyncBadgeProps> = ({ onSyncComplete }) => {
+/**
+ * Sync status chip. Pending operations are a normal offline state, not an error:
+ * neutral tone, never red.
+ */
+export const SyncBadge: React.FC<SyncBadgeProps> = ({ onSyncComplete, compact = false }) => {
   const router = useRouter();
   const { syncState, triggerSync } = useSync();
+  const { colors, spacing, radius, layout } = useTheme();
 
   const handlePress = async () => {
     triggerLightImpact();
@@ -23,70 +31,62 @@ export const SyncBadge: React.FC<SyncBadgeProps> = ({ onSyncComplete }) => {
     }
   };
 
-  const getStatusDisplay = () => {
+  const getStatusDisplay = (): { bg: string; fg: string; label: string; short: string; icon?: UiIconName; spinner?: boolean } => {
     if (syncState.isSyncing) {
-      return {
-        bg: '#EFF6FF',
-        border: '#BFDBFE',
-        text: '#1D4ED8',
-        label: 'Envoi...',
-        showSpinner: true,
-      };
+      return { bg: colors.infoSoft, fg: colors.info, label: 'Envoi…', short: '', spinner: true };
     }
-
     if (!syncState.isOnline) {
       return {
-        bg: '#FEF2F2',
-        border: '#FECACA',
-        text: '#B91C1C',
-        label: syncState.pendingCount > 0 ? `${syncState.pendingCount} en attente` : 'Hors-Ligne',
-        iconName: 'alert' as const,
+        bg: colors.surfaceAlt,
+        fg: colors.textMuted,
+        label: syncState.pendingCount > 0 ? `${syncState.pendingCount} en attente · hors ligne` : 'Hors ligne',
+        short: syncState.pendingCount > 0 ? String(syncState.pendingCount) : '',
+        icon: 'alert',
       };
     }
-
     if (syncState.pendingCount > 0) {
       return {
-        bg: '#FEF3C7',
-        border: '#FDE68A',
-        text: '#B45309',
-        label: `${syncState.pendingCount} à sync`,
-        iconName: 'sync' as const,
+        bg: colors.surfaceAlt,
+        fg: colors.textMuted,
+        label: `${syncState.pendingCount} à synchroniser`,
+        short: String(syncState.pendingCount),
+        icon: 'cycle',
       };
     }
-
-    return {
-      bg: '#DCFCE7',
-      border: '#86EFAC',
-      text: '#15803D',
-      label: 'À jour',
-      iconName: 'check' as const,
-    };
+    return { bg: colors.successSoft, fg: colors.success, label: 'Synchronisé', short: '', icon: 'check' };
   };
 
   const config = getStatusDisplay();
+  const text = compact ? config.short : config.label;
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.7}
+    <Pressable
       onPress={handlePress}
-      style={[
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={`Statut de synchronisation : ${config.label}`}
+      style={({ pressed }) => [
         styles.container,
-        { backgroundColor: config.bg, borderColor: config.border },
+        {
+          minHeight: layout.touchTarget - spacing.md,
+          paddingHorizontal: spacing.sm,
+          gap: spacing.xs,
+          borderRadius: radius.pill,
+          backgroundColor: pressed ? colors.surfacePressed : config.bg,
+        },
       ]}
-      accessibilityLabel={`Statut de synchronisation: ${config.label}`}
     >
-      {config.showSpinner ? (
-        <ActivityIndicator size="small" color={config.text} style={{ marginRight: 4 }} />
-      ) : config.iconName ? (
-        <Icon
-          name={config.iconName}
-          size={11}
-          color={config.text}
-          style={{ marginRight: 4 }}
-        />
+      {config.spinner ? (
+        <ActivityIndicator size="small" color={config.fg} />
+      ) : config.icon ? (
+        <Icon name={config.icon} size={16} color={config.fg} />
       ) : null}
-      <Text style={[styles.label, { color: config.text }]}>{config.label}</Text>
-    </TouchableOpacity>
+      {text ? (
+        <Text variant="label" style={{ color: config.fg }} numberOfLines={1}>
+          {text}
+        </Text>
+      ) : null}
+    </Pressable>
   );
 };
 
@@ -94,14 +94,6 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1.5,
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.2,
+    justifyContent: 'center',
   },
 });

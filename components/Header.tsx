@@ -1,14 +1,14 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { SyncBadge } from './SyncBadge';
-import { Icon } from './Icon';
 import { ImpersonationBanner } from './ImpersonationBanner';
+import { Icon, Text } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
-import { triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
+import { triggerLightImpact } from '@/lib/haptics';
 import { safeBack } from '@/lib/navigation';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 interface HeaderProps {
   title?: string;
@@ -31,9 +31,13 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const router = useRouter();
   const pathname = usePathname();
-  const { activeCollector, userRole, isImpersonating, exitImpersonation } = useAuth();
-  const { isSmallScreen, isVerySmallScreen, isTablet } = useResponsive();
+  const { activeCollector, userRole, isImpersonating } = useAuth();
+  const { isSmallScreen } = useResponsive();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { colors } = theme;
 
+  const isSupervisor = isImpersonating || userRole === 'ADMIN';
   const isProfileScreen = pathname === '/profile' || pathname?.endsWith('/profile');
   const isScanScreen = pathname === '/scan' || pathname?.endsWith('/scan');
 
@@ -53,12 +57,6 @@ export const Header: React.FC<HeaderProps> = ({
     router.navigate('/profile' as any);
   };
 
-  const handleAdminReturn = async () => {
-    triggerMediumImpact();
-    await exitImpersonation();
-    router.replace('/admin' as any);
-  };
-
   const getFirstName = () => {
     if (activeCollector?.fullName) {
       return activeCollector.fullName.split(' ')[0];
@@ -68,193 +66,120 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <View style={styles.headerWrapper}>
-      {(isImpersonating || userRole === 'ADMIN') && <ImpersonationBanner />}
+      {isSupervisor && <ImpersonationBanner />}
 
-      <View
-        style={[
-          styles.container,
-          isSmallScreen && { paddingHorizontal: isVerySmallScreen ? 10 : 12, paddingTop: 10, paddingBottom: 12 },
-          isTablet && styles.containerTablet,
-        ]}
-      >
+      <View style={styles.container}>
         {showBack && (
-          <TouchableOpacity
-            activeOpacity={0.7}
+          <Pressable
             onPress={handleBackPress}
-            style={[styles.backButton, isSmallScreen && styles.buttonSmall]}
+            accessibilityRole="button"
             accessibilityLabel="Retour"
+            style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
           >
-            <Icon name="arrow-left" size={isSmallScreen ? 16 : 18} color={SOL_COLORS.textPrimary} />
-          </TouchableOpacity>
+            <Icon name="arrow-left" size={22} color={colors.text} />
+          </Pressable>
         )}
 
         <View style={styles.leftSection}>
-          <View style={styles.titleRow}>
-            <Text
-              style={[styles.appTitle, isSmallScreen && { fontSize: isVerySmallScreen ? 18 : 20 }]}
-              numberOfLines={1}
-            >
-              {title || 'SOL'}
-            </Text>
-            <View style={styles.brandDot} />
-          </View>
-          <Text
-            style={[styles.collectorInfo, isSmallScreen && { fontSize: 11 }]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
+          <Text variant={isSmallScreen ? 'heading' : 'title'} numberOfLines={2} accessibilityRole="header">
+            {title || 'SOL'}
+          </Text>
+          <Text variant="caption" tone="muted" numberOfLines={1} ellipsizeMode="tail">
             {subtitle || `${getFirstName()} • ${activeCollector?.zone || 'Zone Principale'}`}
           </Text>
         </View>
 
-        <View style={[styles.rightSection, isSmallScreen && { gap: isVerySmallScreen ? 4 : 6 }]}>
-          {(isImpersonating || userRole === 'ADMIN') && (
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleAdminReturn}
-              style={[styles.adminQuickBtn, isSmallScreen && styles.adminQuickBtnSmall]}
-              accessibilityLabel="Retour Super-Admin"
-            >
-              <Icon name="crown" size={isSmallScreen ? 11 : 13} color="#B45309" />
-              <Text style={[styles.adminQuickBtnText, isSmallScreen && { fontSize: 10 }]}>Admin</Text>
-            </TouchableOpacity>
-          )}
-
-          <SyncBadge onSyncComplete={onRefresh} />
+        <View style={styles.rightSection}>
+          <SyncBadge onSyncComplete={onRefresh} compact={isSmallScreen} />
 
           {showScanner && !isScanScreen && (
-            <TouchableOpacity
-              activeOpacity={0.7}
+            <Pressable
               onPress={handleScanPress}
-              style={[styles.actionButton, isSmallScreen && styles.buttonSmall]}
+              accessibilityRole="button"
               accessibilityLabel="Scanner Code QR"
+              style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
             >
-              <Icon name="scan" size={isSmallScreen ? 16 : 18} color={SOL_COLORS.textPrimary} />
-            </TouchableOpacity>
+              <Icon name="scan" size={22} color={colors.text} />
+            </Pressable>
           )}
 
           {showProfile && !isProfileScreen && (
-            <TouchableOpacity
-              activeOpacity={0.7}
+            <Pressable
               onPress={handleProfilePress}
-              style={[styles.actionButton, styles.profileButton, isSmallScreen && styles.buttonSmall]}
+              accessibilityRole="button"
               accessibilityLabel="Mon Profil"
+              style={({ pressed }) => [styles.iconButton, styles.profileButton, pressed && styles.iconButtonPressed]}
             >
-              <Icon name="user" size={isSmallScreen ? 16 : 18} color={SOL_COLORS.primaryDark} />
-            </TouchableOpacity>
+              <Icon name="user" size={22} color={colors.onPrimarySoft} />
+            </Pressable>
           )}
         </View>
       </View>
+
+      {/* Liseré: Haitian bicolor in manager mode, supervisor violet in admin mode */}
+      {isSupervisor ? (
+        <View style={styles.supervisorRule} />
+      ) : (
+        <View style={styles.flagRule} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <View style={styles.flagBlue} />
+          <View style={styles.flagRed} />
+        </View>
+      )}
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  headerWrapper: {
-    backgroundColor: '#FFFFFF',
-    zIndex: 90,
-  },
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: 12,
-    paddingBottom: 14,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  containerTablet: {
-    maxWidth: 900,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  adminQuickBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    gap: 4,
-  },
-  adminQuickBtnSmall: {
-    paddingVertical: 4,
-    paddingHorizontal: 6,
-    gap: 2,
-    borderRadius: 8,
-  },
-  adminQuickBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#B45309',
-  },
-  backButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  buttonSmall: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    marginRight: 6,
-  },
-  leftSection: {
-    flex: 1,
-    marginRight: 6,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  appTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    letterSpacing: -0.5,
-  },
-  brandDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: SOL_COLORS.primary,
-    marginTop: 6,
-  },
-  collectorInfo: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: SOL_COLORS.textSecondary,
-    marginTop: 2,
-  },
-  rightSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  actionButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  profileButton: {
-    backgroundColor: SOL_COLORS.primaryLight,
-    borderColor: '#99F6E4',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
+  StyleSheet.create({
+    headerWrapper: {
+      backgroundColor: colors.surface,
+      zIndex: 90,
+    },
+    container: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      width: '100%',
+      maxWidth: layout.maxContentWidth + layout.gutter * 2,
+      alignSelf: 'center',
+      paddingHorizontal: layout.gutter,
+      paddingVertical: spacing.sm,
+    },
+    leftSection: {
+      flex: 1,
+      minWidth: 0,
+    },
+    rightSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
+    iconButton: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.md,
+      borderCurve: 'continuous',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    iconButtonPressed: {
+      backgroundColor: colors.surfacePressed,
+    },
+    profileButton: {
+      backgroundColor: colors.primarySoft,
+      borderColor: colors.primarySoft,
+    },
+    flagRule: {
+      flexDirection: 'row',
+      height: 3,
+    },
+    flagBlue: { flex: 1, backgroundColor: brand.haitiBlue },
+    flagRed: { flex: 1, backgroundColor: brand.haitiRed },
+    supervisorRule: {
+      height: 3,
+      backgroundColor: colors.supervisor,
+    },
+  });

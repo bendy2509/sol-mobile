@@ -3,7 +3,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
-import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 
@@ -11,8 +11,8 @@ import { initDatabase } from '@/db/sqlite';
 import { syncEngine } from '@/db/syncEngine';
 import { AuthProvider } from '@/context/AuthContext';
 import { SyncProvider } from '@/context/SyncContext';
-import { SOL_COLORS } from '@/constants/Colors';
-import { ThemeProvider, fontAssets } from '@/theme';
+import { Text } from '@/components/ui';
+import { ThemeProvider, fontAssets, useTheme } from '@/theme';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -56,111 +56,7 @@ export default function RootLayout() {
       <ThemeProvider>
         <AuthProvider>
           <SyncProvider>
-            <StatusBar style="dark" />
-            {!databaseReady || (!fontsLoaded && !fontError) ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={SOL_COLORS.primary} />
-                <Text style={styles.loadingText}>Chargement de SOL...</Text>
-              </View>
-            ) : (
-              <Stack
-                screenOptions={{
-                  headerStyle: {
-                    backgroundColor: '#FFFFFF',
-                  },
-                  headerTintColor: SOL_COLORS.textPrimary,
-                  headerTitleStyle: {
-                    fontWeight: '800',
-                    fontSize: 18,
-                  },
-                  contentStyle: {
-                    backgroundColor: '#F8FAFC',
-                  },
-                }}
-              >
-                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                <Stack.Screen
-                  name="login"
-                  options={{
-                    headerShown: false,
-                    gestureEnabled: false,
-                  }}
-                />
-                <Stack.Screen
-                  name="register"
-                  options={{
-                    title: 'Nouveau Carnet SOL',
-                    headerBackTitle: 'Connexion',
-                  }}
-                />
-                <Stack.Screen
-                  name="pending-approval"
-                  options={{
-                    headerShown: false,
-                    gestureEnabled: false,
-                  }}
-                />
-                <Stack.Screen
-                  name="admin"
-                  options={{
-                    headerShown: false,
-                    gestureEnabled: false,
-                  }}
-                />
-                <Stack.Screen
-                  name="profile"
-                  options={{
-                    headerShown: false,
-                  }}
-                />
-                <Stack.Screen
-                  name="closure"
-                  options={{
-                    headerShown: false,
-                  }}
-                />
-                <Stack.Screen
-                  name="setup-business"
-                  options={{
-                    title: "Configuration de l'Activité",
-                    headerBackTitle: 'Retour',
-                  }}
-                />
-                <Stack.Screen
-                  name="scan"
-                  options={{
-                    headerShown: false,
-                    presentation: 'modal',
-                  }}
-                />
-                <Stack.Screen
-                  name="client/[id]"
-                  options={{
-                    title: 'Dossier Adhérent',
-                    headerBackTitle: 'Retour',
-                  }}
-                />
-                <Stack.Screen
-                  name="client/new"
-                  options={{
-                    headerShown: false,
-                  }}
-                />
-                <Stack.Screen
-                  name="cycle-management"
-                  options={{
-                    headerShown: false,
-                  }}
-                />
-                <Stack.Screen
-                  name="modal"
-                  options={{
-                    presentation: 'modal',
-                    title: 'Diagnostic & Synchronisation',
-                  }}
-                />
-              </Stack>
-            )}
+            <RootNavigator ready={databaseReady && (fontsLoaded || !!fontError)} />
           </SyncProvider>
         </AuthProvider>
       </ThemeProvider>
@@ -168,17 +64,117 @@ export default function RootLayout() {
   );
 }
 
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-  },
-  loadingText: {
-    marginTop: 14,
-    fontSize: 15,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-});
+/** Stack, status bar and boot screen, themed (rendered inside ThemeProvider). */
+function RootNavigator({ ready }: { ready: boolean }) {
+  const { colors, fonts, spacing, isDark } = useTheme();
+
+  return (
+    <>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      {!ready ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: spacing.md, backgroundColor: colors.background }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text variant="bodyStrong">Chargement de SOL…</Text>
+        </View>
+      ) : (
+        <Stack
+          screenOptions={{
+            headerStyle: {
+              backgroundColor: colors.surface,
+            },
+            headerTintColor: colors.text,
+            headerTitleStyle: {
+              fontFamily: fonts.bold,
+              fontSize: 18,
+            },
+            contentStyle: {
+              backgroundColor: colors.background,
+            },
+          }}
+        >
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="login"
+            options={{
+              headerShown: false,
+              gestureEnabled: false,
+            }}
+          />
+          <Stack.Screen
+            name="register"
+            options={{
+              title: 'Nouveau Carnet SOL',
+              headerBackTitle: 'Connexion',
+            }}
+          />
+          <Stack.Screen
+            name="pending-approval"
+            options={{
+              headerShown: false,
+              gestureEnabled: false,
+            }}
+          />
+          <Stack.Screen
+            name="admin"
+            options={{
+              headerShown: false,
+              gestureEnabled: false,
+            }}
+          />
+          <Stack.Screen
+            name="profile"
+            options={{
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="closure"
+            options={{
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="setup-business"
+            options={{
+              title: "Configuration de l'Activité",
+              headerBackTitle: 'Retour',
+            }}
+          />
+          <Stack.Screen
+            name="scan"
+            options={{
+              headerShown: false,
+              presentation: 'modal',
+            }}
+          />
+          <Stack.Screen
+            name="client/[id]"
+            options={{
+              title: 'Dossier Adhérent',
+              headerBackTitle: 'Retour',
+            }}
+          />
+          <Stack.Screen
+            name="client/new"
+            options={{
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="cycle-management"
+            options={{
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
+            name="modal"
+            options={{
+              presentation: 'modal',
+              title: 'Diagnostic & Synchronisation',
+            }}
+          />
+        </Stack>
+      )}
+    </>
+  );
+}
