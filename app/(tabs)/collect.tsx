@@ -1,23 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  Modal,
-  ScrollView,
-  FlatList,
-  TextInput,
-  Share,
-} from 'react-native';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { View, Pressable, StyleSheet, Alert, Modal, FlatList, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 
 import { Header } from '@/components/Header';
-import { Badge } from '@/components/Badge';
-import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import {
+  AmountText,
+  Avatar,
+  Button,
+  Card,
+  EmptyState,
+  Icon,
+  ListItem,
+  ProgressBar,
+  Screen,
+  StatusBadge,
+  Text,
+} from '@/components/ui';
 import { getClientById, getAllClients } from '@/db/clientRepository';
 import { createTransaction } from '@/db/transactionRepository';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
@@ -26,10 +26,9 @@ import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
 import { BusinessConfig, Client, Transaction } from '@/types';
-import { formatCurrency, formatDate, formatDateShort, getInitials } from '@/lib/formatters';
-import { arePhoneNumbersEqual, extractRaw8Digits, normalizePhoneNumber } from '@/lib/phoneUtils';
+import { formatCurrency, formatDateShort } from '@/lib/formatters';
+import { extractRaw8Digits } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
 import {
   calculateCoverageDate,
   calculateContributionAmount,
@@ -39,8 +38,11 @@ import {
 } from '@/services/financialService';
 import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 export default function CollectScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const params = useLocalSearchParams<{ clientId?: string }>();
   const { activeCollector, userRole } = useAuth();
@@ -310,264 +312,240 @@ export default function CollectScreen() {
     );
   });
 
+  const handsLabel = `${handsCount} main${handsCount > 1 ? 's' : ''}`;
+  const progressValue = limits.maxAllowedHands > 0 ? currentPaidHands / limits.maxAllowedHands : 0;
+
   return (
-    <SafeAreaView style={styles.container}>
-      <Header
-        title="Encaissement"
-        subtitle={business ? `${business.name} • ${formatCurrency(unitAmount)}/main` : 'Collecte SOL'}
-      />
-
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingHorizontal: horizontalPadding },
-          isTablet && styles.scrollContentTablet,
-        ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Top Info Banner */}
-        {business && (
-          <View style={styles.businessBanner}>
-            <View style={styles.businessBannerLeft}>
-              <View style={styles.businessIconCircle}>
-                <Icon name="sol" size={16} color={SOL_COLORS.primary} />
-              </View>
-              <View style={{ marginLeft: 8 }}>
-                <Text style={styles.businessBannerName}>{business.name}</Text>
-                <Text style={styles.businessBannerRate}>
-                  Valeur par main : <Text style={styles.businessBannerRateBold}>{formatCurrency(unitAmount)}</Text>
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.totalSlotsBadge}>
-              <Text style={styles.totalSlotsBadgeText}>{allClients.length} inscrits</Text>
-            </View>
-          </View>
-        )}
-
-        {/* Selected Adherent Card */}
-        <View style={styles.clientHeroCard}>
-          <View style={styles.clientHeroHeader}>
-            <Text style={styles.sectionLabel}>ADHÉRENT EN COURS D'ENCAISSEMENT</Text>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setIsClientModalOpen(true)}
-              style={styles.changeClientBtn}
-            >
-              <Icon name="search" size={13} color={SOL_COLORS.primary} style={{ marginRight: 4 }} />
-              <Text style={styles.changeClientBtnText}>Changer</Text>
-            </TouchableOpacity>
-          </View>
-
-          {selectedClient ? (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setIsClientModalOpen(true)}
-              style={styles.clientProfileBox}
-            >
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>{getInitials(selectedClient.fullName)}</Text>
-              </View>
-
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.clientName}>{selectedClient.fullName}</Text>
-                <Text style={styles.clientPhone}>{selectedClient.phoneNumber}</Text>
-
-                <View style={styles.clientBadgesRow}>
-                  {selectedClient.handsCount && selectedClient.handsCount > 1 ? (
-                    <View style={styles.multiHandsBadge}>
-                      <Icon name="crown" size={11} color="#D97706" style={{ marginRight: 4 }} />
-                      <Text style={styles.multiHandsBadgeText}>{selectedClient.handsCount} mains (#{selectedClient.payoutRanks || selectedClient.payoutRank})</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.rankPill}>
-                      <Icon name="crown" size={11} color="#1D4ED8" style={{ marginRight: 3 }} />
-                      <Text style={styles.rankPillText}>Main #{selectedClient.payoutRank || 1}</Text>
-                    </View>
-                  )}
-
-                  <View style={styles.balancePill}>
-                    <Text style={styles.balancePillText}>
-                      Solde : {formatCurrency(selectedClient.currentBalance)}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Remaining Hands Ceiling & Progress Bar */}
-                <View style={styles.clientContributionSummaryRow}>
-                  <View style={styles.clientProgressBarHeader}>
-                    <Text style={styles.clientContributionSummaryText}>
-                      Cotisé : <Text style={styles.clientContributionSummaryBold}>{currentPaidHands}/{limits.maxAllowedHands} mains</Text>
-                    </Text>
-                    <Text style={limits.remainingHands === 0 ? styles.clientContributionSummaryGreen : styles.clientContributionSummaryOrange}>
-                      {limits.remainingHands === 0 ? 'Complété' : `Reste : ${limits.remainingHands} main(s)`}
-                    </Text>
-                  </View>
-                  <View style={styles.clientProgressBarTrack}>
-                    <View
-                      style={[
-                        styles.clientProgressBarFill,
-                        {
-                          width: `${Math.min(100, Math.round((currentPaidHands / limits.maxAllowedHands) * 100))}%`,
-                          backgroundColor: limits.isCycleCompleted ? SOL_COLORS.successDark : SOL_COLORS.primary,
-                        },
-                      ]}
-                    />
-                  </View>
-                </View>
-              </View>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setIsClientModalOpen(true)}
-              style={styles.emptyClientSelectBox}
-            >
-              <Icon name="user" size={24} color="#64748B" />
-              <Text style={styles.emptyClientSelectText}>Sélectionner un enfant adhérent</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Quick Hands Multiplier Selector (Konbyen Men) */}
-        <View style={styles.handsSectionCard}>
-          <View style={styles.handsSectionHeader}>
-            <Text style={styles.sectionLabel}>NOMBRE DE MAIN(S) À PAYER</Text>
-            <Text style={styles.handsCountLiveBadge}>
-              {limits.isCycleCompleted
-                ? 'Cycle Complété'
-                : `${handsCount} main${handsCount > 1 ? 's' : ''} sur ${limits.remainingHands} restante${limits.remainingHands > 1 ? 's' : ''}`}
-            </Text>
-          </View>
-
-          {/* Stepper Control */}
-          <View style={styles.stepperRow}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleDecrement}
-              style={[styles.stepperBtn, (handsCount <= 1 || limits.isCycleCompleted) && styles.stepperBtnDisabled]}
-              disabled={handsCount <= 1 || limits.isCycleCompleted}
-            >
-              <Text style={styles.stepperBtnSymbol}>−</Text>
-            </TouchableOpacity>
-
-            <View style={[styles.stepperDisplay, isSmallScreen && { paddingHorizontal: 12 }]}>
-              <Text style={styles.stepperValueText}>{handsCount}</Text>
-              <Text style={styles.stepperSubText}>main{handsCount > 1 ? 's' : ''}</Text>
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleIncrement}
-              style={[styles.stepperBtn, (handsCount >= limits.remainingHands || limits.isCycleCompleted) && styles.stepperBtnDisabled]}
-              disabled={handsCount >= limits.remainingHands || limits.isCycleCompleted}
-            >
-              <Text style={styles.stepperBtnSymbol}>+</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Preset Buttons Grid */}
-          <View style={styles.presetGrid}>
-            {presetRounds.map((preset) => {
-              const isSelected = handsCount === preset.hands;
-              const isExceeding = preset.hands > limits.remainingHands;
-              const calcAmount = preset.hands * unitAmount;
-
-              return (
-                <TouchableOpacity
-                  key={preset.label}
-                  activeOpacity={0.7}
-                  onPress={() => !isExceeding && handleSelectHandsCount(preset.hands)}
-                  disabled={isExceeding || limits.isCycleCompleted}
-                  style={[
-                    styles.presetCard,
-                    isSmallScreen && { flexBasis: '48%' },
-                    isSelected && styles.presetCardSelected,
-                    isExceeding && styles.presetCardDisabled,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.presetCardHands,
-                      isSelected && styles.presetCardHandsSelected,
-                      isExceeding && styles.presetCardHandsDisabled,
-                    ]}
-                  >
-                    {preset.label}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.presetCardAmount,
-                      isSelected && styles.presetCardAmountSelected,
-                      isExceeding && styles.presetCardAmountDisabled,
-                    ]}
-                  >
-                    {isExceeding ? `Max: ${limits.remainingHands}` : formatCurrency(calcAmount)}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Calculated Total Hero Display Card */}
-        <View style={styles.amountDisplayCard}>
-          <Text style={styles.amountDisplayLabel}>MONTANT TOTAL CALCULÉ</Text>
-          <Text style={styles.totalAmountValue}>{formatCurrency(totalAmount)}</Text>
-
-          <View style={styles.formulaRow}>
-            <Text style={styles.formulaText}>
-              <Text style={styles.formulaBold}>{handsCount} main{handsCount > 1 ? 's' : ''} couverte{handsCount > 1 ? 's' : ''}</Text> × {formatCurrency(unitAmount)} = {formatCurrency(totalAmount)}
-            </Text>
-            {memberHandsCount > 1 && (
-              <Text style={styles.formulaSubText}>
-                Soit {Math.floor(handsCount / memberHandsCount)} tour{Math.floor(handsCount / memberHandsCount) > 1 ? 's' : ''}
-                {handsCount % memberHandsCount > 0 ? ` + ${handsCount % memberHandsCount} main(s)` : ''} pour {selectedClient?.fullName} ({memberHandsCount} mains/tour)
-              </Text>
-            )}
-          </View>
-
-          {/* Coverage Preview Pill */}
-          <View style={styles.coverageBadge}>
-            <Icon name="calendar" size={14} color="#065F46" style={{ marginRight: 6 }} />
-            <Text style={styles.coverageBadgeText}>
-              {limits.isCycleCompleted
-                ? `Plafond atteint (${currentPaidHands}/${limits.maxAllowedHands} mains cotisées)`
-                : `Avance : Couvre jusqu'au ${formatDateShort(previewDateStr)} (${limits.remainingHands - handsCount} restante(s) après)`}
-            </Text>
-          </View>
-        </View>
-
-        {limits.isCycleCompleted && (
-          <View style={styles.cycleCompletedBanner}>
-            <Icon name="crown" size={16} color="#059669" style={{ marginRight: 8 }} />
-            <Text style={styles.cycleCompletedText}>
-              Cycle complété : Cet adhérent a cotisé la totalité des {limits.maxAllowedHands} mains ({formatCurrency(limits.maxPotAmount)}). Aucun versement supplémentaire n'est autorisé.
-            </Text>
-          </View>
-        )}
-
-        {/* Main Action Button */}
-        <TouchableOpacity
-          activeOpacity={0.8}
+    <Screen
+      edges={['top', 'left', 'right']}
+      header={
+        <Header
+          title="Encaissement"
+          subtitle={business ? `${business.name} • ${formatCurrency(unitAmount)}/main` : 'Collecte SOL'}
+        />
+      }
+      footerSafeArea={false}
+      footer={
+        <Button
+          size="lg"
+          fullWidth
+          icon="cash"
           onPress={handleOpenPinValidation}
-          disabled={isProcessing || limits.isCycleCompleted}
-          style={[styles.submitBtn, limits.isCycleCompleted && styles.submitBtnDisabled]}
-        >
-          <Icon name="shield" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-          <Text style={styles.submitBtnText}>
-            {limits.isCycleCompleted
-              ? 'Cycle Complété (Plafond Atteint)'
+          loading={isProcessing}
+          disabled={limits.isCycleCompleted || !selectedClient}
+          label={
+            limits.isCycleCompleted
+              ? 'Plafond du cycle atteint'
               : isProcessing
-              ? 'Traitement en cours...'
-              : `Encaisser ${formatCurrency(totalAmount)} (${handsCount} main${handsCount > 1 ? 's' : ''})`}
-          </Text>
-        </TouchableOpacity>
-      </ScrollView>
+              ? 'Traitement en cours…'
+              : `Encaisser ${formatCurrency(totalAmount)} · ${handsLabel}`
+          }
+        />
+      }
+    >
+      {/* Selected adherent */}
+      {selectedClient ? (
+        <Card onPress={() => setIsClientModalOpen(true)} accessibilityLabel={`Adhérent : ${selectedClient.fullName}. Changer d'adhérent`}>
+          <View style={styles.clientRow}>
+            <Avatar name={selectedClient.fullName} size="lg" />
+            <View style={styles.clientInfo}>
+              <Text variant="heading" numberOfLines={2}>
+                {selectedClient.fullName}
+              </Text>
+              <Text variant="caption" tone="muted" selectable>
+                {selectedClient.phoneNumber}
+              </Text>
+            </View>
+            <View style={styles.changeLink}>
+              <Icon name="search" size={16} color={theme.colors.primary} />
+              <Text variant="label" tone="primary">
+                Changer
+              </Text>
+            </View>
+          </View>
 
-      {/* Select Adherent Modal */}
+          <View style={styles.clientMetaRow}>
+            <View style={styles.metaItem}>
+              <Icon name="payout" size={16} color={theme.colors.textMuted} />
+              <Text variant="label" tone="muted">
+                {selectedClient.handsCount && selectedClient.handsCount > 1
+                  ? `${selectedClient.handsCount} mains · rangs ${selectedClient.payoutRanks || selectedClient.payoutRank}`
+                  : `Main #${selectedClient.payoutRank || 1}`}
+              </Text>
+            </View>
+            <View style={styles.metaItem}>
+              <Text variant="label" tone="muted">
+                Solde
+              </Text>
+              <AmountText amount={Number(selectedClient.currentBalance || 0)} size="small" />
+            </View>
+          </View>
+
+          <View style={styles.progressBlock}>
+            <View style={styles.progressHeader}>
+              <Text variant="label">
+                Cotisé : {currentPaidHands} / {limits.maxAllowedHands} mains
+              </Text>
+              <Text variant="label" tone={limits.remainingHands === 0 ? 'success' : 'warning'}>
+                {limits.remainingHands === 0 ? 'Complété' : `Reste ${limits.remainingHands} main(s)`}
+              </Text>
+            </View>
+            <ProgressBar
+              value={progressValue}
+              tone={limits.isCycleCompleted ? 'success' : 'primary'}
+              accessibilityLabel="Progression des cotisations du cycle"
+            />
+          </View>
+        </Card>
+      ) : (
+        <Card padding="none">
+          <EmptyState
+            icon="user"
+            title="Aucun adhérent sélectionné"
+            message="Choisissez l'enfant qui verse sa cotisation."
+            action={{ label: 'Choisir un adhérent', icon: 'search', onPress: () => setIsClientModalOpen(true) }}
+          />
+        </Card>
+      )}
+
+      {/* Amount to collect: the hero of the screen */}
+      <Card tone="hero" padding="lg">
+        <Text variant="label" tone="onHeroMuted">
+          Montant à encaisser
+        </Text>
+        <AmountText amount={totalAmount} size="hero" tone="onHero" />
+        <Text variant="body" tone="onHeroMuted">
+          {handsLabel} × {formatCurrency(unitAmount)}
+        </Text>
+        {memberHandsCount > 1 && (
+          <Text variant="caption" tone="onHeroMuted">
+            Soit {Math.floor(handsCount / memberHandsCount)} tour{Math.floor(handsCount / memberHandsCount) > 1 ? 's' : ''}
+            {handsCount % memberHandsCount > 0 ? ` + ${handsCount % memberHandsCount} main(s)` : ''} pour {selectedClient?.fullName} ({memberHandsCount} mains/tour)
+          </Text>
+        )}
+        {!limits.isCycleCompleted && (
+          <View style={styles.coverageRow}>
+            <Icon name="calendar" size={16} color={theme.colors.onHero} />
+            <Text variant="label" tone="onHero" style={styles.flexShrink}>
+              Couvre jusqu'au {formatDateShort(previewDateStr)} · {limits.remainingHands - handsCount} restante(s) après
+            </Text>
+          </View>
+        )}
+      </Card>
+
+      {/* Hands selector */}
+      <Card>
+        <View style={styles.handsHeader}>
+          <Text variant="subheading">Nombre de mains</Text>
+          <Text variant="label" tone={limits.isCycleCompleted ? 'success' : 'muted'}>
+            {limits.isCycleCompleted
+              ? 'Cycle complété'
+              : `${handsLabel} sur ${limits.remainingHands} restante${limits.remainingHands > 1 ? 's' : ''}`}
+          </Text>
+        </View>
+
+        <View style={styles.stepperRow}>
+          <Pressable
+            onPress={handleDecrement}
+            disabled={handsCount <= 1 || limits.isCycleCompleted}
+            accessibilityRole="button"
+            accessibilityLabel="Retirer une main"
+            style={({ pressed }) => [
+              styles.stepperBtn,
+              pressed && styles.stepperBtnPressed,
+              (handsCount <= 1 || limits.isCycleCompleted) && styles.stepperBtnDisabled,
+            ]}
+          >
+            <Icon name="minus" size={24} color={handsCount <= 1 || limits.isCycleCompleted ? theme.colors.textPlaceholder : theme.colors.text} />
+          </Pressable>
+
+          <View style={styles.stepperDisplay} accessible accessibilityLabel={`${handsLabel} à payer`}>
+            <Text variant="amountLarge" align="center">
+              {handsCount}
+            </Text>
+            <Text variant="caption" tone="muted" align="center">
+              main{handsCount > 1 ? 's' : ''}
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={handleIncrement}
+            disabled={handsCount >= limits.remainingHands || limits.isCycleCompleted}
+            accessibilityRole="button"
+            accessibilityLabel="Ajouter une main"
+            style={({ pressed }) => [
+              styles.stepperBtn,
+              pressed && styles.stepperBtnPressed,
+              (handsCount >= limits.remainingHands || limits.isCycleCompleted) && styles.stepperBtnDisabled,
+            ]}
+          >
+            <Icon
+              name="plus"
+              size={24}
+              color={handsCount >= limits.remainingHands || limits.isCycleCompleted ? theme.colors.textPlaceholder : theme.colors.text}
+            />
+          </Pressable>
+        </View>
+
+        <View style={styles.presetGrid}>
+          {presetRounds.map((preset) => {
+            const isExceeding = preset.hands > limits.remainingHands;
+            const isSelected = handsCount === preset.hands && !isExceeding;
+            const calcAmount = preset.hands * unitAmount;
+
+            return (
+              <Pressable
+                key={preset.label}
+                onPress={() => !isExceeding && handleSelectHandsCount(preset.hands)}
+                disabled={isExceeding || limits.isCycleCompleted}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected, disabled: isExceeding || limits.isCycleCompleted }}
+                style={({ pressed }) => [
+                  styles.presetCard,
+                  isSmallScreen && styles.presetCardSmall,
+                  pressed && !isSelected && styles.presetCardPressed,
+                  isSelected && styles.presetCardSelected,
+                  isExceeding && styles.presetCardDisabled,
+                ]}
+              >
+                <Text
+                  variant="label"
+                  align="center"
+                  style={isSelected ? styles.onPrimary : isExceeding ? styles.textDisabled : undefined}
+                >
+                  {preset.label}
+                </Text>
+                {isExceeding ? (
+                  <View style={styles.presetLimitRow}>
+                    <Icon name="lock" size={14} color={theme.colors.textMuted} />
+                    <Text variant="caption" tone="muted">
+                      Max : {limits.remainingHands}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text variant="amountSmall" align="center" style={isSelected ? styles.onPrimary : styles.textMuted}>
+                    {formatCurrency(calcAmount)}
+                  </Text>
+                )}
+              </Pressable>
+            );
+          })}
+        </View>
+      </Card>
+
+      {limits.isCycleCompleted && (
+        <Card tone="success">
+          <View style={styles.noticeRow}>
+            <Icon name="check" size={20} color={theme.colors.success} />
+            <Text variant="body" tone="success" style={styles.flexShrink}>
+              Cycle complété : cet adhérent a cotisé la totalité de ses {limits.maxAllowedHands} mains ({formatCurrency(limits.maxPotAmount)}). Aucun
+              versement supplémentaire n'est autorisé.
+            </Text>
+          </View>
+        </Card>
+      )}
+
+      {/* Select adherent modal */}
       <Modal
         visible={isClientModalOpen}
         animationType="slide"
@@ -575,39 +553,43 @@ export default function CollectScreen() {
         onRequestClose={() => setIsClientModalOpen(false)}
       >
         <SafeAreaView style={styles.modalSafeContainer}>
-          {/* Modal Header */}
-          <View style={styles.modalClientHeader}>
-            <View>
-              <Text style={styles.modalClientTitle}>Choisir un Adhérent</Text>
-              <Text style={styles.modalClientSub}>{allClients.length} enfants enregistrés dans ce carnet</Text>
+          <View style={styles.modalHeader}>
+            <View style={styles.flexShrink}>
+              <Text variant="heading" accessibilityRole="header">
+                Choisir un adhérent
+              </Text>
+              <Text variant="caption" tone="muted">
+                {allClients.length} enfants inscrits dans ce carnet
+              </Text>
             </View>
-            <TouchableOpacity
+            <Pressable
               onPress={() => setIsClientModalOpen(false)}
-              style={styles.modalCloseBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Fermer"
+              style={({ pressed }) => [styles.iconBtn, pressed && styles.stepperBtnPressed]}
             >
-              <Icon name="close" size={18} color="#64748B" />
-            </TouchableOpacity>
+              <Icon name="close" size={22} color={theme.colors.textMuted} />
+            </Pressable>
           </View>
 
-          {/* Search Bar */}
-          <View style={styles.modalSearchBar}>
-            <Icon name="search" size={16} color="#64748B" style={{ marginRight: 8 }} />
+          <View style={styles.searchBar}>
+            <Icon name="search" size={18} color={theme.colors.textMuted} />
             <TextInput
-              style={styles.modalSearchInput}
-              placeholder="Rechercher par nom, téléphone (+509...), # rang..."
-              placeholderTextColor="#94A3B8"
+              style={styles.searchInput}
+              placeholder="Nom, téléphone ou n° de rang"
+              placeholderTextColor={theme.colors.textPlaceholder}
               value={searchQuery}
               onChangeText={setSearchQuery}
               autoCorrect={false}
+              accessibilityLabel="Rechercher un adhérent"
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
-                <Icon name="close" size={16} color="#64748B" />
-              </TouchableOpacity>
+              <Pressable onPress={() => setSearchQuery('')} accessibilityRole="button" accessibilityLabel="Effacer la recherche" hitSlop={12}>
+                <Icon name="close" size={18} color={theme.colors.textMuted} />
+              </Pressable>
             )}
           </View>
 
-          {/* Adherent List */}
           <FlatList
             data={filteredClients}
             keyExtractor={(item) => item.id}
@@ -615,8 +597,10 @@ export default function CollectScreen() {
             maxToRenderPerBatch={10}
             windowSize={5}
             removeClippedSubviews={true}
-            contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
-            renderItem={({ item }) => {
+            keyboardShouldPersistTaps="handled"
+            style={styles.modalList}
+            contentContainerStyle={styles.modalListContent}
+            renderItem={({ item, index }) => {
               const isSelected = selectedClient?.id === item.id;
               const itemHandsCount = Math.max(1, item.handsCount || 1);
               const itemUnit = item.dailyAmount || unitAmount || 250;
@@ -636,81 +620,45 @@ export default function CollectScreen() {
               const itemPct = Math.min(100, Math.round((itemPaidHands / itemLimits.maxAllowedHands) * 100));
 
               return (
-                <TouchableOpacity
-                  activeOpacity={0.7}
+                <ListItem
+                  selected={isSelected}
+                  divider={index < filteredClients.length - 1}
                   onPress={() => handleSelectClient(item)}
-                  style={[
-                    styles.clientOptionCard,
-                    isSelected && styles.clientOptionCardActive,
-                  ]}
-                >
-                  <View style={styles.clientOptionLeft}>
-                    <View style={styles.rankCircle}>
-                      <Text style={styles.rankText}>#{item.payoutRank || 1}</Text>
-                    </View>
-
-                    <View style={{ marginLeft: 12, flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={styles.clientOptionName}>{item.fullName}</Text>
-                        {itemLimits.isCycleCompleted && (
-                          <View style={styles.modalCompletedBadge}>
-                            <Text style={styles.modalCompletedBadgeText}>Complété</Text>
-                          </View>
-                        )}
-                      </View>
-                      <Text style={styles.clientOptionPhone}>{item.phoneNumber}</Text>
-
-                      <View style={styles.clientOptionSubRow}>
-                        <Text style={styles.clientOptionBalance}>
-                          Solde : {formatCurrency(item.currentBalance)}
+                  leading={<Avatar rank={item.payoutRank || 1} highlighted={isSelected} />}
+                  title={item.fullName}
+                  subtitle={`${item.phoneNumber} · solde ${formatCurrency(item.currentBalance)}${
+                    item.paidUntilDate ? ` · couvert ${formatDateShort(item.paidUntilDate)}` : ''
+                  }`}
+                  meta={
+                    <View style={styles.itemProgress}>
+                      {itemLimits.isCycleCompleted ? (
+                        <StatusBadge status="PAID_TODAY" label="Cotisations complètes" appearance="inline" />
+                      ) : (
+                        <Text variant="caption" tone="muted">
+                          Cotisé {itemPaidHands}/{itemLimits.maxAllowedHands} · reste {itemLimits.remainingHands} main(s) · {itemPct} %
                         </Text>
-                        {item.paidUntilDate && (
-                          <Text style={styles.clientOptionCovered}>
-                            • Couvert : {formatDateShort(item.paidUntilDate)}
-                          </Text>
-                        )}
-                      </View>
-
-                      {/* Modal Item Progress Bar */}
-                      <View style={styles.modalItemProgressContainer}>
-                        <View style={styles.modalItemProgressHeader}>
-                          <Text style={styles.modalItemProgressText}>
-                            Cotisé : {itemPaidHands}/{itemLimits.maxAllowedHands} • Reste : {itemLimits.remainingHands} main(s)
-                          </Text>
-                          <Text style={styles.modalItemProgressPct}>{itemPct}%</Text>
-                        </View>
-                        <View style={styles.modalItemProgressBarTrack}>
-                          <View
-                            style={[
-                              styles.modalItemProgressBarFill,
-                              {
-                                width: `${itemPct}%`,
-                                backgroundColor: itemLimits.isCycleCompleted ? SOL_COLORS.successDark : SOL_COLORS.primary,
-                              },
-                            ]}
-                          />
-                        </View>
-                      </View>
+                      )}
+                      <ProgressBar value={itemPct / 100} size="sm" tone={itemLimits.isCycleCompleted ? 'success' : 'primary'} />
                     </View>
-                  </View>
-
-                  <View style={styles.clientOptionRight}>
-                    {isSelected ? (
-                      <View style={styles.selectedCheckCircle}>
-                        <Icon name="check" size={12} color="#FFFFFF" />
+                  }
+                  trailing={
+                    isSelected ? (
+                      <View style={styles.selectedCheck}>
+                        <Icon name="check" size={16} color={theme.colors.onPrimary} strokeWidth={3} />
                       </View>
                     ) : (
-                      <Icon name="arrow-right" size={14} color="#94A3B8" />
-                    )}
-                  </View>
-                </TouchableOpacity>
+                      <Icon name="chevron-right" size={18} color={theme.colors.textMuted} />
+                    )
+                  }
+                />
               );
             }}
             ListEmptyComponent={
-              <View style={styles.emptySearchContainer}>
-                <Icon name="user" size={32} color="#94A3B8" />
-                <Text style={styles.emptySearchText}>Aucun adhérent correspondant à votre recherche.</Text>
-              </View>
+              <EmptyState
+                icon="search"
+                title="Aucun adhérent trouvé"
+                message="Vérifiez le nom, le numéro de téléphone ou le rang saisi."
+              />
             }
           />
         </SafeAreaView>
@@ -725,820 +673,272 @@ export default function CollectScreen() {
         onCancel={() => setIsPinModalOpen(false)}
       />
 
-      {/* Digital Receipt Modal */}
-      <Modal
-        visible={isReceiptOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsReceiptOpen(false)}
-      >
+      {/* Digital receipt */}
+      <Modal visible={isReceiptOpen} transparent animationType="fade" onRequestClose={() => setIsReceiptOpen(false)}>
         <View style={styles.modalOverlay}>
-          <View style={[styles.receiptCard, { maxWidth: Math.min(420, width - 32) }]}>
-            <View style={styles.receiptHeader}>
-              <TouchableOpacity
-                onPress={() => setIsReceiptOpen(false)}
-                style={styles.receiptCloseTopBtn}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={18} color="#64748B" />
-              </TouchableOpacity>
-              <View style={styles.receiptIconCircle}>
-                <Icon name="check" size={28} color="#FFFFFF" />
-              </View>
-              <Text style={styles.receiptTitle}>ENCAISSEMENT RÉUSSI !</Text>
-              <Text style={styles.receiptSub}>Récépissé Numérique Certifié</Text>
-            </View>
+          <View style={[styles.receiptCard, { maxWidth: Math.min(420, width - theme.spacing.xxl) }]}>
+            <Pressable
+              onPress={() => setIsReceiptOpen(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Fermer"
+              style={({ pressed }) => [styles.iconBtn, styles.receiptClose, pressed && styles.stepperBtnPressed]}
+            >
+              <Icon name="close" size={22} color={theme.colors.textMuted} />
+            </Pressable>
 
-            <View style={styles.receiptDivider} />
+            <View style={styles.receiptHeader}>
+              <View style={styles.receiptIcon}>
+                <Icon name="check" size={32} color={theme.colors.success} strokeWidth={3} />
+              </View>
+              <Text variant="title" tone="success" align="center" accessibilityRole="header">
+                Encaissement réussi
+              </Text>
+              <Text variant="caption" tone="muted" align="center">
+                Reçu numérique certifié
+              </Text>
+              <AmountText amount={totalAmount} size="large" align="center" />
+            </View>
 
             <View style={styles.receiptBody}>
               <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Adhérent :</Text>
-                <Text style={styles.receiptValueBold}>{selectedClient?.fullName}</Text>
+                <Text variant="caption" tone="muted">
+                  Adhérent
+                </Text>
+                <Text variant="bodyStrong" style={styles.receiptValue}>
+                  {selectedClient?.fullName}
+                </Text>
               </View>
-
               <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Téléphone :</Text>
-                <Text style={styles.receiptValue}>{selectedClient?.phoneNumber}</Text>
+                <Text variant="caption" tone="muted">
+                  Téléphone
+                </Text>
+                <Text variant="body" selectable style={styles.receiptValue}>
+                  {selectedClient?.phoneNumber}
+                </Text>
               </View>
-
               <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Mains payées :</Text>
-                <Text style={styles.receiptValueBold}>{handsCount} main(s)</Text>
+                <Text variant="caption" tone="muted">
+                  Mains payées
+                </Text>
+                <Text variant="bodyStrong" style={styles.receiptValue}>
+                  {handsCount} main(s)
+                </Text>
               </View>
-
               <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Montant Total :</Text>
-                <Text style={styles.receiptValueAmount}>{formatCurrency(totalAmount)}</Text>
+                <Text variant="caption" tone="muted">
+                  Période couverte
+                </Text>
+                <Text variant="bodyStrong" tone="success" style={styles.receiptValue}>
+                  Jusqu'au {formatDateShort(previewDateStr)}
+                </Text>
               </View>
-
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Période couverte :</Text>
-                <Text style={styles.receiptValueGreen}>Jusqu'au {formatDateShort(previewDateStr)}</Text>
-              </View>
-
               {lastTx && (
                 <View style={styles.receiptRow}>
-                  <Text style={styles.receiptLabel}>Réf Opération :</Text>
-                  <Text style={styles.receiptValueSmall}>#{lastTx.id.slice(0, 8)}</Text>
+                  <Text variant="caption" tone="muted">
+                    Réf. opération
+                  </Text>
+                  <Text variant="label" tone="muted" selectable style={styles.receiptValue}>
+                    #{lastTx.id.slice(0, 8)}
+                  </Text>
                 </View>
               )}
             </View>
 
-            <View style={styles.receiptActionRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleShareReceipt}
-                style={styles.receiptShareBtn}
-              >
-                <Icon name="print" size={16} color={SOL_COLORS.primary} style={{ marginRight: 6 }} />
-                <Text style={styles.receiptShareBtnText}>Partager / Imprimer</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
+            <View style={styles.receiptActions}>
+              <Button label="Partager / Imprimer" icon="printer" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
+              <Button
+                label="Fermer"
                 onPress={() => {
                   setIsReceiptOpen(false);
                   router.navigate('/(tabs)' as any);
                 }}
-                style={styles.receiptDoneBtn}
-              >
-                <Text style={styles.receiptDoneBtnText}>Fermer</Text>
-              </TouchableOpacity>
+                style={styles.flexGrow}
+              />
             </View>
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  scrollContentTablet: {
-    maxWidth: 720,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  businessBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-  },
-  businessBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  businessIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#EFF6FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  businessBannerName: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  businessBannerRate: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  businessBannerRateBold: {
-    fontWeight: '800',
-    color: SOL_COLORS.primary,
-  },
-  totalSlotsBadge: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  totalSlotsBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  clientHeroCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    marginBottom: 12,
-  },
-  clientHeroHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  sectionLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  changeClientBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  changeClientBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: SOL_COLORS.primary,
-  },
-  clientProfileBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatarCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  clientName: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  clientPhone: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
-    marginTop: 1,
-  },
-  clientBadgesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 6,
-  },
-  rankPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  rankPillText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  multiHandsBadge: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  multiHandsBadgeText: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#D97706',
-  },
-  balancePill: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  balancePillText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  emptyClientSelectBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  emptyClientSelectText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-    marginLeft: 8,
-  },
-  handsSectionCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    marginBottom: 12,
-  },
-  handsSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  handsCountLiveBadge: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
-  stepperBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  stepperBtnDisabled: {
-    opacity: 0.4,
-  },
-  stepperBtnSymbol: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    lineHeight: 28,
-  },
-  stepperDisplay: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  stepperValueText: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  stepperSubText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: -2,
-  },
-  presetGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  presetCard: {
-    flexBasis: '31%',
-    flexGrow: 1,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  presetCardSelected: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primary,
-  },
-  presetCardDisabled: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
-    opacity: 0.45,
-  },
-  presetCardHands: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  presetCardHandsSelected: {
-    color: '#FFFFFF',
-  },
-  presetCardHandsDisabled: {
-    color: '#94A3B8',
-  },
-  presetCardAmount: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 2,
-  },
-  presetCardAmountSelected: {
-    color: '#E0E7FF',
-  },
-  presetCardAmountDisabled: {
-    color: '#94A3B8',
-  },
-  clientContributionSummaryRow: {
-    marginTop: 6,
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  clientProgressBarHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  clientProgressBarTrack: {
-    height: 6,
-    backgroundColor: '#E2E8F0',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  clientProgressBarFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  clientContributionSummaryText: {
-    fontSize: 11,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  clientContributionSummaryBold: {
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  clientContributionSummaryGreen: {
-    fontWeight: '800',
-    color: SOL_COLORS.successDark,
-    fontSize: 11,
-  },
-  clientContributionSummaryOrange: {
-    fontWeight: '800',
-    color: '#D97706',
-    fontSize: 11,
-  },
-  modalCompletedBadge: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  modalCompletedBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#15803D',
-  },
-  modalItemProgressContainer: {
-    marginTop: 5,
-  },
-  modalItemProgressHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 3,
-  },
-  modalItemProgressText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  modalItemProgressPct: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  modalItemProgressBarTrack: {
-    height: 4,
-    backgroundColor: '#E2E8F0',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  modalItemProgressBarFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  amountDisplayCard: {
-    backgroundColor: '#0F172A',
-    borderRadius: 18,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  amountDisplayLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
-  },
-  totalAmountValue: {
-    fontSize: 32,
-    fontWeight: '900',
-    color: '#34D399',
-    marginTop: 4,
-  },
-  formulaRow: {
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  formulaText: {
-    fontSize: 12,
-    color: '#CBD5E1',
-  },
-  formulaBold: {
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  formulaSubText: {
-    fontSize: 11,
-    color: '#94A3B8',
-    fontWeight: '600',
-    marginTop: 3,
-    textAlign: 'center',
-  },
-  coverageBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(5, 150, 105, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#059669',
-  },
-  coverageBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#34D399',
-  },
-  cycleCompletedBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    padding: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-    marginBottom: 12,
-  },
-  cycleCompletedText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#065F46',
-    fontWeight: '700',
-    lineHeight: 16,
-  },
-  submitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#059669',
-    height: 52,
-    borderRadius: 14,
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  submitBtnDisabled: {
-    backgroundColor: '#94A3B8',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  submitBtnText: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  modalSafeContainer: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  modalClientHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-  },
-  modalClientTitle: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  modalClientSub: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  modalCloseBtn: {
-    padding: 6,
-  },
-  modalSearchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    margin: 16,
-    marginBottom: 8,
-    paddingHorizontal: 12,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  modalSearchInput: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  clientOptionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  clientOptionCardActive: {
-    borderColor: SOL_COLORS.primary,
-    backgroundColor: '#EFF6FF',
-  },
-  clientOptionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  rankCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  rankText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: SOL_COLORS.primary,
-  },
-  clientOptionName: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  clientOptionPhone: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  clientOptionSubRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 3,
-  },
-  clientOptionBalance: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  clientOptionCovered: {
-    fontSize: 11,
-    color: '#64748B',
-    marginLeft: 4,
-  },
-  clientOptionRight: {
-    marginLeft: 10,
-  },
-  selectedCheckCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptySearchContainer: {
-    alignItems: 'center',
-    padding: 40,
-  },
-  emptySearchText: {
-    fontSize: 13,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  receiptCard: {
-    width: '100%',
-    maxWidth: 380,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 20,
-  },
-  receiptHeader: {
-    alignItems: 'center',
-    position: 'relative',
-    width: '100%',
-  },
-  receiptCloseTopBtn: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-  },
-  receiptIconCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#059669',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  receiptTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#059669',
-  },
-  receiptSub: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  receiptDivider: {
-    height: 1,
-    backgroundColor: '#E2E8F0',
-    marginVertical: 14,
-  },
-  receiptBody: {
-    gap: 8,
-    marginBottom: 16,
-  },
-  receiptRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  receiptLabel: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  receiptValue: {
-    fontSize: 13,
-    color: SOL_COLORS.textPrimary,
-    fontWeight: '700',
-  },
-  receiptValueBold: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  receiptValueAmount: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#059669',
-  },
-  receiptValueGreen: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  receiptValueSmall: {
-    fontSize: 11,
-    color: '#94A3B8',
-    fontWeight: '700',
-  },
-  receiptActionRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  receiptShareBtn: {
-    flex: 1.4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-  },
-  receiptShareBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: SOL_COLORS.primary,
-  },
-  receiptDoneBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: SOL_COLORS.primary,
-  },
-  receiptDoneBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
+  StyleSheet.create({
+    flexShrink: { flexShrink: 1 },
+    flexGrow: { flexGrow: 1, flexBasis: 0 },
+    onPrimary: { color: colors.onPrimary },
+    textMuted: { color: colors.textMuted },
+    textDisabled: { color: colors.textMuted },
+
+    clientRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    clientInfo: { flex: 1, minWidth: 0, gap: spacing.xs },
+    changeLink: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, minHeight: layout.touchTarget },
+    clientMetaRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+      marginTop: spacing.md,
+    },
+    metaItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+    progressBlock: {
+      marginTop: spacing.md,
+      paddingTop: spacing.md,
+      borderTopWidth: 1,
+      borderTopColor: colors.divider,
+      gap: spacing.sm,
+    },
+    progressHeader: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: spacing.sm },
+
+    coverageRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      marginTop: spacing.md,
+      paddingTop: spacing.md,
+      borderTopWidth: 1,
+      borderTopColor: colors.heroTrack,
+    },
+
+    handsHeader: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+    },
+    stepperRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xl,
+      marginVertical: spacing.lg,
+    },
+    stepperBtn: {
+      width: layout.actionHeight,
+      height: layout.actionHeight,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+    },
+    stepperBtnPressed: { backgroundColor: colors.surfacePressed },
+    stepperBtnDisabled: { backgroundColor: colors.surfaceAlt, borderColor: colors.border },
+    stepperDisplay: { minWidth: layout.actionHeight + spacing.lg, alignItems: 'center' },
+
+    presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    presetCard: {
+      flexBasis: '31%',
+      flexGrow: 1,
+      minHeight: layout.actionHeight + spacing.sm,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.sm,
+      borderRadius: radius.md,
+      borderCurve: 'continuous',
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+    },
+    presetCardSmall: { flexBasis: '48%' },
+    presetCardPressed: { backgroundColor: colors.surfacePressed },
+    presetCardSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+    presetCardDisabled: { backgroundColor: colors.surfaceAlt, borderColor: colors.border, borderStyle: 'dashed' },
+    presetLimitRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+
+    noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+
+    modalSafeContainer: { flex: 1, backgroundColor: colors.background },
+    modalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.md,
+      paddingHorizontal: layout.gutter,
+      paddingVertical: spacing.md,
+      backgroundColor: colors.surface,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    iconBtn: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    searchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      margin: layout.gutter,
+      marginBottom: spacing.sm,
+      paddingHorizontal: spacing.md,
+      minHeight: layout.touchTarget,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      backgroundColor: colors.surface,
+    },
+    searchInput: { flex: 1, ...typography.body, color: colors.text, paddingVertical: spacing.sm },
+    modalList: { flex: 1 },
+    modalListContent: {
+      marginHorizontal: layout.gutter,
+      marginBottom: spacing.xxl,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      overflow: 'hidden',
+    },
+    itemProgress: { gap: spacing.xs },
+    selectedCheck: {
+      width: spacing.xl,
+      height: spacing.xl,
+      borderRadius: radius.pill,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: colors.overlay,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: layout.gutter,
+    },
+    receiptCard: {
+      width: '100%',
+      backgroundColor: colors.surface,
+      borderRadius: radius.lg,
+      borderCurve: 'continuous',
+      padding: spacing.xl,
+      gap: spacing.lg,
+    },
+    receiptClose: { position: 'absolute', top: spacing.sm, right: spacing.sm, zIndex: 1 },
+    receiptHeader: { alignItems: 'center', gap: spacing.xs },
+    receiptIcon: {
+      width: spacing.xxxl + spacing.lg,
+      height: spacing.xxxl + spacing.lg,
+      borderRadius: radius.pill,
+      backgroundColor: colors.successSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.sm,
+    },
+    receiptBody: {
+      gap: spacing.sm,
+      paddingTop: spacing.lg,
+      borderTopWidth: 1,
+      borderTopColor: colors.divider,
+    },
+    receiptRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: spacing.md },
+    receiptValue: { flexShrink: 1, textAlign: 'right' },
+    receiptActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  });
