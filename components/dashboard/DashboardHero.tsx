@@ -1,265 +1,77 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View } from 'react-native';
 import { DashboardMetrics } from '@/types';
-import { Icon } from '@/components/Icon';
+import { AmountText, Card, Icon, ProgressBar, Text } from '@/components/ui';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { SHADOWS } from '@/constants/Colors';
-import { useResponsive } from '@/hooks/useResponsive';
+import { useTheme } from '@/theme';
 
 interface DashboardHeroProps {
   metrics: DashboardMetrics;
   cycleProgressPct: number;
+  /** Current beneficiary row, rendered inside the band. */
+  children?: React.ReactNode;
 }
 
-export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProgressPct }) => {
-  const { isSmallScreen, isVerySmallScreen } = useResponsive();
+/** Segmented track (one segment per hand) is readable up to this many hands. */
+const MAX_SEGMENTS = 12;
+
+/** Blue cagnotte band: the pot is the hero of the dashboard. */
+export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProgressPct, children }) => {
+  const { colors, spacing, radius } = useTheme();
   const potTotal = metrics.totalHandsExpected * metrics.unitAmount;
-  const handsRemaining = Math.max(0, metrics.totalHandsExpected - (metrics.handsTouchedCount || 0));
+  const handsTouched = metrics.handsTouchedCount || 0;
+  const handsRemaining = Math.max(0, metrics.totalHandsExpected - handsTouched);
+  const useSegments = metrics.totalHandsExpected > 0 && metrics.totalHandsExpected <= MAX_SEGMENTS;
 
   return (
-    <View style={[styles.heroCard, isSmallScreen && { padding: 14 }]}>
-      {/* Ligne Supérieure : Indicateur de Type & Montant Unitaire */}
-      <View style={styles.topMetaRow}>
-        <View style={styles.badgePill}>
-          <Icon name="crown" size={13} color="#FDE68A" style={styles.badgeIcon} />
-          <Text style={styles.badgeText} numberOfLines={1} adjustsFontSizeToFit>
-            CAGNOTTE DU SOL (BAY MEN)
-          </Text>
-        </View>
-        <View style={styles.unitPill}>
-          <Text style={styles.unitText} numberOfLines={1} adjustsFontSizeToFit>
-            {formatCurrency(metrics.unitAmount)} / main
-          </Text>
-        </View>
-      </View>
+    <Card tone="hero" padding="lg" style={{ gap: spacing.xs }}>
+      <Text variant="label" tone="onHeroMuted">
+        Cagnotte du sol (bay men)
+      </Text>
+      <AmountText amount={potTotal} size="hero" tone="onHero" />
+      <Text variant="body" tone="onHeroMuted">
+        {metrics.totalHandsExpected} mains × {formatCurrency(metrics.unitAmount)}
+      </Text>
 
-      {/* Montant Central en Contraste Solaire Maximum */}
-      <View style={styles.amountContainer}>
-        <Text
-          style={[styles.amountMain, isSmallScreen && { fontSize: 28 }]}
-          numberOfLines={1}
-          adjustsFontSizeToFit
-        >
-          {formatCurrency(potTotal)}
-        </Text>
-        <Text style={styles.formulaEquation} numberOfLines={1} adjustsFontSizeToFit>
-          Formule : {metrics.totalHandsExpected} mains souscrites × {formatCurrency(metrics.unitAmount)}
-        </Text>
-      </View>
-
-      {/* Bloc Statistique à 3 Piliers Solaires */}
-      <View style={[styles.statsDeck, isSmallScreen && { paddingHorizontal: 6, paddingVertical: 10 }]}>
-        <View style={styles.statColumn}>
-          <Text style={styles.statMicroLabel} numberOfLines={1} adjustsFontSizeToFit>
-            ENFANTS
-          </Text>
-          <View style={styles.statValueGroup}>
-            <Icon name="users" size={12} color="#94A3B8" style={styles.statGroupIcon} />
-            <Text style={styles.statValueNumber} numberOfLines={1} adjustsFontSizeToFit>
-              {metrics.totalMembersCount}
-            </Text>
+      <View style={{ marginTop: spacing.md, gap: spacing.sm }}>
+        {useSegments ? (
+          <View
+            accessible
+            accessibilityRole="progressbar"
+            accessibilityLabel={`${handsTouched} main(s) remise(s) sur ${metrics.totalHandsExpected}`}
+            style={{ flexDirection: 'row', gap: spacing.xs }}
+          >
+            {Array.from({ length: metrics.totalHandsExpected }).map((_, i) => (
+              <View
+                key={i}
+                style={{
+                  flex: 1,
+                  height: spacing.sm,
+                  borderRadius: radius.pill,
+                  backgroundColor: i < handsTouched ? colors.heroTrackActive : colors.heroTrack,
+                }}
+              />
+            ))}
           </View>
-        </View>
-
-        <View style={styles.verticalDivider} />
-
-        <View style={styles.statColumn}>
-          <Text style={styles.statMicroLabel} numberOfLines={1} adjustsFontSizeToFit>
-            MAINS ROTATION
+        ) : (
+          <ProgressBar value={cycleProgressPct / 100} tone="onHero" accessibilityLabel="Progression du tirage" />
+        )}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: spacing.sm }}>
+          <Text variant="label" tone="onHero">
+            {handsTouched} / {metrics.totalHandsExpected} mains remises · {handsRemaining} restante{handsRemaining > 1 ? 's' : ''}
           </Text>
-          <View style={styles.statValueGroup}>
-            <Text style={styles.statValueNumber} numberOfLines={1} adjustsFontSizeToFit>
-              {metrics.handsTouchedCount} / {metrics.totalHandsExpected}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.verticalDivider} />
-
-        <View style={styles.statColumn}>
-          <Text style={styles.statMicroLabel} numberOfLines={1} adjustsFontSizeToFit>
-            RESTANTES
-          </Text>
-          <Text style={styles.statValueHighlight} numberOfLines={1} adjustsFontSizeToFit>
-            {handsRemaining} main{handsRemaining > 1 ? 's' : ''}
-          </Text>
+          {metrics.endDate ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+              <Icon name="calendar" size={14} color={colors.onHeroMuted} />
+              <Text variant="caption" tone="onHeroMuted">
+                Fin {formatDateShort(metrics.endDate)} · {metrics.daysRemaining} j
+              </Text>
+            </View>
+          ) : null}
         </View>
       </View>
 
-      {/* Barre de Progression de Clôture de Cycle (10dp haute lisibilité) */}
-      <View style={styles.progressSection}>
-        <View style={styles.progressTextRow}>
-          <Text style={styles.progressLabel}>Progression du tirage</Text>
-          <Text style={styles.progressPercent}>{cycleProgressPct}%</Text>
-        </View>
-        <View style={styles.progressBarTrack}>
-          <View style={[styles.progressBarFill, { width: `${Math.min(100, Math.max(0, cycleProgressPct))}%` }]} />
-        </View>
-        {metrics.endDate ? (
-          <View style={styles.cycleEndRow}>
-            <Icon name="calendar" size={11} color="#94A3B8" style={{ marginRight: 4 }} />
-            <Text style={styles.cycleEndText} numberOfLines={1} adjustsFontSizeToFit>
-              Échéance prévue : {formatDateShort(metrics.endDate)}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-    </View>
+      {children ? <View style={{ marginTop: spacing.md }}>{children}</View> : null}
+    </Card>
   );
 };
-
-const styles = StyleSheet.create({
-  heroCard: {
-    backgroundColor: '#0B132B',
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#1E293B',
-    ...SHADOWS.md,
-  },
-  topMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    gap: 8,
-  },
-  badgePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(253, 230, 138, 0.12)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(253, 230, 138, 0.25)',
-    flexShrink: 1,
-  },
-  badgeIcon: {
-    marginRight: 6,
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#FDE68A',
-    letterSpacing: 0.6,
-  },
-  unitPill: {
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-    flexShrink: 0,
-  },
-  unitText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#38BDF8',
-  },
-  amountContainer: {
-    marginVertical: 4,
-  },
-  amountMain: {
-    fontSize: 34,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: -0.8,
-  },
-  formulaEquation: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#94A3B8',
-    marginTop: 4,
-  },
-  statsDeck: {
-    flexDirection: 'row',
-    backgroundColor: '#162238',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    marginTop: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#1E293B',
-  },
-  statColumn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingHorizontal: 2,
-  },
-  statMicroLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  statValueGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 3,
-  },
-  statGroupIcon: {
-    marginRight: 4,
-  },
-  statValueNumber: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#F8FAFC',
-  },
-  statValueHighlight: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#34D399',
-    marginTop: 3,
-  },
-  verticalDivider: {
-    width: 1,
-    height: 24,
-    backgroundColor: '#243553',
-  },
-  progressSection: {
-    marginTop: 14,
-  },
-  progressTextRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  progressLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#94A3B8',
-  },
-  progressPercent: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#38BDF8',
-  },
-  progressBarTrack: {
-    height: 10,
-    backgroundColor: '#1E293B',
-    borderRadius: 5,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#10B981',
-    borderRadius: 5,
-  },
-  cycleEndRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  cycleEndText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-});
