@@ -86,7 +86,7 @@ export function Button({
         const v = variantColors(theme, variant, pressed && !inactive);
         const base: ViewStyle = {
           minHeight: height,
-          paddingHorizontal: size === 'lg' ? spacing.xl : spacing.lg,
+          paddingHorizontal: size === 'lg' ? spacing.xl : spacing.md,
           borderRadius: radius.md,
           borderCurve: 'continuous',
           borderWidth: 1,

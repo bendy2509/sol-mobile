@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, TextInput, Pressable, ScrollView } from 'react-native';
 import { DashboardMetrics, FilterStatus, SortOption } from '@/types';
-import { Icon, SectionHeader, Text } from '@/components/ui';
+import { Chip, Icon, SectionHeader } from '@/components/ui';
 import { triggerLightImpact } from '@/lib/haptics';
 import { useTheme } from '@/theme';
 
@@ -88,35 +88,15 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
         contentContainerStyle={{ gap: spacing.sm, paddingRight: spacing.lg }}
         keyboardShouldPersistTaps="handled"
       >
-        {chips.map((chip) => {
-          const isActive = filter === chip.key;
-          const activeBg = chip.danger ? colors.danger : colors.primary;
-          return (
-            <Pressable
-              key={chip.key}
-              onPress={() => {
-                triggerLightImpact();
-                onFilterChange(chip.key);
-              }}
-              accessibilityRole="button"
-              accessibilityState={{ selected: isActive }}
-              hitSlop={4}
-              style={({ pressed }) => ({
-                minHeight: layout.touchTarget - spacing.sm,
-                paddingHorizontal: spacing.md,
-                borderRadius: radius.pill,
-                borderWidth: 1,
-                justifyContent: 'center',
-                borderColor: isActive ? activeBg : colors.borderStrong,
-                backgroundColor: isActive ? activeBg : pressed ? colors.surfacePressed : colors.surface,
-              })}
-            >
-              <Text variant="label" style={{ color: isActive ? colors.onPrimary : colors.text }}>
-                {chip.label} ({chip.count})
-              </Text>
-            </Pressable>
-          );
-        })}
+        {chips.map((chip) => (
+          <Chip
+            key={chip.key}
+            label={`${chip.label} (${chip.count})`}
+            selected={filter === chip.key}
+            tone={chip.danger ? 'danger' : 'primary'}
+            onPress={() => onFilterChange(chip.key)}
+          />
+        ))}
       </ScrollView>
     </View>
   );

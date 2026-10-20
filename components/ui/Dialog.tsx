@@ -22,6 +22,7 @@ export interface DialogProps {
 export function Dialog({ visible, onClose, title, subtitle, icon, tone = 'primary', children, actions }: DialogProps) {
   const { colors, spacing, radius, layout } = useTheme();
   const { height, width } = useWindowDimensions();
+  const pad = width < 380 ? spacing.lg : spacing.xl;
   const toneColors = {
     primary: { bg: colors.primarySoft, fg: colors.primary },
     success: { bg: colors.successSoft, fg: colors.success },
@@ -39,11 +40,11 @@ export function Dialog({ visible, onClose, title, subtitle, icon, tone = 'primar
             backgroundColor: colors.surface,
             borderRadius: radius.lg,
             borderCurve: 'continuous',
-            paddingVertical: spacing.xl,
+            paddingVertical: pad,
             gap: spacing.lg,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, paddingHorizontal: spacing.xl }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, paddingHorizontal: pad }}>
             {icon ? (
               <View
                 style={{
@@ -89,14 +90,14 @@ export function Dialog({ visible, onClose, title, subtitle, icon, tone = 'primar
 
           <ScrollView
             style={{ flexGrow: 0 }}
-            contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: spacing.md }}
+            contentContainerStyle={{ paddingHorizontal: pad, gap: spacing.md }}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
             {children}
           </ScrollView>
 
-          {actions ? <View style={{ flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.xl }}>{actions}</View> : null}
+          {actions ? <View style={{ flexDirection: 'row', gap: spacing.sm, paddingHorizontal: pad }}>{actions}</View> : null}
         </View>
       </View>
     </Modal>

@@ -88,6 +88,7 @@ Tout s'importe depuis `@/components/ui`.
 | `AmountText` | Montants HTG | Tailles `hero` / `large` / `medium` / `small`. `sign="credit"` → `+`, `sign="debit"` → `−`. Zéro neutre. Sélectionnable. |
 | `StatusBadge` | Statuts | `PAID_TODAY`, `PAID_IN_ADVANCE`, `UNPAID_TODAY`, `OVERDUE`, `UPCOMING_PAYOUT`, `HAND_RECEIVED`, **`LOCKED`**. `detail` (« 1 tour », « 2/3 mains »). `appearance="inline"` pour les listes denses. |
 | `ListItem` | Ligne de registre | `leading` · titre / sous-titre / `meta` · `trailing`, hauteur ≥ 64, séparateur, chevron, `selected` (choix courant d'un sélecteur). Mémoïsé pour `FlatList`. |
+| `Chip` | Filtre | Pastille 40 dp (+ hit slop 48), pleine quand sélectionnée, ton `danger` pour les filtres de retard / annulation. |
 | `Dialog` | Modale centrée | Titre, sous-titre, icône teintée (`primary` / `success` / `danger`), bouton fermer 48 dp, corps défilant, rangée `actions`. |
 | `TextField` | Champ de saisie | Libellé, aide ou erreur, focus en bordure primaire, ≥ 48 dp, multiligne. |
 | `ProgressBar` | Progression | Valeur 0 → 1, tons `primary` / `success` / `onHero`, rôle `progressbar` accessible. |
