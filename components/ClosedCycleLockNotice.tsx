@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, Linking } from 'react-native';
-import { Icon } from './Icon';
+import { View, Alert, Linking } from 'react-native';
+import { Button, Card, Icon, Text } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { Transaction } from '@/types';
 import { CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE } from '@/services/financialService';
 import { formatCurrency, formatDate } from '@/lib/formatters';
 import { triggerMediumImpact } from '@/lib/haptics';
+import { useTheme } from '@/theme';
 
 interface ClosedCycleLockNoticeProps {
   transaction: Transaction;
@@ -18,6 +19,7 @@ interface ClosedCycleLockNoticeProps {
  */
 export const ClosedCycleLockNotice: React.FC<ClosedCycleLockNoticeProps> = ({ transaction, clientName }) => {
   const { activeCollector, getAdminProfile } = useAuth();
+  const { colors, spacing } = useTheme();
 
   const handleRequestAdmin = async () => {
     triggerMediumImpact();
@@ -46,56 +48,21 @@ Motif de la demande : `;
   };
 
   return (
-    <View style={styles.card}>
-      <View style={styles.row}>
-        <Icon name="shield" size={15} color="#B45309" style={{ marginRight: 8 }} />
-        <Text style={styles.text}>{CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE}</Text>
+    <Card tone="locked" style={{ gap: spacing.md }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm }}>
+        <Icon name="lock" size={18} color={colors.locked} />
+        <Text variant="label" tone="locked" style={{ flex: 1 }}>
+          {CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE}
+        </Text>
       </View>
-      <TouchableOpacity
-        activeOpacity={0.8}
+      <Button
+        variant="secondary"
+        icon="message"
+        fullWidth
+        label="Demander l'annulation à l'Admin"
         onPress={handleRequestAdmin}
-        style={styles.requestBtn}
         accessibilityLabel="Demander l'annulation à l'administrateur"
-      >
-        <Icon name="share" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-        <Text style={styles.requestBtnText}>Demander l'annulation à l'Admin</Text>
-      </TouchableOpacity>
-    </View>
+      />
+    </Card>
   );
 };
-
-const styles = StyleSheet.create({
-  card: {
-    width: '100%',
-    backgroundColor: '#FFFBEB',
-    borderWidth: 1.5,
-    borderColor: '#FDE68A',
-    borderRadius: 12,
-    padding: 12,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  text: {
-    flex: 1,
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#92400E',
-    lineHeight: 17,
-  },
-  requestBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#059669',
-    paddingVertical: 11,
-    borderRadius: 10,
-  },
-  requestBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-});
