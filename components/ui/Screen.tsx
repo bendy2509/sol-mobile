@@ -69,7 +69,7 @@ export function Screen({
           edges={footerSafeArea ? ['bottom'] : []}
           style={[{ backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border }, shadows.sheet]}
         >
-          <View style={[inner, { paddingVertical: spacing.md, gap: spacing.sm }]}>{footer}</View>
+          <View style={[inner, { paddingHorizontal: layout.gutter, paddingVertical: spacing.md, gap: spacing.sm }]}>{footer}</View>
         </SafeAreaView>
       ) : null}
     </SafeAreaView>
