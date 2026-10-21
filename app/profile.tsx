@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, StyleSheet, Alert, BackHandler, Linking } from 'react-native';
+import { View, StyleSheet, Alert, BackHandler } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Header } from '@/components/Header';
 import { Avatar, Button, Card, Dialog, Icon, ListItem, Screen, Text, TextField, UiIconName } from '@/components/ui';
-import { useAuth, AdminProfile } from '@/context/AuthContext';
+import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig, getClosedCycles } from '@/db/businessRepository';
 import { getCashClosures } from '@/db/cashClosureRepository';
 import { getDatabase } from '@/db/sqlite';
 import { BusinessConfig, ClosedCycle } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
-import { hashPin, verifyPinHash } from '@/lib/crypto';
 import { safeBack } from '@/lib/navigation';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
@@ -20,11 +19,10 @@ export default function ProfileScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { activeCollector, userRole, logout, refreshSession, isImpersonating, exitImpersonation, getAdminProfile } = useAuth();
+  const { activeCollector, userRole, logout, refreshSession, changePin } = useAuth();
   const { contentMaxWidth, horizontalPadding, width } = useResponsive();
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
-  const [adminContact, setAdminContact] = useState<AdminProfile | null>(null);
   const [closedCyclesCount, setClosedCyclesCount] = useState(0);
   const [cashClosuresCount, setCashClosuresCount] = useState(0);
 
@@ -55,14 +53,12 @@ export default function ProfileScreen() {
   useEffect(() => {
     async function load() {
       try {
-        const [biz, aProfile, cCycles, cClosures] = await Promise.all([
+        const [biz, cCycles, cClosures] = await Promise.all([
           getActiveBusinessConfig(),
-          getAdminProfile ? getAdminProfile() : null,
           getClosedCycles(activeCollector?.id).catch(() => []),
           getCashClosures(activeCollector?.id).catch(() => []),
         ]);
         setBusiness(biz);
-        if (aProfile) setAdminContact(aProfile);
         setClosedCyclesCount(cCycles.length);
         setCashClosuresCount(cClosures.length);
       } catch (err) {
@@ -70,30 +66,7 @@ export default function ProfileScreen() {
       }
     }
     load();
-  }, [activeCollector?.id, getAdminProfile]);
-
-  const handleCallAdmin = (phone?: string) => {
-    if (!phone) return;
-    const cleanNumber = phone.replace(/[^0-9+]/g, '');
-    Linking.openURL(`tel:${cleanNumber}`).catch(() => {
-      Alert.alert('Assistance Téléphonique', `Contactez l'administration au : ${phone}`);
-    });
-  };
-
-  const handleWhatsAppAdmin = (phone?: string) => {
-    if (!phone) return;
-    const digitsOnly = phone.replace(/[^0-9]/g, '');
-    Linking.openURL(`https://wa.me/${digitsOnly}`).catch(() => {
-      Alert.alert('WhatsApp', `Numéro de support : ${phone}`);
-    });
-  };
-
-  const handleEmailAdmin = (email?: string) => {
-    if (!email) return;
-    Linking.openURL(`mailto:${email}`).catch(() => {
-      Alert.alert('Email Support', `Adresse email : ${email}`);
-    });
-  };
+  }, [activeCollector?.id]);
 
   const handleSaveProfileSubmit = async () => {
     setProfileError(null);
@@ -146,23 +119,14 @@ export default function ProfileScreen() {
       return;
     }
 
-    if (activeCollector?.pinHash && !verifyPinHash(oldPin, activeCollector.pinHash)) {
-      triggerErrorFeedback();
-      setPinError('Le code PIN actuel saisi est incorrect.');
-      return;
-    }
-
     try {
-      const db = await getDatabase();
-      if (activeCollector) {
-        await db.runAsync(`UPDATE collectors SET pin_hash = ?, sync_status = 'PENDING' WHERE id = ?`, [
-          hashPin(newPin),
-          activeCollector.id,
-        ]);
-        await refreshSession();
+      const res = await changePin(oldPin, newPin);
+      if (!res.success) {
+        triggerErrorFeedback();
+        setPinError(res.error || 'Échec de la modification du code PIN.');
+        return;
       }
 
-      triggerSuccessFeedback();
       Alert.alert('Succès', 'Votre code PIN à 4 chiffres a été modifié avec succès.');
       setIsChangePinModalOpen(false);
       setOldPin('');
@@ -188,8 +152,6 @@ export default function ProfileScreen() {
     ]);
   };
 
-  const isSupervisor = isImpersonating || userRole === 'ADMIN';
-
   const businessRows = business
     ? [
         { label: 'Nom du carnet', value: business.name },
@@ -199,14 +161,6 @@ export default function ProfileScreen() {
         { label: "Date d'échéance", value: business.endDate ? formatDateShort(business.endDate) : '—' },
       ]
     : [];
-
-  const supportRows = [
-    { label: 'Superviseur', value: adminContact?.fullName || 'Administration Centrale' },
-    { label: 'Hotline', value: adminContact?.phoneNumber || '+509 34 56 7890', tone: 'success' as const },
-    ...(adminContact?.email ? [{ label: 'E-mail', value: adminContact.email }] : []),
-    ...(adminContact?.address ? [{ label: 'Bureau', value: adminContact.address }] : []),
-    ...(adminContact?.supportHours ? [{ label: 'Disponibilité', value: adminContact.supportHours }] : []),
-  ];
 
   const renderRows = (rows: { label: string; value: string; tone?: 'success' }[]) =>
     rows.map((row) => (
@@ -232,7 +186,7 @@ export default function ProfileScreen() {
       header={
         <Header
           title="Mon profil"
-          subtitle="Compte, assistance et sécurité"
+          subtitle="Compte, carnet et sécurité"
           showBack={true}
           showProfile={false}
           showScanner={false}
@@ -240,33 +194,6 @@ export default function ProfileScreen() {
         />
       }
     >
-      {isSupervisor && (
-        <Card tone="supervisor" style={styles.cardGap}>
-          <View style={styles.rowStart}>
-            <Icon name="crown" size={22} color={theme.colors.supervisor} />
-            <View style={styles.flexShrink}>
-              <Text variant="subheading" style={{ color: theme.colors.supervisor }}>
-                Mode superviseur actif
-              </Text>
-              <Text variant="body" tone="muted">
-                Vous gérez l'espace de {activeCollector?.fullName || 'Gestionnaire'}.
-              </Text>
-            </View>
-          </View>
-          <Button
-            variant="secondary"
-            icon="arrow-left"
-            fullWidth
-            label="Retourner au dashboard admin"
-            onPress={async () => {
-              triggerMediumImpact();
-              await exitImpersonation();
-              router.replace('/admin' as any);
-            }}
-          />
-        </Card>
-      )}
-
       {/* Identity */}
       <Card style={styles.identityCard}>
         <Avatar name={activeCollector?.fullName || 'Responsable SOL'} size="lg" />
@@ -281,9 +208,9 @@ export default function ProfileScreen() {
             Zone : {activeCollector.zone}
           </Text>
         ) : null}
-        <View style={[styles.roleChip, userRole === 'ADMIN' && styles.roleChipAdmin]}>
-          <Text variant="label" style={{ color: userRole === 'ADMIN' ? theme.colors.supervisor : theme.colors.onPrimarySoft }}>
-            {userRole === 'ADMIN' ? 'Administrateur' : 'Responsable du sol'}
+        <View style={styles.roleChip}>
+          <Text variant="label" style={{ color: theme.colors.onPrimarySoft }}>
+            Responsable du sol
           </Text>
         </View>
         <Button
@@ -311,24 +238,6 @@ export default function ProfileScreen() {
         </Card>
       )}
 
-      {/* Admin support */}
-      <Card style={styles.cardGap}>
-        <Text variant="subheading" accessibilityRole="header">
-          Assistance administrateur
-        </Text>
-        <Text variant="caption" tone="muted">
-          Coordonnées officielles de l'administration pour toute aide technique ou financière.
-        </Text>
-        {renderRows(supportRows)}
-        <View style={styles.actionsRow}>
-          <Button label="Appeler" icon="phone" onPress={() => handleCallAdmin(adminContact?.phoneNumber)} style={styles.flexGrow} />
-          <Button label="WhatsApp" icon="message" variant="secondary" onPress={() => handleWhatsAppAdmin(adminContact?.phoneNumber)} style={styles.flexGrow} />
-        </View>
-        {adminContact?.email ? (
-          <Button label="Écrire un e-mail" icon="mail" variant="secondary" fullWidth onPress={() => handleEmailAdmin(adminContact.email)} />
-        ) : null}
-      </Card>
-
       {/* Archives */}
       <Card padding="none" style={styles.listCard}>
         <ListItem
@@ -354,12 +263,19 @@ export default function ProfileScreen() {
           title="Modifier mon code PIN"
           subtitle="Code à 4 chiffres"
           showChevron
+        />
+        <ListItem
+          onPress={() => router.push('/security' as any)}
+          leading={navIcon('shield', theme.colors.primary, theme.colors.primarySoft)}
+          title="Sécurité et sauvegarde"
+          subtitle="Biométrie, verrouillage, code de récupération, sauvegarde chiffrée"
+          showChevron
           divider={false}
         />
       </Card>
 
       {/* Sensitive zone */}
-      {(userRole === 'MANAGER' || userRole === 'ADMIN') && (
+      {userRole === 'MANAGER' && (
         <Card tone="danger" padding="none" style={styles.listCard}>
           <ListItem
             onPress={() => router.push('/cycle-management' as any)}
@@ -464,7 +380,6 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
       backgroundColor: colors.primarySoft,
       marginBottom: spacing.sm,
     },
-    roleChipAdmin: { backgroundColor: colors.supervisorSoft },
 
     infoRow: {
       flexDirection: 'row',

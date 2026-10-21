@@ -69,15 +69,10 @@ export interface ThemeColors {
   infoSoft: string;
   infoLine: string;
 
-  // Locked actions (closed cycle, admin only)
+  // Locked actions (e.g. cycle-capped presets)
   locked: string;
   lockedSoft: string;
   lockedLine: string;
-
-  // 👑 Supervisor mode: must never be confused with manager mode
-  supervisor: string;
-  onSupervisor: string;
-  supervisorSoft: string;
 }
 
 const light: ThemeColors = {
@@ -127,10 +122,6 @@ const light: ThemeColors = {
   locked: '#4A5368',
   lockedSoft: '#EEF0F4',
   lockedLine: '#C5CBD8',
-
-  supervisor: '#3D1A78',
-  onSupervisor: '#FFFFFF',
-  supervisorSoft: '#EFE8FB',
 };
 
 const dark: ThemeColors = {
@@ -180,10 +171,6 @@ const dark: ThemeColors = {
   locked: '#A8B0C4',
   lockedSoft: '#1E2740',
   lockedLine: '#3A4566',
-
-  supervisor: '#B99AF0',
-  onSupervisor: '#1C0B3D',
-  supervisorSoft: '#2A1A4A',
 };
 
 export const palettes: Record<ColorSchemeName, ThemeColors> = { light, dark };

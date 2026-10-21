@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'MANAGER' | 'READ_ONLY' | 'COLLECTOR' | 'USER';
+export type UserRole = 'MANAGER' | 'READ_ONLY' | 'COLLECTOR' | 'USER';
 
 export type UserStatus = 'PENDING_APPROVAL' | 'ACTIVE' | 'SUSPENDED';
 

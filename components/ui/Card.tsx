@@ -3,7 +3,7 @@ import { Pressable, StyleProp, View, ViewStyle } from 'react-native';
 
 import { useTheme } from '@/theme';
 
-export type CardTone = 'default' | 'sunken' | 'hero' | 'success' | 'warning' | 'danger' | 'locked' | 'supervisor';
+export type CardTone = 'default' | 'sunken' | 'hero' | 'success' | 'warning' | 'danger' | 'locked';
 export type CardPadding = 'none' | 'sm' | 'md' | 'lg';
 
 export interface CardProps {
@@ -27,7 +27,6 @@ export function Card({ children, tone = 'default', padding = 'md', onPress, acce
     warning: { backgroundColor: colors.warningSoft, borderColor: colors.warningSoft },
     danger: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerSoft },
     locked: { backgroundColor: colors.lockedSoft, borderColor: colors.lockedLine, borderStyle: 'dashed' },
-    supervisor: { backgroundColor: colors.supervisorSoft, borderColor: colors.supervisor },
   };
   const pad = { none: 0, sm: spacing.md, md: spacing.lg, lg: spacing.xl }[padding];
 

@@ -7,7 +7,7 @@ import { Icon, UiIconName } from '@/components/ui';
 import { useTheme } from '@/theme';
 
 export default function TabLayout() {
-  const { isAuthenticated, isPendingApproval, isLoading } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
   const { colors, spacing, radius, typography, shadows } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -17,10 +17,6 @@ export default function TabLayout() {
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
-  }
-
-  if (isPendingApproval) {
-    return <Redirect href="/pending-approval" />;
   }
 
   if (!isAuthenticated) {

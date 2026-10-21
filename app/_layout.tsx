@@ -107,27 +107,10 @@ function RootNavigator({ ready }: { ready: boolean }) {
               headerBackTitle: 'Connexion',
             }}
           />
-          <Stack.Screen
-            name="pending-approval"
-            options={{
-              headerShown: false,
-              gestureEnabled: false,
-            }}
-          />
-          <Stack.Screen
-            name="suspended"
-            options={{
-              headerShown: false,
-              gestureEnabled: false,
-            }}
-          />
-          <Stack.Screen
-            name="admin"
-            options={{
-              headerShown: false,
-              gestureEnabled: false,
-            }}
-          />
+          <Stack.Screen name="recover-pin" options={{ title: 'Code PIN oublié', headerBackTitle: 'Connexion' }} />
+          <Stack.Screen name="restore-backup" options={{ title: 'Restaurer une sauvegarde', headerBackTitle: 'Retour' }} />
+          <Stack.Screen name="recovery-code" options={{ title: 'Code de récupération', headerBackVisible: false, gestureEnabled: false }} />
+          <Stack.Screen name="security" options={{ title: 'Sécurité et sauvegarde', headerBackTitle: 'Retour' }} />
           <Stack.Screen
             name="profile"
             options={{

@@ -3,6 +3,7 @@ import { View, Pressable, StyleSheet, ScrollView, KeyboardAvoidingView, Platform
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
+import { setPendingRecoveryCode } from '@/services/pendingSecret';
 import { BusinessType, Frequency } from '@/types';
 import { AmountText, Button, Card, Chip, Icon, PinDots, PinPad, Text, TextField } from '@/components/ui';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
@@ -104,7 +105,8 @@ export default function RegisterScreen() {
 
       if (result.success) {
         triggerSuccessFeedback();
-        router.replace('/pending-approval' as any);
+        setPendingRecoveryCode(result.recoveryCode || null);
+        router.replace({ pathname: '/recovery-code', params: { next: 'carnet' } } as any);
       } else {
         triggerErrorFeedback();
         Alert.alert("Échec de l'inscription", result.error || 'Une erreur est survenue.');

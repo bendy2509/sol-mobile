@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 
 import { Header } from '@/components/Header';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { ClosedCycleLockNotice } from '@/components/ClosedCycleLockNotice';
+import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import { AmountText, Button, Card, Chip, Dialog, EmptyState, Icon, ListItem, Screen, Text, TextField, UiIconName } from '@/components/ui';
 import { getAllTransactions, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveCollector } from '@/db/sqlite';
@@ -30,11 +30,10 @@ const FILTERS: { key: TransactionType | 'ALL'; label: string }[] = [
 export default function HistoryScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { userRole, activeCollector, getAdminProfile } = useAuth();
+  const { userRole, activeCollector } = useAuth();
   const { triggerSync } = useSync();
   const { width, isSmallScreen, isTablet, horizontalPadding } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
-  const isAdmin = userRole === 'ADMIN';
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [filterType, setFilterType] = useState<TransactionType | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,17 +53,14 @@ export default function HistoryScreen() {
       const list = await getAllTransactions({
         type: typeParam,
         limit: 150,
-        collectorId: isAdmin ? undefined : activeCollector?.id,
-        allCollectors: isAdmin,
+        collectorId: activeCollector?.id,
       });
       setTransactions(list);
-      if (!isAdmin) {
-        setCycleBoundary(await getCurrentCycleBoundary(activeCollector?.id));
-      }
+      setCycleBoundary(await getCurrentCycleBoundary(activeCollector?.id));
     } catch (err) {
       console.warn('History load error:', err);
     }
-  }, [filterType, isAdmin, activeCollector?.id]);
+  }, [filterType, activeCollector?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -180,8 +176,7 @@ Reçu certifié et archivé avec succès. Merci !`;
     });
   };
 
-  const isSelectedTxLocked =
-    !isAdmin && !!selectedTx && isTransactionFromClosedCycle(selectedTx.createdAtLocal, cycleBoundary);
+  const isSelectedTxFromClosedCycle = !!selectedTx && isTransactionFromClosedCycle(selectedTx.createdAtLocal, cycleBoundary);
 
   const handleInitiateCancel = () => {
     if (!selectedTx) return;
@@ -189,7 +184,6 @@ Reçu certifié et archivé avec succès. Merci !`;
       Alert.alert('Action Impossible', 'Une opération d’annulation ne peut pas être elle-même annulée.');
       return;
     }
-    if (isSelectedTxLocked) return;
     setCancelReason('');
     setIsDetailModalOpen(false);
     setIsCancelPromptOpen(true);
@@ -406,35 +400,19 @@ Reçu certifié et archivé avec succès. Merci !`;
               <Button label="WhatsApp" icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
             </View>
 
-            {selectedTx.type !== 'REVERSAL' && !isReadOnly && isSelectedTxLocked && <ClosedCycleLockNotice transaction={selectedTx} />}
+            {selectedTx.type !== 'REVERSAL' && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
-            {selectedTx.type !== 'REVERSAL' && !isReadOnly && !isSelectedTxLocked && (
+            {selectedTx.type !== 'REVERSAL' && !isReadOnly && (
               <Button label="Annuler cette opération" icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
             )}
 
-            {!isAdmin && (
-              <Button
-                label="Contacter l'administrateur"
-                icon="phone"
-                variant="ghost"
-                fullWidth
-                onPress={async () => {
-                  const profile = await getAdminProfile();
-                  const phone = profile.phoneNumber || '+50900000000';
-                  const digits = phone.replace(/[^0-9+]/g, '');
-                  Linking.openURL(`tel:${digits}`).catch(() => {
-                    Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
-                  });
-                }}
-              />
-            )}
 
             {isReadOnly && selectedTx.type !== 'REVERSAL' && (
               <Card tone="sunken">
                 <View style={styles.noticeRow}>
                   <Icon name="shield" size={18} color={theme.colors.textMuted} />
                   <Text variant="caption" tone="muted" style={styles.flexShrink}>
-                    Mode consultation seule. Contactez votre gestionnaire ou un Super-Admin pour régularisation.
+                    Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.
                   </Text>
                 </View>
               </Card>

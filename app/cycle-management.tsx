@@ -114,7 +114,7 @@ export default function CycleManagementScreen() {
     }
   };
 
-  const isManager = userRole === 'MANAGER' || userRole === 'ADMIN';
+  const isManager = userRole === 'MANAGER';
 
   const handleSelectMode = (mode: CycleMode) => {
     if (!isManager) {

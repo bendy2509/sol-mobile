@@ -29,7 +29,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
 }) => {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { verifyPin } = useAuth();
+  const { verifyPin, getPinLockMessage } = useAuth();
   const { isSmallScreen, isTablet, height } = useResponsive();
   const isShortScreen = height < 680;
   const [pin, setPin] = useState('');
@@ -62,6 +62,13 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
       setIsLocked(false);
       setIsVerifying(false);
       shakeAnim.setValue(0);
+      // Progressive lockout is global (login + every sensitive action): show it right away
+      getPinLockMessage().then((lock) => {
+        if (lock) {
+          setIsLocked(true);
+          setErrorMessage(lock);
+        }
+      });
     }
   }, [visible]);
 
@@ -86,6 +93,13 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             triggerErrorFeedback();
             triggerShake();
             setPin('');
+
+            const lock = await getPinLockMessage();
+            if (lock) {
+              setIsLocked(true);
+              setErrorMessage(lock);
+              return;
+            }
 
             const nextFailures = failureCount + 1;
             setFailureCount(nextFailures);
@@ -140,7 +154,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   const compact = isSmallScreen || isShortScreen;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={isLocked ? undefined : onCancel}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={[styles.overlay, isTablet && styles.overlayTablet]}>
         <View style={[styles.sheet, isTablet && styles.sheetTablet, !isTablet && { paddingBottom: insets.bottom + theme.spacing.lg }]}>
           <View style={styles.headerRow}>
@@ -152,17 +166,16 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
                 {isLocked ? 'Accès verrouillé' : title}
               </Text>
               <Text variant={compact ? 'caption' : 'body'} tone="muted">
-                {isLocked ? 'Trop de tentatives incorrectes. Cette opération a été annulée par sécurité.' : subtitle}
+                {isLocked ? 'Saisie du code PIN suspendue pour votre sécurité.' : subtitle}
               </Text>
             </View>
             <Pressable
-              onPress={isLocked ? undefined : onCancel}
-              disabled={isLocked}
+              onPress={onCancel}
               accessibilityRole="button"
               accessibilityLabel="Fermer"
               style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
             >
-              <Icon name="close" size={22} color={isLocked ? theme.colors.borderStrong : theme.colors.textMuted} />
+              <Icon name="close" size={22} color={theme.colors.textMuted} />
             </Pressable>
           </View>
 

@@ -21,7 +21,7 @@ export interface ButtonProps {
   loading?: boolean;
   disabled?: boolean;
   /**
-   * Locked state (e.g. closed-cycle transaction, admin-only action):
+   * Locked state (e.g. preset beyond the cycle cap):
    * dashed outline + lock icon, not pressable, `lockedLabel` replaces the label.
    */
   locked?: boolean;

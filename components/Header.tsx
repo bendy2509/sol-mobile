@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { SyncBadge } from './SyncBadge';
-import { ImpersonationBanner } from './ImpersonationBanner';
 import { Icon, Text } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { triggerLightImpact } from '@/lib/haptics';
@@ -31,13 +30,12 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const router = useRouter();
   const pathname = usePathname();
-  const { activeCollector, userRole, isImpersonating } = useAuth();
+  const { activeCollector } = useAuth();
   const { isSmallScreen } = useResponsive();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { colors } = theme;
 
-  const isSupervisor = isImpersonating || userRole === 'ADMIN';
   const isProfileScreen = pathname === '/profile' || pathname?.endsWith('/profile');
   const isScanScreen = pathname === '/scan' || pathname?.endsWith('/scan');
 
@@ -61,13 +59,11 @@ export const Header: React.FC<HeaderProps> = ({
     if (activeCollector?.fullName) {
       return activeCollector.fullName.split(' ')[0];
     }
-    return userRole === 'ADMIN' ? 'Admin' : 'Responsable';
+    return 'Responsable';
   };
 
   return (
     <View style={styles.headerWrapper}>
-      {isSupervisor && <ImpersonationBanner />}
-
       <View style={styles.container}>
         {showBack && (
           <Pressable
@@ -116,15 +112,11 @@ export const Header: React.FC<HeaderProps> = ({
         </View>
       </View>
 
-      {/* Liseré: Haitian bicolor in manager mode, supervisor violet in admin mode */}
-      {isSupervisor ? (
-        <View style={styles.supervisorRule} />
-      ) : (
-        <View style={styles.flagRule} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          <View style={styles.flagBlue} />
-          <View style={styles.flagRed} />
-        </View>
-      )}
+      {/* Liseré: brand bicolor accent */}
+      <View style={styles.flagRule} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <View style={styles.flagBlue} />
+        <View style={styles.flagRed} />
+      </View>
     </View>
   );
 };
@@ -173,8 +165,4 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
     },
     flagBlue: { flex: 1, backgroundColor: brand.haitiBlue },
     flagRed: { flex: 1, backgroundColor: brand.haitiRed },
-    supervisorRule: {
-      height: 2,
-      backgroundColor: colors.supervisor,
-    },
   });

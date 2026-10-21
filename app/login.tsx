@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { View, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
@@ -14,17 +15,40 @@ export default function LoginScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { loginWithPin } = useAuth();
+  const { loginWithPin, loginWithBiometrics, biometricAvailable, biometricPhone } = useAuth();
   const { isSmallScreen, isVerySmallScreen, horizontalPadding, height } = useResponsive();
   const isCompactHeight = height < 700;
 
   const [activeField, setActiveField] = useState<'PHONE' | 'PIN'>('PHONE');
-  const [phoneDigits, setPhoneDigits] = useState('37123456');
+  const [phoneDigits, setPhoneDigits] = useState('');
   const [pin, setPin] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fullPhone = `+509${phoneDigits}`;
+
+  // Pre-fill the last phone number used on this device
+  useEffect(() => {
+    AsyncStorage.getItem('SOL_LAST_PHONE').then((last) => {
+      const digits = (last || '').replace(/\D/g, '').replace(/^509/, '').slice(0, 8);
+      if (digits.length === 8) {
+        setPhoneDigits(digits);
+        setActiveField('PIN');
+      }
+    });
+  }, []);
+
+  const goToCarnet = async () => {
+    const business = await getActiveBusinessConfig();
+    router.replace((business ? '/(tabs)' : '/setup-business') as any);
+  };
+
+  const handleBiometric = async () => {
+    setErrorMessage(null);
+    const res = await loginWithBiometrics();
+    if (res.success) await goToCarnet();
+    else if (res.error) setErrorMessage(res.error);
+  };
 
   const formatPhoneDisplay = (digits: string) => {
     if (!digits) return '';
@@ -58,20 +82,7 @@ export default function LoginScreen() {
 
     if (res.success) {
       triggerSuccessFeedback();
-      if (res.role === 'ADMIN') {
-        router.replace('/admin' as any);
-      } else if (res.status === 'SUSPENDED') {
-        router.replace('/suspended' as any);
-      } else if (res.status === 'PENDING_APPROVAL') {
-        router.replace('/pending-approval' as any);
-      } else {
-        const business = await getActiveBusinessConfig();
-        if (!business) {
-          router.replace('/setup-business' as any);
-        } else {
-          router.replace('/(tabs)' as any);
-        }
-      }
+      await goToCarnet();
     } else {
       triggerErrorFeedback();
       setErrorMessage(res.error || 'Numéro de téléphone ou code PIN incorrect.');
@@ -264,6 +275,19 @@ export default function LoginScreen() {
           />
         </View>
 
+        {biometricAvailable && !!biometricPhone && (
+          <Button variant="secondary" fullWidth icon="fingerprint" label="Déverrouiller avec la biométrie" onPress={handleBiometric} />
+        )}
+
+        <View style={styles.helpLinks}>
+          <Button
+            variant="ghost"
+            label="Code PIN oublié ?"
+            onPress={() => router.push({ pathname: '/recover-pin', params: { phone: phoneDigits } } as any)}
+          />
+          <Button variant="ghost" label="Restaurer une sauvegarde" onPress={() => router.push('/restore-backup' as any)} />
+        </View>
+
         {/* Register link */}
         <Pressable
           onPress={() => router.push('/register' as any)}
@@ -337,6 +361,7 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
     errorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
 
     keypadBlock: { gap: spacing.md },
+    helpLinks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: spacing.xs },
     registerLink: { minHeight: layout.touchTarget, justifyContent: 'center', borderRadius: radius.md },
     pressedLink: { backgroundColor: colors.surfacePressed },
   });

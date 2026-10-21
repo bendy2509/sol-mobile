@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, TextInput, FlatList, Pressable, StyleSheet, RefreshControl, Alert, Modal, BackHandler } from 'react-native';
+import { View, TextInput, FlatList, Pressable, StyleSheet, RefreshControl, Alert, Modal } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 
 import { Header } from '@/components/Header';
@@ -27,7 +27,7 @@ export default function DashboardScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { userRole, isImpersonating, exitImpersonation } = useAuth();
+  const { userRole } = useAuth();
   const { triggerSync } = useSync();
   const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
@@ -213,34 +213,6 @@ export default function DashboardScreen() {
     metrics.totalHandsExpected > 0
       ? Math.min(100, Math.round((metrics.handsTouchedCount / metrics.totalHandsExpected) * 100))
       : 0;
-
-  // Hardware BackHandler for Admin Impersonation Mode
-  useFocusEffect(
-    useCallback(() => {
-      if (!isImpersonating && userRole !== 'ADMIN') return;
-
-      const onBackPress = () => {
-        Alert.alert(
-          'Mode Superviseur',
-          'Voulez-vous quitter ce carnet et retourner au Dashboard Administrateur ?',
-          [
-            { text: 'Rester ici', style: 'cancel' },
-            {
-              text: 'Retour Admin',
-              onPress: async () => {
-                await exitImpersonation();
-                router.replace('/admin' as any);
-              },
-            },
-          ]
-        );
-        return true;
-      };
-
-      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-      return () => subscription.remove();
-    }, [isImpersonating, userRole, exitImpersonation, router])
-  );
 
   const renderMemberItem = useCallback(
     ({ item, index }: { item: Member; index: number }) => (

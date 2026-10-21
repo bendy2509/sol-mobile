@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useRouter } from 'expo-router';
 import { View, StyleSheet, ActivityIndicator, Alert } from 'react-native';
-import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system/legacy';
 import { Header } from '@/components/Header';
 import { Button, Card, Icon, MetricTile, Screen, SectionHeader, Text } from '@/components/ui';
 
@@ -25,7 +24,7 @@ export default function BackupDiagnosticsScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [loading, setLoading] = useState(true);
   const [diagnostics, setDiagnostics] = useState<DiagnosticState | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const router = useRouter();
 
   const runDiagnostics = useCallback(async () => {
     setLoading(true);
@@ -75,49 +74,6 @@ export default function BackupDiagnosticsScreen() {
     runDiagnostics();
   }, [runDiagnostics]);
 
-  const handleExportBackup = async () => {
-    triggerMediumImpact();
-    setIsExporting(true);
-    try {
-      const db = await getDatabase();
-      const collectorId = await getActiveCollectorId();
-
-      // Extraction complète du carnet local
-      const clients = await db.getAllAsync('SELECT * FROM clients WHERE collector_id = ?', [collectorId]);
-      const transactions = await db.getAllAsync('SELECT * FROM transactions WHERE collector_id = ?', [collectorId]);
-      const business = await db.getAllAsync('SELECT * FROM businesses WHERE collector_id = ?', [collectorId]);
-
-      const backupData = {
-        version: '1.0.0',
-        exportedAt: new Date().toISOString(),
-        collectorId,
-        business,
-        clients,
-        transactions,
-      };
-
-      const jsonStr = JSON.stringify(backupData, null, 2);
-      const fileName = `SOL_BACKUP_${new Date().toISOString().split('T')[0]}_${Date.now().toString().slice(-4)}.json`;
-      const filePath = `${FileSystem.documentDirectory}${fileName}`;
-
-      await FileSystem.writeAsStringAsync(filePath, jsonStr, { encoding: FileSystem.EncodingType.UTF8 });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(filePath, {
-          mimeType: 'application/json',
-          dialogTitle: 'Exporter la sauvegarde sécurisée SOL',
-        });
-        triggerSuccessFeedback();
-      } else {
-        Alert.alert('Sauvegarde locale', `Fichier généré : ${filePath}`);
-      }
-    } catch (err: any) {
-      triggerErrorFeedback();
-      Alert.alert('Erreur Sauvegarde', err?.message || 'Échec de la génération du fichier.');
-    } finally {
-      setIsExporting(false);
-    }
-  };
 
   const pending = diagnostics?.pendingSyncCount || 0;
   const statusTone = !diagnostics ? 'sunken' : diagnostics.isHealthy ? 'success' : 'danger';
@@ -138,16 +94,7 @@ export default function BackupDiagnosticsScreen() {
       contentStyle={styles.content}
       footer={
         <View style={styles.footer}>
-          <Button
-            size="lg"
-            fullWidth
-            icon="share"
-            loading={isExporting}
-            disabled={isExporting}
-            label="Exporter la sauvegarde"
-            accessibilityLabel="Exporter la sauvegarde sécurisée"
-            onPress={handleExportBackup}
-          />
+          <Button size="lg" fullWidth icon="download" label="Sauvegarde chiffrée" onPress={() => router.push('/security' as any)} />
           <Button variant="secondary" fullWidth icon="cycle" loading={loading} disabled={loading} label="Relancer le test d'intégrité" onPress={runDiagnostics} />
         </View>
       }

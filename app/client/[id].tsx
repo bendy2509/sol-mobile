@@ -9,7 +9,7 @@ import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { payoutMemberHand } from '@/db/memberRepository';
 import { useAuth } from '@/context/AuthContext';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { ClosedCycleLockNotice } from '@/components/ClosedCycleLockNotice';
+import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import {
   AmountText,
   Avatar,
@@ -56,10 +56,9 @@ export default function ClientDetailScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { activeCollector, userRole, getAdminProfile } = useAuth();
+  const { activeCollector, userRole } = useAuth();
   const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
-  const isAdmin = userRole === 'ADMIN';
 
   const [client, setClient] = useState<Client | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -555,11 +554,10 @@ Reçu archivé avec succès sur SOL Mobile.`;
     });
   };
 
-  const isSelectedTxLocked =
-    !isAdmin && !!selectedTx && isTransactionFromClosedCycle(selectedTx.createdAtLocal, cycleBoundary);
+  const isSelectedTxFromClosedCycle = !!selectedTx && isTransactionFromClosedCycle(selectedTx.createdAtLocal, cycleBoundary);
 
   const handleInitiateCancel = () => {
-    if (!selectedTx || isSelectedTxLocked) return;
+    if (!selectedTx) return;
     setIsDetailModalOpen(false);
     setSelectedTxForReversal(selectedTx);
     setReversalReason('');
@@ -856,37 +854,19 @@ Reçu archivé avec succès sur SOL Mobile.`;
               <Button label="WhatsApp" icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
             </View>
 
-            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxLocked && (
-              <ClosedCycleLockNotice transaction={selectedTx} clientName={client.fullName} />
-            )}
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
-            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && !isSelectedTxLocked && (
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
               <Button label="Annuler cette opération" icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
             )}
 
-            {!isAdmin && (
-              <Button
-                label="Contacter l'administrateur"
-                icon="phone"
-                variant="ghost"
-                fullWidth
-                onPress={async () => {
-                  const profile = await getAdminProfile();
-                  const phone = profile.phoneNumber || '+50900000000';
-                  const digits = phone.replace(/[^0-9+]/g, '');
-                  Linking.openURL(`tel:${digits}`).catch(() => {
-                    Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
-                  });
-                }}
-              />
-            )}
 
             {isReadOnly && selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
               <Card tone="sunken">
                 <View style={styles.noticeRow}>
                   <Icon name="shield" size={18} color={theme.colors.textMuted} />
                   <Text variant="caption" tone="muted" style={styles.flexShrink}>
-                    Mode consultation seule. Contactez votre gestionnaire ou un Super-Admin pour régularisation.
+                    Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.
                   </Text>
                 </View>
               </Card>
