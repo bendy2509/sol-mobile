@@ -47,6 +47,7 @@ const ICONS = {
   trash: [{ d: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3' }],
   edit: [{ d: 'M4 20h4L19 9l-4-4L4 16Z' }],
   calendar: [{ x: 3, y: 5, w: 18, h: 16, rx: 2 }, { d: 'M3 10h18M8 3v4M16 3v4' }],
+  backspace: [{ d: 'M21 5H9l-7 7 7 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1ZM17 9l-6 6M11 9l6 6' }],
   logout: [{ d: 'M9 20H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h4M16 17l5-5-5-5M21 12H9' }],
 } satisfies Record<string, Shape[]>;
 
