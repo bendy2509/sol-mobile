@@ -44,7 +44,7 @@ export function SettingsRow({ label, description, icon, value, toggle, onPress, 
         ) : null}
       </View>
       {value ? (
-        <Text variant="body" tone="muted" numberOfLines={1} style={{ maxWidth: '45%' }}>
+        <Text variant="body" tone="muted" numberOfLines={1} style={{ maxWidth: '40%', flexShrink: 1 }}>
           {value}
         </Text>
       ) : null}

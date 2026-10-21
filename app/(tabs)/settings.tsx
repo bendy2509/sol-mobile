@@ -252,20 +252,6 @@ export default function SettingsScreen() {
         {t('settings.title')}
       </Text>
 
-      {/* Identity */}
-      <Card onPress={() => openSheet('profile')} accessibilityLabel={t('settings.profile.edit')} style={styles.identity}>
-        <Avatar name={activeCollector?.fullName || 'SOL'} />
-        <View style={styles.flexShrink}>
-          <Text variant="subheading" numberOfLines={1}>
-            {activeCollector?.fullName || 'Responsable du sol'}
-          </Text>
-          <Text variant="caption" tone="muted" numberOfLines={1}>
-            {[activeCollector?.phoneNumber, activeCollector?.zone].filter(Boolean).join(' · ')}
-          </Text>
-        </View>
-        <Icon name="chevron-right" size={18} color={theme.colors.textMuted} />
-      </Card>
-
       {/* 1. Apparence */}
       <SettingsGroup title={t('settings.appearance')}>
         <View style={styles.block}>
@@ -287,9 +273,17 @@ export default function SettingsScreen() {
 
       {/* 2. Profil */}
       <SettingsGroup title={t('settings.profile')}>
-        <SettingsRow label={t('settings.profile.name')} value={activeCollector?.fullName || '—'} />
-        <SettingsRow label={t('settings.profile.phone')} value={activeCollector?.phoneNumber || '—'} />
-        <SettingsRow label={t('settings.profile.zone')} value={activeCollector?.zone || '—'} />
+        <View style={styles.identity}>
+          <Avatar name={activeCollector?.fullName || 'SOL'} />
+          <View style={styles.flexShrink}>
+            <Text variant="bodyStrong" numberOfLines={1}>
+              {activeCollector?.fullName || 'Responsable du sol'}
+            </Text>
+            <Text variant="caption" tone="muted" numberOfLines={1}>
+              {[activeCollector?.phoneNumber, activeCollector?.zone].filter(Boolean).join(' · ')}
+            </Text>
+          </View>
+        </View>
         <SettingsRow label={t('settings.profile.edit')} icon="edit" onPress={() => openSheet('profile')} requiresPin divider={false} />
       </SettingsGroup>
 
@@ -525,7 +519,7 @@ const createStyles = ({ spacing, colors, radius }: Theme) =>
     content: { gap: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.xxl },
     flexShrink: { flex: 1, minWidth: 0 },
     row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-    identity: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    identity: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.divider },
     block: { gap: spacing.md, padding: spacing.lg },
     blockDivider: { borderTopWidth: 1, borderTopColor: colors.divider, borderBottomWidth: 1, borderBottomColor: colors.divider, marginTop: -1 },
     preview: { gap: spacing.xs, padding: spacing.lg, borderRadius: radius.md, backgroundColor: colors.surfaceAlt },
