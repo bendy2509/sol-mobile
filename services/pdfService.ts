@@ -8,6 +8,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 import { formatCurrency, formatDate, formatDateShort } from '@/lib/formatters';
+import { getReceiptPreferences } from '@/lib/receiptPreferences';
 
 export interface ContributionPdfData {
   transactionId: string;
@@ -104,7 +105,7 @@ function generateBarcodeSvg(value?: string | null, width = 260, height = 36): st
     const wIndex = (charCode + hash + i) % barWidths.length;
     const barW = barWidths[wIndex];
     if (i % 2 === 0) {
-      bars.push(`<rect x="${currentX}" y="0" width="${barW}" height="${height}" fill="#0F172A" />`);
+      bars.push(`<rect x="${currentX}" y="0" width="${barW}" height="${height}" fill="#141B2D" />`);
     }
     currentX += barW + ((i % 3 === 0) ? 2 : 1);
   }
@@ -158,6 +159,20 @@ async function renderHtmlDocument(html: string): Promise<string> {
 /**
  * Shared institutional CSS styling for all A4 documents.
  */
+/** Applies the receipt name chosen in Réglages (falls back to the carnet name). */
+function withReceiptName<T extends { businessName?: string }>(data: T): T {
+  const { receiptName } = getReceiptPreferences();
+  return receiptName ? { ...data, businessName: receiptName } : data;
+}
+
+/** Optional note printed at the bottom of every document. */
+function receiptNoteHtml(): string {
+  const { receiptNote } = getReceiptPreferences();
+  if (!receiptNote) return '';
+  const safe = receiptNote.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string);
+  return `<div style="text-align:center;font-size:10px;color:#4A5368;margin-top:10px;">${safe}</div>`;
+}
+
 const BASE_PRINT_CSS = `
   @page {
     size: A4 portrait;
@@ -169,10 +184,11 @@ const BASE_PRINT_CSS = `
     print-color-adjust: exact !important;
   }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-variant-numeric: tabular-nums;
     margin: 0;
     padding: 0;
-    color: #0F172A;
+    color: #141B2D;
     background-color: #FFFFFF;
     font-size: 12px;
     line-height: 1.45;
@@ -188,7 +204,7 @@ const BASE_PRINT_CSS = `
     width: 100%;
     border-collapse: collapse;
     margin-bottom: 14px;
-    border-bottom: 1.5px solid #E2E8F0;
+    border-bottom: 1.5px solid #E6E8EE;
     padding-bottom: 12px;
   }
   .header-table td {
@@ -198,7 +214,7 @@ const BASE_PRINT_CSS = `
     font-size: 24px;
     font-weight: 900;
     letter-spacing: 1.5px;
-    color: #0F2942;
+    color: #141B2D;
     margin: 0;
   }
   .brand-logo-text span {
@@ -207,7 +223,7 @@ const BASE_PRINT_CSS = `
   .brand-subline {
     font-size: 10px;
     font-weight: 700;
-    color: #64748B;
+    color: #4A5368;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-top: 2px;
@@ -223,19 +239,19 @@ const BASE_PRINT_CSS = `
     text-align: right;
   }
   .badge-blue {
-    background-color: #EFF6FF;
-    color: #1D4ED8;
-    border: 1px solid #BFDBFE;
+    background-color: #EBEEFA;
+    color: #1F3FB8;
+    border: 1px solid #C3CCF2;
   }
   .badge-green {
-    background-color: #ECFDF5;
-    color: #047857;
-    border: 1px solid #A7F3D0;
+    background-color: #E6F4EC;
+    color: #0B6E47;
+    border: 1px solid #A9D9BF;
   }
   .badge-amber {
-    background-color: #FFFBEB;
-    color: #B45309;
-    border: 1px solid #FDE68A;
+    background-color: #FBF1DF;
+    color: #8A5300;
+    border: 1px solid #EBCB91;
   }
   .info-grid {
     width: 100%;
@@ -244,8 +260,8 @@ const BASE_PRINT_CSS = `
     margin-bottom: 14px;
   }
   .info-card {
-    background-color: #F8FAFC;
-    border: 1px solid #E2E8F0;
+    background-color: #F4F5F8;
+    border: 1px solid #E6E8EE;
     border-radius: 8px;
     padding: 10px 12px;
   }
@@ -253,10 +269,10 @@ const BASE_PRINT_CSS = `
     font-size: 9.5px;
     font-weight: 900;
     text-transform: uppercase;
-    color: #475569;
+    color: #4A5368;
     letter-spacing: 0.5px;
     margin-bottom: 6px;
-    border-bottom: 1px solid #E2E8F0;
+    border-bottom: 1px solid #E6E8EE;
     padding-bottom: 4px;
   }
   .info-row {
@@ -266,48 +282,48 @@ const BASE_PRINT_CSS = `
     font-size: 11px;
   }
   .info-label {
-    color: #64748B;
+    color: #4A5368;
     font-weight: 600;
   }
   .info-value {
-    color: #0F172A;
+    color: #141B2D;
     font-weight: 800;
     text-align: right;
   }
   .hero-amount-box {
-    background: linear-gradient(135deg, #F8FAFC 0%, #EFF6FF 100%);
-    border: 1.5px solid #BFDBFE;
+    background: linear-gradient(135deg, #F4F5F8 0%, #EBEEFA 100%);
+    border: 1.5px solid #C3CCF2;
     border-radius: 10px;
     padding: 14px 16px;
     text-align: center;
     margin-bottom: 16px;
   }
   .hero-amount-box.amber {
-    background: linear-gradient(135deg, #FFFDF5 0%, #FEF3C7 100%);
-    border-color: #FDE68A;
+    background: linear-gradient(135deg, #FBF1DF 0%, #FBF1DF 100%);
+    border-color: #EBCB91;
   }
   .hero-amount-box.green {
-    background: linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%);
-    border-color: #86EFAC;
+    background: linear-gradient(135deg, #E6F4EC 0%, #E6F4EC 100%);
+    border-color: #A9D9BF;
   }
   .hero-label {
     font-size: 10px;
     font-weight: 800;
-    color: #475569;
+    color: #4A5368;
     text-transform: uppercase;
     letter-spacing: 0.8px;
   }
   .hero-value {
     font-size: 28px;
     font-weight: 900;
-    color: #0F2942;
+    color: #141B2D;
     margin: 4px 0;
     letter-spacing: -0.5px;
   }
   .hero-sub {
     font-size: 11px;
     font-weight: 600;
-    color: #64748B;
+    color: #4A5368;
   }
   .table-clean {
     width: 100%;
@@ -315,7 +331,7 @@ const BASE_PRINT_CSS = `
     margin-bottom: 16px;
   }
   .table-clean th {
-    background-color: #0F2942;
+    background-color: #141B2D;
     color: #FFFFFF;
     font-size: 9.5px;
     font-weight: 800;
@@ -326,11 +342,11 @@ const BASE_PRINT_CSS = `
   }
   .table-clean td {
     padding: 7px 8px;
-    border-bottom: 1px solid #E2E8F0;
+    border-bottom: 1px solid #E6E8EE;
     font-size: 10.5px;
   }
   .table-clean tr:nth-child(even) {
-    background-color: #F8FAFC;
+    background-color: #F4F5F8;
   }
   .signatures-zone {
     width: 100%;
@@ -338,8 +354,8 @@ const BASE_PRINT_CSS = `
     page-break-inside: avoid;
   }
   .sig-box {
-    border: 1px dashed #94A3B8;
-    background-color: #FAFAFA;
+    border: 1px dashed #6B7385;
+    background-color: #F4F5F8;
     border-radius: 8px;
     padding: 10px;
     height: 80px;
@@ -348,7 +364,7 @@ const BASE_PRINT_CSS = `
   .sig-title {
     font-size: 9.5px;
     font-weight: 800;
-    color: #475569;
+    color: #4A5368;
     text-transform: uppercase;
   }
   .sig-line {
@@ -356,9 +372,9 @@ const BASE_PRINT_CSS = `
     bottom: 12px;
     left: 10px;
     right: 10px;
-    border-bottom: 1px solid #CBD5E1;
+    border-bottom: 1px solid #C5CBD8;
     font-size: 8.5px;
-    color: #94A3B8;
+    color: #6B7385;
     text-align: right;
     padding-bottom: 2px;
   }
@@ -366,9 +382,9 @@ const BASE_PRINT_CSS = `
     text-align: center;
     margin-top: 14px;
     padding-top: 10px;
-    border-top: 1px solid #E2E8F0;
+    border-top: 1px solid #E6E8EE;
     font-size: 9px;
-    color: #64748B;
+    color: #4A5368;
     page-break-inside: avoid;
   }
   .barcode-wrapper {
@@ -377,7 +393,7 @@ const BASE_PRINT_CSS = `
   }
   .legal-note {
     font-size: 8.5px;
-    color: #94A3B8;
+    color: #6B7385;
     line-height: 1.35;
     margin-top: 6px;
     text-align: justify;
@@ -388,6 +404,7 @@ const BASE_PRINT_CSS = `
  * Generates an official Contribution Receipt PDF document.
  */
 export async function generateContributionReceiptPdf(data: ContributionPdfData): Promise<string> {
+  data = withReceiptName(data);
   const safeTrxId = (data.transactionId || 'SOL-TRX').toUpperCase();
   const safeToken = (data.qrCodeToken || data.transactionId || 'CERT-SOL').slice(0, 24).toUpperCase();
   const barcodeSvg = generateBarcodeSvg(data.transactionId || data.qrCodeToken);
@@ -404,7 +421,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
     .receipt-frame {
       max-width: 680px;
       margin: 0 auto;
-      border: 1.5px solid #0F2942;
+      border: 1.5px solid #141B2D;
       border-radius: 12px;
       padding: 20px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.05);
@@ -421,16 +438,16 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
         <td>
           <div class="brand-logo-text">SOL <span>MOBILE</span></div>
           <div class="brand-subline">SYSTÈME TONTINIER SÉCURISÉ D'HAÏTI</div>
-          <div style="font-size: 11px; font-weight: 700; color: #0F172A; margin-top: 4px;">
+          <div style="font-size: 11px; font-weight: 700; color: #141B2D; margin-top: 4px;">
             ${data.businessName || 'Carnet Tontinier Communautaire'}
           </div>
         </td>
         <td style="text-align: right;">
           <div class="doc-badge badge-green">REÇU OFFICIEL DE COTISATION</div>
-          <div style="font-size: 10px; color: #64748B; margin-top: 4px; font-weight: 600;">
+          <div style="font-size: 10px; color: #4A5368; margin-top: 4px; font-weight: 600;">
             N° : <strong>${safeTrxId}</strong>
           </div>
-          <div style="font-size: 10px; color: #64748B; font-weight: 600;">
+          <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
             Date : <strong>${formatDate(data.createdAt)}</strong>
           </div>
         </td>
@@ -440,7 +457,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
     <!-- Hero Amount -->
     <div class="hero-amount-box green">
       <div class="hero-label">Montant Total Encaissé (Vèsman Resevwa)</div>
-      <div class="hero-value" style="color: #047857;">${formatCurrency(data.totalAmount)}</div>
+      <div class="hero-value" style="color: #0B6E47;">${formatCurrency(data.totalAmount)}</div>
       <div class="hero-sub">
         <strong>${data.handsCount} main${data.handsCount > 1 ? 's' : ''}</strong> cotisée${data.handsCount > 1 ? 's' : ''} à <strong>${formatCurrency(data.unitAmount)}</strong> / main
       </div>
@@ -466,7 +483,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
             </div>
             <div class="info-row">
               <span class="info-label">Période Couverte :</span>
-              <span class="info-value" style="color: #047857;">${formatDateShort(data.coverageStartDate)} au ${formatDateShort(data.coverageEndDate)}</span>
+              <span class="info-value" style="color: #0B6E47;">${formatDateShort(data.coverageStartDate)} au ${formatDateShort(data.coverageEndDate)}</span>
             </div>
           </div>
         </td>
@@ -487,7 +504,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
             </div>
             <div class="info-row">
               <span class="info-label">Statut Validation :</span>
-              <span class="info-value" style="color: #047857;">ENCAISSÉ & SÉCURISÉ</span>
+              <span class="info-value" style="color: #0B6E47;">ENCAISSÉ & SÉCURISÉ</span>
             </div>
           </div>
         </td>
@@ -518,7 +535,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
       <div class="barcode-wrapper">
         ${barcodeSvg}
       </div>
-      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #0F172A;">
+      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
         CERT-ID: ${safeToken}
       </div>
       <div class="legal-note">
@@ -526,6 +543,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
       </div>
     </div>
   </div>
+${receiptNoteHtml()}
 </body>
 </html>
   `.trim();
@@ -537,6 +555,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
  * Generates an official Payout Receipt / Décharge PDF document.
  */
 export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<string> {
+  data = withReceiptName(data);
   const safeTrxId = (data.transactionId || 'SOL-DEC').toUpperCase();
   const barcodeSvg = generateBarcodeSvg(data.transactionId);
   const displayRank = data.payoutRanks ? `Rangs: ${data.payoutRanks}` : (data.payoutRank ? `Rang: #${data.payoutRank}` : 'Main standard');
@@ -552,14 +571,14 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
     .receipt-frame {
       max-width: 680px;
       margin: 0 auto;
-      border: 1.5px solid #0F2942;
+      border: 1.5px solid #141B2D;
       border-radius: 12px;
       padding: 20px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.05);
     }
     .legal-box {
-      background-color: #FEF3C7;
-      border: 1px solid #FDE68A;
+      background-color: #FBF1DF;
+      border: 1px solid #EBCB91;
       border-radius: 8px;
       padding: 10px 12px;
       margin-top: 12px;
@@ -581,19 +600,19 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
         <td>
           <div class="brand-logo-text">SOL <span>MOBILE</span></div>
           <div class="brand-subline">SYSTÈME TONTINIER SÉCURISÉ D'HAÏTI</div>
-          <div style="font-size: 11px; font-weight: 700; color: #0F172A; margin-top: 4px;">
+          <div style="font-size: 11px; font-weight: 700; color: #141B2D; margin-top: 4px;">
             ${data.businessName || 'Carnet Tontinier Communautaire'}
           </div>
         </td>
         <td style="text-align: right;">
           <div class="doc-badge badge-amber">ATTESTATION DE DÉCAISSEMENT</div>
-          <div style="font-size: 10px; color: #64748B; margin-top: 4px; font-weight: 600;">
+          <div style="font-size: 10px; color: #4A5368; margin-top: 4px; font-weight: 600;">
             REMISE DE MAIN (BAY MEN)
           </div>
-          <div style="font-size: 10px; color: #64748B; font-weight: 600;">
+          <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
             Réf : <strong>${safeTrxId}</strong>
           </div>
-          <div style="font-size: 10px; color: #64748B; font-weight: 600;">
+          <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
             Date : <strong>${formatDate(data.createdAt)}</strong>
           </div>
         </td>
@@ -603,7 +622,7 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
     <!-- Hero Amount -->
     <div class="hero-amount-box amber">
       <div class="hero-label">Montant Total Décaissé (Kòb Men Remèt)</div>
-      <div class="hero-value" style="color: #B45309;">${formatCurrency(data.totalPotAmount)}</div>
+      <div class="hero-value" style="color: #8A5300;">${formatCurrency(data.totalPotAmount)}</div>
       <div class="hero-sub">
         Cagnotte intégrale constituée de <strong>${data.registeredChildrenCount} souscriptions</strong> à <strong>${formatCurrency(data.unitAmount)}</strong>
       </div>
@@ -650,7 +669,7 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
             </div>
             <div class="info-row">
               <span class="info-label">Statut :</span>
-              <span class="info-value" style="color: #047857;">DÉCAISSEMENT CERTIFIÉ</span>
+              <span class="info-value" style="color: #0B6E47;">DÉCAISSEMENT CERTIFIÉ</span>
             </div>
           </div>
         </td>
@@ -688,7 +707,7 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
       <div class="barcode-wrapper">
         ${barcodeSvg}
       </div>
-      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #0F172A;">
+      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
         AUTH-DEC: ${safeTrxId}
       </div>
       <div class="legal-note">
@@ -696,6 +715,7 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
       </div>
     </div>
   </div>
+${receiptNoteHtml()}
 </body>
 </html>
   `.trim();
@@ -707,6 +727,7 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
  * Generates an official Manager Business Report PDF document.
  */
 export async function generateManagerBusinessReportPdf(data: ManagerBusinessReportPdfData): Promise<string> {
+  data = withReceiptName(data);
   const barcodeSvg = generateBarcodeSvg(`REP-${data.collectorPhone || '0000'}-${data.generatedAt || Date.now()}`);
   const safeCompletionRate = Number(data.completionRate) || 0;
 
@@ -728,15 +749,15 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
       width: 31%;
       box-sizing: border-box;
       margin-bottom: 10px;
-      background-color: #F8FAFC;
-      border: 1px solid #E2E8F0;
+      background-color: #F4F5F8;
+      border: 1px solid #E6E8EE;
       border-radius: 8px;
       padding: 10px 12px;
     }
     .kpi-tile-label {
       font-size: 9px;
       font-weight: 800;
-      color: #64748B;
+      color: #4A5368;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
@@ -754,16 +775,16 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
       text-transform: uppercase;
     }
     .badge-paid {
-      background-color: #ECFDF5;
-      color: #047857;
+      background-color: #E6F4EC;
+      color: #0B6E47;
     }
     .badge-late {
       background-color: #FEF2F2;
       color: #B91C1C;
     }
     .badge-pending {
-      background-color: #FFFBEB;
-      color: #B45309;
+      background-color: #FBF1DF;
+      color: #8A5300;
     }
   </style>
 </head>
@@ -776,19 +797,19 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
       <td>
         <div class="brand-logo-text">SOL <span>MOBILE</span></div>
         <div class="brand-subline">RAPPORT OFFICIEL D'ÉVOLUTION & AUDIT DE CARNET</div>
-        <div style="font-size: 14px; font-weight: 900; color: #0F2942; margin-top: 4px;">
+        <div style="font-size: 14px; font-weight: 900; color: #141B2D; margin-top: 4px;">
           ${data.businessName || 'Carnet Tontinier'} ${data.cycleNumber ? `• Cycle #${data.cycleNumber}` : ''}
         </div>
-        <div style="font-size: 11px; color: #475569; margin-top: 2px;">
+        <div style="font-size: 11px; color: #4A5368; margin-top: 2px;">
           Gestionnaire : <strong>${data.collectorName}</strong> (${data.collectorPhone}) • Zone : <strong>${data.collectorZone || 'Standard'}</strong>
         </div>
       </td>
       <td style="text-align: right;">
         <div class="doc-badge badge-blue">AUDIT DE CYCLE</div>
-        <div style="font-size: 10px; color: #64748B; margin-top: 6px; font-weight: 600;">
+        <div style="font-size: 10px; color: #4A5368; margin-top: 6px; font-weight: 600;">
           Période : <strong>${formatDateShort(data.cycleStartDate)} au ${formatDateShort(data.cycleEndDate)}</strong>
         </div>
-        <div style="font-size: 10px; color: #64748B; font-weight: 600;">
+        <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
           Édité le : <strong>${formatDate(data.generatedAt)}</strong>
         </div>
       </td>
@@ -799,40 +820,40 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
   <div class="kpi-grid">
     <div class="kpi-tile">
       <div class="kpi-tile-label">Cagnotte par Main</div>
-      <div class="kpi-tile-val" style="color: #1D4ED8;">${formatCurrency(data.totalPotAmount)}</div>
-      <div style="font-size: 9px; color: #64748B; font-weight: 600;">${data.totalSlots} souscriptions attendues</div>
+      <div class="kpi-tile-val" style="color: #1F3FB8;">${formatCurrency(data.totalPotAmount)}</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">${data.totalSlots} souscriptions attendues</div>
     </div>
     <div class="kpi-tile">
       <div class="kpi-tile-label">Total Encaissé</div>
-      <div class="kpi-tile-val" style="color: #047857;">+${formatCurrency(data.totalCashCollected)}</div>
-      <div style="font-size: 9px; color: #64748B; font-weight: 600;">${data.handsCollectedTotal} mains reçues</div>
+      <div class="kpi-tile-val" style="color: #0B6E47;">+${formatCurrency(data.totalCashCollected)}</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">${data.handsCollectedTotal} mains reçues</div>
     </div>
     <div class="kpi-tile">
       <div class="kpi-tile-label">Total Décaissé</div>
-      <div class="kpi-tile-val" style="color: #B45309;">-${formatCurrency(data.totalDistributed)}</div>
-      <div style="font-size: 9px; color: #64748B; font-weight: 600;">Mains remises aux bénéficiaires</div>
+      <div class="kpi-tile-val" style="color: #8A5300;">-${formatCurrency(data.totalDistributed)}</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Mains remises aux bénéficiaires</div>
     </div>
     <div class="kpi-tile">
       <div class="kpi-tile-label">Solde Net en Caisse</div>
-      <div class="kpi-tile-val" style="color: #0F2942;">${formatCurrency(data.netReserveBalance)}</div>
-      <div style="font-size: 9px; color: #64748B; font-weight: 600;">Fonds conservés en réserve</div>
+      <div class="kpi-tile-val" style="color: #141B2D;">${formatCurrency(data.netReserveBalance)}</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Fonds conservés en réserve</div>
     </div>
     <div class="kpi-tile">
       <div class="kpi-tile-label">Effectif Adhérents</div>
-      <div class="kpi-tile-val" style="color: #0F2942;">${data.registeredChildrenCount} adhérents</div>
-      <div style="font-size: 9px; color: #64748B; font-weight: 600;">Membres inscrits au carnet</div>
+      <div class="kpi-tile-val" style="color: #141B2D;">${data.registeredChildrenCount} adhérents</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Membres inscrits au carnet</div>
     </div>
     <div class="kpi-tile">
       <div class="kpi-tile-label">Taux de Recouvrement</div>
-      <div class="kpi-tile-val" style="color: ${safeCompletionRate >= 80 ? '#047857' : '#D97706'};">
+      <div class="kpi-tile-val" style="color: ${safeCompletionRate >= 80 ? '#0B6E47' : '#D97706'};">
         ${safeCompletionRate.toFixed(1)}%
       </div>
-      <div style="font-size: 9px; color: #64748B; font-weight: 600;">Complétion de l'échéancier</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Complétion de l'échéancier</div>
     </div>
   </div>
 
   <!-- Members Roster Table -->
-  <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #0F2942; letter-spacing: 0.5px; margin-bottom: 6px;">
+  <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #141B2D; letter-spacing: 0.5px; margin-bottom: 6px;">
     État Nominatif des Adhérents & Suivi des Cotisations
   </div>
   <table class="table-clean">
@@ -853,7 +874,7 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
           <td><strong>#${m.rank}</strong></td>
           <td><strong>${m.fullName}</strong></td>
           <td>${m.phoneNumber || 'N/A'}</td>
-          <td style="text-align: right; color: #047857; font-weight: 800;">${formatCurrency(m.totalPaid)}</td>
+          <td style="text-align: right; color: #0B6E47; font-weight: 800;">${formatCurrency(m.totalPaid)}</td>
           <td style="text-align: center; font-weight: 700;">${m.handsCovered}</td>
           <td style="text-align: center;">
             <span class="badge-status ${
@@ -897,10 +918,11 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
     <div class="barcode-wrapper">
       ${barcodeSvg}
     </div>
-    <div style="font-size: 9.5px; font-weight: 700; color: #0F172A;">
+    <div style="font-size: 9.5px; font-weight: 700; color: #141B2D;">
       SOL MOBILE HAITI • DOCUMENT D'AUDIT CERTIFIÉ CONFORME AUX REGISTRES
     </div>
   </div>
+${receiptNoteHtml()}
 </body>
 </html>
   `.trim();
@@ -912,6 +934,7 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
  * Generates an official Cash Closure Receipt (Procès-Verbal de Clôture Journalière de Caisse).
  */
 export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): Promise<string> {
+  data = withReceiptName(data);
   const safeClosureId = (data.closureId || 'CLOTURE').toUpperCase();
   const barcodeSvg = generateBarcodeSvg(safeClosureId);
   const isBalanced = Math.abs(data.discrepancy) < 0.01;
@@ -927,7 +950,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
     .receipt-frame {
       max-width: 680px;
       margin: 0 auto;
-      border: 1.5px solid #0F2942;
+      border: 1.5px solid #141B2D;
       border-radius: 12px;
       padding: 20px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.05);
@@ -940,9 +963,9 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
       font-weight: 700;
     }
     .discrepancy-balanced {
-      background-color: #ECFDF5;
-      border: 1.5px solid #A7F3D0;
-      color: #047857;
+      background-color: #E6F4EC;
+      border: 1.5px solid #A9D9BF;
+      color: #0B6E47;
     }
     .discrepancy-alert {
       background-color: #FEF2F2;
@@ -961,16 +984,16 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
         <td>
           <div class="brand-logo-text">SOL <span>MOBILE</span></div>
           <div class="brand-subline">SYSTÈME TONTINIER SÉCURISÉ D'HAÏTI</div>
-          <div style="font-size: 11px; font-weight: 700; color: #0F172A; margin-top: 4px;">
+          <div style="font-size: 11px; font-weight: 700; color: #141B2D; margin-top: 4px;">
             ${data.businessName || 'Carnet Tontinier Communautaire'}
           </div>
         </td>
         <td style="text-align: right;">
           <div class="doc-badge ${isBalanced ? 'badge-green' : 'badge-amber'}">PROCÈS-VERBAL DE CLÔTURE DE CAISSE</div>
-          <div style="font-size: 10px; color: #64748B; margin-top: 4px; font-weight: 600;">
+          <div style="font-size: 10px; color: #4A5368; margin-top: 4px; font-weight: 600;">
             Réf : <strong>${safeClosureId}</strong>
           </div>
-          <div style="font-size: 10px; color: #64748B; font-weight: 600;">
+          <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
             Date Clôture : <strong>${formatDateShort(data.closureDate)}</strong>
           </div>
         </td>
@@ -980,7 +1003,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
     <!-- Hero Box -->
     <div class="hero-amount-box ${isBalanced ? 'green' : 'amber'}">
       <div class="hero-label">Total Espèces Déclaré en Caisse (Kòb Kach Fizik)</div>
-      <div class="hero-value" style="color: ${isBalanced ? '#047857' : '#B45309'};">${formatCurrency(data.totalCashDeclared)}</div>
+      <div class="hero-value" style="color: ${isBalanced ? '#0B6E47' : '#8A5300'};">${formatCurrency(data.totalCashDeclared)}</div>
       <div class="hero-sub">
         Solde théorique attendu par le système : <strong>${formatCurrency(data.totalSystemCalculated)}</strong>
       </div>
@@ -992,7 +1015,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
         ? '✓ CAISSE PARFAITEMENT ÉQUILIBRÉE — Aucun écart constaté entre les espèces physiques et les encaissements du système.'
         : `⚠️ ÉCART DE CAISSE CONSTATÉ : ${formatCurrency(data.discrepancy)} (${data.discrepancy > 0 ? 'Excédent' : 'Déficit de caisse'})`
       }
-      ${data.discrepancyReason ? `<div style="margin-top: 4px; font-weight: 600; font-size: 10px; color: #0F172A;">Justification consignée : <em>"${data.discrepancyReason}"</em></div>` : ''}
+      ${data.discrepancyReason ? `<div style="margin-top: 4px; font-weight: 600; font-size: 10px; color: #141B2D;">Justification consignée : <em>"${data.discrepancyReason}"</em></div>` : ''}
     </div>
 
     <!-- Info Cards -->
@@ -1020,7 +1043,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
             <div class="info-card-title">Détails d'Arrêté des Comptes</div>
             <div class="info-row">
               <span class="info-label">Statut Journalier :</span>
-              <span class="info-value" style="color: #047857;">${data.status.toUpperCase()}</span>
+              <span class="info-value" style="color: #0B6E47;">${data.status.toUpperCase()}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Validation Sécurité :</span>
@@ -1059,7 +1082,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
       <div class="barcode-wrapper">
         ${barcodeSvg}
       </div>
-      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #0F172A;">
+      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
         ARRÊTÉ DE CAISSE ID: ${safeClosureId}
       </div>
       <div class="legal-note">
@@ -1067,6 +1090,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
       </div>
     </div>
   </div>
+${receiptNoteHtml()}
 </body>
 </html>
   `.trim();
