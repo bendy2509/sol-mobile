@@ -1,13 +1,15 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, TextInput, Pressable, StyleSheet, Alert, Modal, RefreshControl } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { View, TextInput, Pressable, StyleSheet, Alert, RefreshControl } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 
-import { Header } from '@/components/Header';
+import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import {
+  ActionMenu,
   AmountText,
   Avatar,
+  BottomSheet,
   Button,
   Card,
   EmptyState,
@@ -24,10 +26,8 @@ import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { getFrequencyLabel } from '@/lib/dateCalculations';
 import { calculatePot, calculateCycleTotalHands } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
-import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 
 /** Segmented track (one segment per hand) is readable up to this many hands. */
@@ -36,8 +36,9 @@ const MAX_SEGMENTS = 12;
 export default function SolMatrixScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { activeCollector, userRole } = useAuth();
-  const { width, isSmallScreen, isTablet, horizontalPadding } = useResponsive();
+  const router = useRouter();
+  const { userRole } = useAuth();
+  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -96,6 +97,10 @@ export default function SolMatrixScreen() {
   };
 
   const handleInitiatePayout = (member: Member) => {
+    if (isReadOnly) {
+      Alert.alert('Accès en lecture seule', 'La remise de la main est réservée aux gestionnaires.');
+      return;
+    }
     triggerMediumImpact();
     setPayoutTargetMember(member);
     const hands = Math.max(1, member.handsCount || 1);
@@ -133,8 +138,8 @@ export default function SolMatrixScreen() {
       );
       triggerSuccessFeedback();
       Alert.alert(
-        'Main Remise avec Succès !',
-        `La cagnotte complète de ${formatCurrency(potValue)} a été décaissée pour ${payoutTargetMember.fullName}.\n\nRappel : Cet enfant reste actif et doit continuer ses cotisations restantes jusqu'à la fin du cycle.`
+        'Main remise',
+        `${formatCurrency(potValue)} remis à ${payoutTargetMember.fullName}. Ses cotisations continuent jusqu'à la fin du cycle.`
       );
       loadData();
     } catch (err: any) {
@@ -158,7 +163,24 @@ export default function SolMatrixScreen() {
     <Screen
       edges={['top', 'left', 'right']}
       header={
-        <Header title={business?.name || 'Sol (ROSCA)'} subtitle={`Ordre de passage · ${getFrequencyLabel(business?.frequency || 'DAILY')}`} onRefresh={handleRefresh} />
+        <View style={styles.topBar}>
+          <View style={styles.flexShrink}>
+            <Text variant="title" accessibilityRole="header">
+              Sol
+            </Text>
+            <Text variant="caption" tone="muted" numberOfLines={1}>
+              {business?.name ? `${business.name} · ordre de passage` : 'Ordre de passage'}
+            </Text>
+          </View>
+          <SyncBadge onSyncComplete={handleRefresh} compact />
+          <ActionMenu
+            title="Cycle"
+            items={[
+              { label: 'Gestion du cycle', description: 'Clôturer, renouveler, bilans PDF', icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
+              { label: 'Clôtures de caisse', icon: 'calendar', onPress: () => router.push('/closure' as any) },
+            ]}
+          />
+        </View>
       }
       refreshControl={
         <RefreshControl
@@ -174,7 +196,7 @@ export default function SolMatrixScreen() {
         <View style={styles.heroPot}>
           <AmountText amount={potValue} size="hero" tone="onHero" />
           <Text variant="body" tone="onHeroMuted">
-            Cagnotte par tour · {totalHandsCount} mains × {formatCurrency(business?.contributionAmount || 250)}
+            Cagnotte du tour · {totalHandsCount} mains × {formatCurrency(business?.contributionAmount || 250)}
           </Text>
         </View>
 
@@ -191,14 +213,14 @@ export default function SolMatrixScreen() {
               ))}
             </View>
           ) : (
-            <ProgressBar value={progressRatio} tone="onHero" accessibilityLabel="Mains remises" />
+            <ProgressBar value={progressRatio} accessibilityLabel="Mains remises" />
           )}
           <View style={styles.heroProgressRow}>
             <Text variant="label" tone="onHero">
               {totalHandsTouched} / {totalHandsCount} mains remises
             </Text>
-            <Text variant="label" tone="onHero">
-              {Math.round(progressRatio * 100)} %
+            <Text variant="caption" tone="onHeroMuted">
+              Tour {currentRound} sur {totalHandsCount}
             </Text>
           </View>
         </View>
@@ -220,7 +242,7 @@ export default function SolMatrixScreen() {
         </Card>
       )}
 
-      <SectionHeader title="Ordre de passage" count={members.length} />
+      <SectionHeader title="Adhérents" count={members.length} />
 
       {members.length === 0 ? (
         <Card padding="none">
@@ -239,7 +261,7 @@ export default function SolMatrixScreen() {
             const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
             const isMulti = memberHandsCount > 1;
             const isLast = index === members.length - 1;
-            const payoutLabel = isMulti ? `Remettre la main (${receivedCount + 1}/${memberHandsCount})` : 'Remettre la main';
+            const payoutLabel = isMulti ? `Remettre la main ${receivedCount + 1}/${memberHandsCount}` : 'Remettre la main';
 
             return (
               <View key={`${member.id}-${index}`} style={isNextTurn && styles.rowCurrent}>
@@ -263,7 +285,6 @@ export default function SolMatrixScreen() {
                           <Text variant="caption" tone="muted">
                             {receivedCount}/{memberHandsCount} mains reçues · rangs {member.payoutRanks || member.payoutRank}
                           </Text>
-                          <ProgressBar value={receivedCount / memberHandsCount} size="sm" tone="success" />
                         </>
                       )}
                       {!isNextTurn && !hasReceived && !isMulti && (
@@ -274,7 +295,13 @@ export default function SolMatrixScreen() {
                     </View>
                   }
                   trailing={
-                    !hasReceived && !isNextTurn ? (
+                    isNextTurn ? (
+                      <Button
+                        label="Remettre"
+                        onPress={() => handleInitiatePayout(member)}
+                        accessibilityLabel={`${payoutLabel} à ${member.fullName}`}
+                      />
+                    ) : !hasReceived ? (
                       <Pressable
                         onPress={() => handleInitiatePayout(member)}
                         accessibilityRole="button"
@@ -287,17 +314,6 @@ export default function SolMatrixScreen() {
                     ) : undefined
                   }
                 />
-                {isNextTurn && (
-                  <View style={styles.rankAction}>
-                    <Button
-                      icon="payout"
-                      fullWidth
-                      label={payoutLabel}
-                      onPress={() => handleInitiatePayout(member)}
-                      accessibilityLabel={`Remettre la main à ${member.fullName}`}
-                    />
-                  </View>
-                )}
                 {!isLast && <View style={styles.rule} />}
               </View>
             );
@@ -306,65 +322,40 @@ export default function SolMatrixScreen() {
       )}
 
       {/* Payout justification */}
-      <Modal visible={isPayoutModalOpen} transparent animationType="fade" onRequestClose={() => setIsPayoutModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxWidth: Math.min(420, width - theme.spacing.xxl) }]}>
-            <Pressable
-              onPress={() => setIsPayoutModalOpen(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Fermer"
-              style={({ pressed }) => [styles.modalClose, pressed && styles.pressed]}
-            >
-              <Icon name="close" size={22} color={theme.colors.textMuted} />
-            </Pressable>
-
-            <View style={styles.modalHeader}>
-              <View style={styles.modalIcon}>
-                <Icon name="payout" size={28} color={theme.colors.primary} />
-              </View>
-              <Text variant="title" align="center" accessibilityRole="header">
-                Remise de la main
-              </Text>
-              <AmountText amount={potValue} size="large" align="center" />
-              <Text variant="body" tone="muted" align="center">
-                pour {payoutTargetMember?.fullName} (main #{payoutTargetMember?.rankOrder || payoutTargetMember?.payoutRank || 1})
-              </Text>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text variant="label">Justification du décaissement (obligatoire)</Text>
-              <TextInput
-                style={styles.textArea}
-                multiline
-                numberOfLines={3}
-                placeholder="Ex : remise effectuée en mains propres au marché"
-                placeholderTextColor={theme.colors.textPlaceholder}
-                value={payoutNote}
-                onChangeText={setPayoutNote}
-                accessibilityLabel="Justification du décaissement"
-              />
-            </View>
-
-            <View style={styles.infoBox}>
-              <Icon name="info" size={18} color={theme.colors.info} />
-              <Text variant="caption" style={[styles.flexShrink, { color: theme.colors.info }]}>
-                L'adhérent reste dans le carnet et doit continuer ses cotisations restantes.
-              </Text>
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <Button label="Annuler" variant="secondary" onPress={() => setIsPayoutModalOpen(false)} style={styles.flexOne} />
-              <Button label="Valider avec PIN" icon="lock" onPress={handleConfirmPayoutDetails} style={styles.flexTwo} />
-            </View>
-          </View>
+      <BottomSheet
+        visible={isPayoutModalOpen}
+        onClose={() => setIsPayoutModalOpen(false)}
+        title="Remettre la main"
+        subtitle={`${payoutTargetMember?.fullName ?? ''} · rang ${payoutTargetMember?.rankOrder || payoutTargetMember?.payoutRank || 1}`}
+        footer={<Button size="lg" fullWidth label="Valider avec le PIN" icon="lock" onPress={handleConfirmPayoutDetails} />}
+      >
+        <AmountText amount={potValue} size="hero" align="center" />
+        <View style={styles.inputGroup}>
+          <Text variant="label">Motif</Text>
+          <TextInput
+            style={styles.textArea}
+            multiline
+            numberOfLines={3}
+            placeholder="Ex : remise effectuée en mains propres au marché"
+            placeholderTextColor={theme.colors.textPlaceholder}
+            value={payoutNote}
+            onChangeText={setPayoutNote}
+            accessibilityLabel="Motif de la remise"
+          />
         </View>
-      </Modal>
+        <View style={styles.noticeRow}>
+          <Icon name="info" size={16} color={theme.colors.textMuted} />
+          <Text variant="caption" tone="muted" style={styles.flexShrink}>
+            L'adhérent reste dans le carnet et continue ses cotisations jusqu'à la fin du cycle.
+          </Text>
+        </View>
+      </BottomSheet>
 
       {/* 4-Digit PIN Security Modal for Payout */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Validation Sécurisée de la Main"
-        subtitle={`Saisissez votre code PIN gestionnaire pour autoriser le décaissement de ${formatCurrency(potValue)}.`}
+        title="Confirmer la remise"
+        subtitle={`${formatCurrency(potValue)} pour ${payoutTargetMember?.fullName ?? ''}`}
         onSuccess={handlePinSuccessPayout}
         onCancel={() => setIsPinModalOpen(false)}
       />
@@ -375,9 +366,16 @@ export default function SolMatrixScreen() {
 const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
   StyleSheet.create({
     flexShrink: { flex: 1, minWidth: 0 },
-    flexOne: { flexGrow: 1, flexBasis: 0 },
-    flexTwo: { flexGrow: 2, flexBasis: 0 },
     pressed: { backgroundColor: colors.surfacePressed },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingLeft: layout.gutter,
+      paddingRight: spacing.sm,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.xs,
+    },
 
     heroCard: { gap: spacing.lg },
     heroPot: { gap: spacing.xs },
@@ -393,7 +391,6 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     rowCurrent: { backgroundColor: colors.primarySoft },
     rule: { height: 1, marginLeft: spacing.md + spacing.xxxl - spacing.sm + spacing.md, backgroundColor: colors.divider },
     meta: { gap: spacing.xs },
-    rankAction: { paddingHorizontal: spacing.md, paddingBottom: spacing.md },
     roundAction: {
       width: layout.touchTarget,
       height: layout.touchTarget,
@@ -403,42 +400,6 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
       backgroundColor: colors.surfaceAlt,
     },
 
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: colors.overlay,
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: layout.gutter,
-    },
-    modalCard: {
-      width: '100%',
-      backgroundColor: colors.surface,
-      borderRadius: radius.lg,
-      borderCurve: 'continuous',
-      padding: spacing.xl,
-      gap: spacing.lg,
-    },
-    modalClose: {
-      position: 'absolute',
-      top: spacing.sm,
-      right: spacing.sm,
-      zIndex: 1,
-      width: layout.touchTarget,
-      height: layout.touchTarget,
-      borderRadius: radius.pill,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    modalHeader: { alignItems: 'center', gap: spacing.xs },
-    modalIcon: {
-      width: spacing.xxxl + spacing.lg,
-      height: spacing.xxxl + spacing.lg,
-      borderRadius: radius.pill,
-      backgroundColor: colors.primarySoft,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: spacing.sm,
-    },
     inputGroup: { gap: spacing.sm },
     textArea: {
       minHeight: layout.actionHeight + spacing.xl,
@@ -451,15 +412,4 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
       ...typography.body,
       textAlignVertical: 'top',
     },
-    infoBox: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: spacing.sm,
-      padding: spacing.md,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.infoLine,
-      backgroundColor: colors.infoSoft,
-    },
-    modalBtnRow: { flexDirection: 'row', gap: spacing.sm },
   });

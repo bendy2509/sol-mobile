@@ -157,6 +157,8 @@ export default function CollectScreen() {
       });
       return () => {
         active = false;
+        // A sheet left open must not float over the other tabs
+        setIsSheetOpen(false);
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loadData, params.clientId])
@@ -437,6 +439,8 @@ export default function CollectScreen() {
               <Button label="Partager le reçu" icon="share" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
               <Button label="Terminé" onPress={closeSheet} style={styles.flexGrow} />
             </View>
+          ) : limits.isCycleCompleted ? (
+            <Button size="lg" fullWidth variant="secondary" label="Fermer" onPress={closeSheet} />
           ) : (
             <Button
               size="lg"
