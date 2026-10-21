@@ -1,25 +1,27 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  FlatList,
-  RefreshControl,
-  Alert,
-  Modal,
-  ScrollView,
-  Linking,
-  Share,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, FlatList, Pressable, StyleSheet, RefreshControl, Alert, ScrollView, Linking, Share, TextInput } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 
 import { useAuth, AdminProfile } from '@/context/AuthContext';
-import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import {
+  AmountText,
+  Avatar,
+  Button,
+  Card,
+  Chip,
+  Dialog,
+  EmptyState,
+  Icon,
+  ListItem,
+  MetricTile,
+  Screen,
+  SectionHeader,
+  Text,
+  TextField,
+  UiIconName,
+} from '@/components/ui';
 import { formatCurrency, formatDateShort, formatDate, getInitials } from '@/lib/formatters';
 import { normalizePhoneNumber, arePhoneNumbersEqual, extractRaw8Digits } from '@/lib/phoneUtils';
 import {
@@ -43,8 +45,19 @@ import { getSyncQueueSummary, triggerManualSync } from '@/services/syncQueueServ
 import { AuditLog, AuditLogAction, SyncState, Transaction, UserRole, UserStatus } from '@/types';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
+
+type AdminTab = 'USERS' | 'TRANSACTIONS' | 'AUDIT_LOGS' | 'SYNC_STATUS' | 'SETTINGS';
+
+const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
+  { value: 'MANAGER', label: 'Gestionnaire' },
+  { value: 'READ_ONLY', label: 'Consultation' },
+  { value: 'ADMIN', label: 'Admin' },
+];
 
 export default function AdminScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { logout, getAdminProfile, updateAdminProfile, impersonateManager, exitImpersonation } = useAuth();
   const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
@@ -751,475 +764,345 @@ export default function AdminScreen() {
     return auditLogs.filter((l) => l.action === auditFilter);
   }, [auditLogs, auditFilter]);
 
+  const insets = useSafeAreaInsets();
+
+  const selectTab = (tab: AdminTab) => {
+    triggerLightImpact();
+    setActiveTab(tab);
+  };
+
+  const tabs: { key: AdminTab; label: string }[] = [
+    { key: 'USERS', label: `Utilisateurs (${managers.length})` },
+    { key: 'TRANSACTIONS', label: `Flux (${transactions.length})` },
+    { key: 'AUDIT_LOGS', label: `Audit (${auditLogs.length})` },
+    { key: 'SYNC_STATUS', label: `Synchro (${syncSummary.pendingCount})` },
+    { key: 'SETTINGS', label: 'Paramètres' },
+  ];
+
+  const refresh = (
+    <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[theme.colors.primary]} tintColor={theme.colors.primary} />
+  );
+
+  const kpiBlock = (
+    <View style={styles.kpiGrid}>
+      <MetricTile label="Utilisateurs" icon="users" value={String(stats.totalManagers)} hint={`${stats.activeManagers} actifs · ${stats.pendingManagers} en attente`} style={styles.kpiTile} />
+      <MetricTile label="Total cotisé" icon="cash" hint={`${stats.totalTransactionsCount} opérations`} style={styles.kpiTile}>
+        <AmountText amount={stats.totalPlatformCollected} size="medium" tone="success" />
+      </MetricTile>
+      <MetricTile label="Total remis (mains)" icon="payout" hint="Mains payées aux adhérents" style={styles.kpiTile}>
+        <AmountText amount={stats.totalPlatformDistributed} size="medium" tone="primary" />
+      </MetricTile>
+      <MetricTile label="Réserve nette" icon="shield" hint="Solde net disponible" style={styles.kpiTile}>
+        <AmountText amount={stats.platformNetBalance} size="medium" />
+      </MetricTile>
+    </View>
+  );
+
+  const statusMeta = (status: UserStatus) =>
+    status === 'PENDING_APPROVAL'
+      ? { label: 'En attente', icon: 'clock' as UiIconName, fg: theme.colors.warning, bg: theme.colors.warningSoft }
+      : status === 'SUSPENDED'
+      ? { label: 'Suspendu', icon: 'lock' as UiIconName, fg: theme.colors.danger, bg: theme.colors.dangerSoft }
+      : { label: 'Actif', icon: 'check' as UiIconName, fg: theme.colors.success, bg: theme.colors.successSoft };
+
+  const roleMeta = (role: UserRole) =>
+    role === 'ADMIN'
+      ? { label: 'Admin', icon: 'crown' as UiIconName, fg: theme.colors.supervisor, bg: theme.colors.supervisorSoft }
+      : role === 'READ_ONLY' || role === 'USER'
+      ? { label: 'Consultation', icon: 'eye' as UiIconName, fg: theme.colors.textMuted, bg: theme.colors.surfaceAlt }
+      : { label: 'Gestionnaire', icon: 'user' as UiIconName, fg: theme.colors.onPrimarySoft, bg: theme.colors.primarySoft };
+
+  const pill = (meta: { label: string; icon: UiIconName; fg: string; bg: string }) => (
+    <View style={[styles.pill, { backgroundColor: meta.bg }]}>
+      <Icon name={meta.icon} size={14} color={meta.fg} />
+      <Text variant="label" style={{ color: meta.fg }}>
+        {meta.label}
+      </Text>
+    </View>
+  );
+
+  const toolTile = (icon: UiIconName, label: string, onPress: () => void, opts: { danger?: boolean; busy?: boolean } = {}) => (
+    <Pressable
+      key={label}
+      onPress={onPress}
+      disabled={opts.busy}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.toolTile, opts.danger && styles.toolTileDanger, pressed && styles.pressed]}
+    >
+      <Icon name={icon} size={20} color={opts.danger ? theme.colors.danger : theme.colors.primary} />
+      <Text variant="caption" tone={opts.danger ? 'danger' : 'default'} numberOfLines={1}>
+        {opts.busy ? 'PDF…' : label}
+      </Text>
+    </Pressable>
+  );
+
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Top Header */}
-      <View style={[styles.header, isTablet && styles.headerTablet, isSmallScreen && { paddingHorizontal: 12 }]}>
-        <View style={styles.headerLeft}>
-          <View style={styles.adminBadge}>
-            <Icon name="shield" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.adminBadgeText}>SUPER-ADMINISTRATEUR</Text>
-          </View>
-          <Text style={[styles.headerTitle, isSmallScreen && { fontSize: 16 }]} numberOfLines={1}>Contrôle & Super-Audit</Text>
-          <Text style={styles.headerSub} numberOfLines={1}>Plateforme Centrale SOL Mobile</Text>
-        </View>
-
-        <View style={[styles.headerActions, isSmallScreen && { gap: 4 }]}>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleExportPdfReport}
-            disabled={isExportingPdf}
-            style={[styles.pdfExportBtn, isSmallScreen && { paddingHorizontal: 8 }]}
-          >
-            <Icon name="print" size={14} color="#1D4ED8" style={{ marginRight: 4 }} />
-            <Text style={styles.pdfExportText}>
-              {isExportingPdf ? 'PDF...' : isSmallScreen ? 'Rapport' : 'Rapport PDF'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleLogout}
-            style={styles.logoutBtn}
-          >
-            <Icon name="shield" size={14} color="#DC2626" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* KPI Global Banner */}
-      <View style={styles.kpiContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.kpiScroll}>
-          <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>TOTAL UTILISATEURS</Text>
-            <Text style={styles.kpiValue}>{stats.totalManagers}</Text>
-            <Text style={styles.kpiSub}>
-              {stats.activeManagers} actifs · {stats.pendingManagers} en attente
-            </Text>
-          </View>
-
-          <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>TOTAL COTISÉ PLATEFORME</Text>
-            <Text style={styles.kpiGreen}>{formatCurrency(stats.totalPlatformCollected)}</Text>
-            <Text style={styles.kpiSub}>{stats.totalTransactionsCount} opérations</Text>
-          </View>
-
-          <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>TOTAL DISTRIBUÉ (MAINS)</Text>
-            <Text style={styles.kpiRed}>{formatCurrency(stats.totalPlatformDistributed)}</Text>
-            <Text style={styles.kpiSub}>Mains payées aux adhérents</Text>
-          </View>
-
-          <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>RÉSERVE NETTE LOCALE</Text>
-            <Text style={styles.kpiValue}>{formatCurrency(stats.platformNetBalance)}</Text>
-            <Text style={styles.kpiSub}>Solde net disponible</Text>
-          </View>
-        </ScrollView>
-      </View>
-
-      {/* Tab Navigation */}
-      <View style={styles.tabBar}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScroll}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => {
-              triggerLightImpact();
-              setActiveTab('USERS');
-            }}
-            style={[styles.tabBtn, activeTab === 'USERS' && styles.tabBtnActive]}
-          >
-            <Icon
-              name="user"
-              size={13}
-              color={activeTab === 'USERS' ? '#FFFFFF' : '#64748B'}
-              style={{ marginRight: 4 }}
-            />
-            <Text style={[styles.tabBtnText, activeTab === 'USERS' && styles.tabBtnTextActive]}>
-              Utilisateurs ({managers.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => {
-              triggerLightImpact();
-              setActiveTab('TRANSACTIONS');
-            }}
-            style={[styles.tabBtn, activeTab === 'TRANSACTIONS' && styles.tabBtnActive]}
-          >
-            <Icon
-              name="history"
-              size={13}
-              color={activeTab === 'TRANSACTIONS' ? '#FFFFFF' : '#64748B'}
-              style={{ marginRight: 4 }}
-            />
-            <Text style={[styles.tabBtnText, activeTab === 'TRANSACTIONS' && styles.tabBtnTextActive]}>
-              Flux ({transactions.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => {
-              triggerLightImpact();
-              setActiveTab('AUDIT_LOGS');
-            }}
-            style={[styles.tabBtn, activeTab === 'AUDIT_LOGS' && styles.tabBtnActive]}
-          >
-            <Icon
-              name="shield"
-              size={13}
-              color={activeTab === 'AUDIT_LOGS' ? '#FFFFFF' : '#64748B'}
-              style={{ marginRight: 4 }}
-            />
-            <Text style={[styles.tabBtnText, activeTab === 'AUDIT_LOGS' && styles.tabBtnTextActive]}>
-              Audit Logs ({auditLogs.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => {
-              triggerLightImpact();
-              setActiveTab('SYNC_STATUS');
-            }}
-            style={[styles.tabBtn, activeTab === 'SYNC_STATUS' && styles.tabBtnActive]}
-          >
-            <Icon
-              name="sync"
-              size={13}
-              color={activeTab === 'SYNC_STATUS' ? '#FFFFFF' : '#64748B'}
-              style={{ marginRight: 4 }}
-            />
-            <Text style={[styles.tabBtnText, activeTab === 'SYNC_STATUS' && styles.tabBtnTextActive]}>
-              Sync ({syncSummary.pendingCount})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => {
-              triggerLightImpact();
-              setActiveTab('SETTINGS');
-            }}
-            style={[styles.tabBtn, activeTab === 'SETTINGS' && styles.tabBtnActive]}
-          >
-            <Icon
-              name="shield"
-              size={13}
-              color={activeTab === 'SETTINGS' ? '#FFFFFF' : '#64748B'}
-              style={{ marginRight: 4 }}
-            />
-            <Text style={[styles.tabBtnText, activeTab === 'SETTINGS' && styles.tabBtnTextActive]}>
-              Paramètres
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-
-      {/* TAB 1: USERS (GESTION DES UTILISATEURS & ROLES) */}
-      {activeTab === 'USERS' && (
-        <>
-          <View style={styles.searchSection}>
-            {/* Top Action Row with Create User Button */}
-            <View style={styles.userSectionHeader}>
-              <View>
-                <Text style={styles.userSectionTitle}>RÉPERTOIRE DES COMPTES</Text>
-                <Text style={styles.userSectionSub}>{filteredUsers.length} utilisateur(s) trouvé(s)</Text>
+    <Screen
+      scroll={false}
+      padded={false}
+      edges={['left', 'right', 'bottom']}
+      header={
+        <View style={[styles.adminHeader, { paddingTop: insets.top + theme.spacing.sm }]}>
+          <View style={styles.adminHeaderInner}>
+            <View style={styles.flexShrink}>
+              <View style={styles.adminBadge}>
+                <Icon name="crown" size={14} color={theme.colors.onSupervisor} />
+                <Text variant="label" style={styles.onSupervisor}>
+                  Super-administrateur
+                </Text>
               </View>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleOpenCreateModal}
-                style={styles.createUserBtn}
-              >
-                <Icon name="check" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
-                <Text style={styles.createUserBtnText}>+ Créer Utilisateur</Text>
-              </TouchableOpacity>
+              <Text variant={isSmallScreen ? 'heading' : 'title'} style={styles.onSupervisor} numberOfLines={1} accessibilityRole="header">
+                Contrôle et audit
+              </Text>
+              <Text variant="caption" style={styles.onSupervisorMuted} numberOfLines={1}>
+                Plateforme centrale SOL Mobile
+              </Text>
             </View>
-
-            {/* Search Input */}
-            <View style={styles.searchBar}>
-              <Icon name="search" size={16} color="#64748B" style={{ marginRight: 8 }} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Rechercher nom, téléphone, rôle, zone..."
-                placeholderTextColor="#94A3B8"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <Icon name="close" size={16} color="#64748B" />
-                </TouchableOpacity>
+            <Pressable
+              onPress={handleExportPdfReport}
+              disabled={isExportingPdf}
+              accessibilityRole="button"
+              accessibilityLabel="Rapport PDF de la plateforme"
+              style={({ pressed }) => [styles.headerBtn, pressed && styles.headerBtnPressed]}
+            >
+              <Icon name="printer" size={20} color={theme.colors.onSupervisor} />
+              {!isSmallScreen && (
+                <Text variant="label" style={styles.onSupervisor}>
+                  {isExportingPdf ? 'PDF…' : 'Rapport'}
+                </Text>
               )}
-            </View>
-
-            {/* Role Filter Chips */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
-              <TouchableOpacity
-                onPress={() => setFilterRole('ALL')}
-                style={[styles.filterChip, filterRole === 'ALL' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filterRole === 'ALL' && styles.filterChipTextActive]}>
-                  Tous Rôles
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFilterRole('MANAGER')}
-                style={[styles.filterChip, filterRole === 'MANAGER' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filterRole === 'MANAGER' && styles.filterChipTextActive]}>
-                  💼 Gestionnaires
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFilterRole('READ_ONLY')}
-                style={[styles.filterChip, filterRole === 'READ_ONLY' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filterRole === 'READ_ONLY' && styles.filterChipTextActive]}>
-                  👁️ Lecture Seule
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFilterRole('ADMIN')}
-                style={[styles.filterChip, filterRole === 'ADMIN' && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, filterRole === 'ADMIN' && styles.filterChipTextActive]}>
-                  🛡️ Super-Admins
-                </Text>
-              </TouchableOpacity>
-            </ScrollView>
-
-            {/* Status Filter Chips */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.filterChipsRow, { marginTop: 6 }]}>
-              <TouchableOpacity
-                onPress={() => setFilterStatus('ALL')}
-                style={[styles.filterChipSubtle, filterStatus === 'ALL' && styles.filterChipSubtleActive]}
-              >
-                <Text style={[styles.filterChipSubtleText, filterStatus === 'ALL' && styles.filterChipSubtleTextActive]}>
-                  Tous Statuts
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFilterStatus('ACTIVE')}
-                style={[styles.filterChipSubtle, filterStatus === 'ACTIVE' && styles.filterChipSubtleActive]}
-              >
-                <Text style={[styles.filterChipSubtleText, filterStatus === 'ACTIVE' && styles.filterChipSubtleTextActive]}>
-                  Actifs ({stats.activeManagers})
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFilterStatus('PENDING_APPROVAL')}
-                style={[styles.filterChipSubtle, filterStatus === 'PENDING_APPROVAL' && styles.filterChipSubtleActive]}
-              >
-                <Text style={[styles.filterChipSubtleText, filterStatus === 'PENDING_APPROVAL' && styles.filterChipSubtleTextActive]}>
-                  En attente ({stats.pendingManagers})
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFilterStatus('SUSPENDED')}
-                style={[styles.filterChipSubtle, filterStatus === 'SUSPENDED' && styles.filterChipSubtleActive]}
-              >
-                <Text style={[styles.filterChipSubtleText, filterStatus === 'SUSPENDED' && styles.filterChipSubtleTextActive]}>
-                  Suspendus ({stats.suspendedManagers})
-                </Text>
-              </TouchableOpacity>
-            </ScrollView>
+            </Pressable>
+            <Pressable
+              onPress={handleLogout}
+              accessibilityRole="button"
+              accessibilityLabel="Se déconnecter"
+              style={({ pressed }) => [styles.headerBtn, pressed && styles.headerBtnPressed]}
+            >
+              <Icon name="logout" size={20} color={theme.colors.onSupervisor} />
+            </Pressable>
           </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsRow}>
+            {tabs.map((t) => (
+              <Pressable
+                key={t.key}
+                onPress={() => selectTab(t.key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: activeTab === t.key }}
+                style={({ pressed }) => [styles.tabChip, activeTab === t.key && styles.tabChipActive, pressed && styles.headerBtnPressed]}
+              >
+                <Text variant="label" style={activeTab === t.key ? { color: theme.colors.supervisor } : styles.onSupervisor}>
+                  {t.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      }
+    >
+      {/* TAB 1: USERS */}
+      {activeTab === 'USERS' && (
+        <FlatList
+          data={filteredUsers}
+          keyExtractor={(item, index) => (item.collector.id ? `${item.collector.id}-${index}` : String(index))}
+          refreshControl={refresh}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ListHeaderComponent={
+            <View style={styles.listHeader}>
+              {kpiBlock}
+              <View style={styles.rowBetween}>
+                <View style={styles.flexShrink}>
+                  <Text variant="subheading">Répertoire des comptes</Text>
+                  <Text variant="caption" tone="muted">
+                    {filteredUsers.length} utilisateur(s) trouvé(s)
+                  </Text>
+                </View>
+                <Button label="Créer" icon="plus" onPress={handleOpenCreateModal} />
+              </View>
+              <View style={styles.searchBar}>
+                <Icon name="search" size={18} color={theme.colors.textMuted} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Nom, téléphone, zone ou carnet"
+                  placeholderTextColor={theme.colors.textPlaceholder}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  accessibilityLabel="Rechercher un utilisateur"
+                />
+                {searchQuery.length > 0 && (
+                  <Pressable onPress={() => setSearchQuery('')} hitSlop={12} accessibilityRole="button" accessibilityLabel="Effacer la recherche">
+                    <Icon name="close" size={18} color={theme.colors.textMuted} />
+                  </Pressable>
+                )}
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+                <Chip label="Tous les rôles" selected={filterRole === 'ALL'} onPress={() => setFilterRole('ALL')} />
+                <Chip label="Gestionnaires" selected={filterRole === 'MANAGER'} onPress={() => setFilterRole('MANAGER')} />
+                <Chip label="Consultation" selected={filterRole === 'READ_ONLY'} onPress={() => setFilterRole('READ_ONLY')} />
+                <Chip label="Super-admins" selected={filterRole === 'ADMIN'} onPress={() => setFilterRole('ADMIN')} />
+              </ScrollView>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+                <Chip label="Tous les statuts" selected={filterStatus === 'ALL'} onPress={() => setFilterStatus('ALL')} />
+                <Chip label={`Actifs (${stats.activeManagers})`} selected={filterStatus === 'ACTIVE'} onPress={() => setFilterStatus('ACTIVE')} />
+                <Chip label={`En attente (${stats.pendingManagers})`} selected={filterStatus === 'PENDING_APPROVAL'} onPress={() => setFilterStatus('PENDING_APPROVAL')} />
+                <Chip label={`Suspendus (${stats.suspendedManagers})`} selected={filterStatus === 'SUSPENDED'} tone="danger" onPress={() => setFilterStatus('SUSPENDED')} />
+              </ScrollView>
+            </View>
+          }
+          ListEmptyComponent={<EmptyState icon="users" title="Aucun utilisateur" message="Aucun compte ne correspond aux filtres choisis." />}
+          renderItem={({ item }) => {
+            const { collector, business, clientsCount, totalCollected, totalDistributed } = item;
+            const isPending = collector.status === 'PENDING_APPROVAL';
+            const isSuspended = collector.status === 'SUSPENDED';
+            const role = (collector.role as UserRole) || 'MANAGER';
+            const isReadOnly = role === 'READ_ONLY' || role === 'USER';
 
-          {/* Users List */}
-          <FlatList
-            data={filteredUsers}
-            keyExtractor={(item, index) => item.collector.id ? `${item.collector.id}-${index}` : String(index)}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[SOL_COLORS.primary]} />}
-            contentContainerStyle={styles.listContent}
-            renderItem={({ item }) => {
-              const { collector, business, clientsCount, totalCollected, totalDistributed } = item;
-              const isPending = collector.status === 'PENDING_APPROVAL';
-              const isSuspended = collector.status === 'SUSPENDED';
-              const role = (collector.role as UserRole) || 'MANAGER';
-              const isReadOnly = role === 'READ_ONLY' || role === 'USER';
-              const isAdmin = role === 'ADMIN';
-
-              return (
-                <View style={[styles.managerCard, isPending && styles.managerCardPending, isSuspended && styles.managerCardSuspended]}>
-                  {/* Top Identity Row */}
-                  <View style={styles.managerTopRow}>
-                    <View style={styles.avatarCircleSmall}>
-                      <Text style={styles.avatarTextSmall}>{getInitials(collector.fullName)}</Text>
-                    </View>
-
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <Text style={styles.managerName}>{collector.fullName}</Text>
-                        {/* Role Badge */}
-                        <View style={[styles.roleBadge, isAdmin ? styles.roleBadgeAdmin : isReadOnly ? styles.roleBadgeReadOnly : styles.roleBadgeManager]}>
-                          <Text style={[styles.roleBadgeText, isAdmin ? styles.roleBadgeTextAdmin : isReadOnly ? styles.roleBadgeTextReadOnly : styles.roleBadgeTextManager]}>
-                            {isAdmin ? '🛡️ ADMIN' : isReadOnly ? '👁️ LECTURE SEULE' : '💼 GESTIONNAIRE'}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <Text style={styles.managerPhone}>
-                        {collector.phoneNumber} · PIN : <Text style={styles.pinBold}>**** (Chiffré)</Text>
-                      </Text>
-                      {collector.zone && <Text style={styles.zoneText}>Zone : {collector.zone}</Text>}
-                      {business && (
-                        <Text style={styles.bizInfoText}>
-                          Carnet : <Text style={styles.bizBold}>{business.name}</Text> ({business.totalSlots} enfants · {formatCurrency(business.contributionAmount)})
-                        </Text>
-                      )}
-                    </View>
-
-                    {/* Status Badge */}
-                    <View style={[styles.statusBadge, isPending ? styles.statusBadgePending : isSuspended ? styles.statusBadgeSuspended : styles.statusBadgeActive]}>
-                      <Text style={[styles.statusBadgeText, isPending ? styles.statusBadgeTextPending : isSuspended ? styles.statusBadgeTextSuspended : styles.statusBadgeTextActive]}>
-                        {isPending ? 'EN ATTENTE' : isSuspended ? 'SUSPENDU' : 'ACTIF'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Financial Stats Row (Only if has carnet or active transactions) */}
-                  {!isReadOnly && (
-                    <View style={styles.managerStatsRow}>
-                      <View style={styles.managerStatItem}>
-                        <Text style={styles.managerStatLabel}>ENFANTS</Text>
-                        <Text style={styles.managerStatValue}>{clientsCount}</Text>
-                      </View>
-                      <View style={styles.managerStatItem}>
-                        <Text style={styles.managerStatLabel}>TOTAL COTISÉ</Text>
-                        <Text style={styles.managerStatGreen}>{formatCurrency(totalCollected)}</Text>
-                      </View>
-                      <View style={styles.managerStatItem}>
-                        <Text style={styles.managerStatLabel}>TOTAL DISTRIBUÉ</Text>
-                        <Text style={styles.managerStatRed}>{formatCurrency(totalDistributed)}</Text>
-                      </View>
-                    </View>
-                  )}
-
-                  {isReadOnly && (
-                    <View style={styles.readOnlyNoticeBanner}>
-                      <Icon name="shield" size={13} color="#64748B" style={{ marginRight: 6 }} />
-                      <Text style={styles.readOnlyNoticeText}>
-                        Compte en mode consultation seule (accès aux rapports et statistiques).
-                      </Text>
-                    </View>
-                  )}
-
-                  {/* Actions Row */}
-                  <View style={styles.managerActionRow}>
-                    <TouchableOpacity onPress={() => handleCallManager(collector.phoneNumber)} style={styles.actionCircleBtn}>
-                      <Icon name="phone" size={14} color="#0284C7" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleWhatsAppManager(collector.phoneNumber)} style={styles.actionCircleBtn}>
-                      <Icon name="phone" size={14} color="#059669" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleOpenEditModal(item)} style={styles.actionEditBtn}>
-                      <Icon name="user" size={12} color="#475569" style={{ marginRight: 4 }} />
-                      <Text style={styles.actionEditText}>Modifier / Rôle</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleOpenResetPinModal(item)} style={styles.actionResetPinBtn}>
-                      <Icon name="shield" size={12} color="#B45309" style={{ marginRight: 4 }} />
-                      <Text style={styles.actionResetPinText}>🔑 PIN</Text>
-                    </TouchableOpacity>
-                    {isPending && (
-                      <TouchableOpacity onPress={() => handleQuickStatusChange(collector.id, collector.fullName, 'ACTIVE')} style={styles.actionApproveBtn}>
-                        <Icon name="check" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionApproveText}>Approuver</Text>
-                      </TouchableOpacity>
-                    )}
-                    {collector.status === 'ACTIVE' && (
-                      <TouchableOpacity onPress={() => handleQuickStatusChange(collector.id, collector.fullName, 'SUSPENDED')} style={styles.actionSuspendBtn}>
-                        <Icon name="shield" size={12} color="#DC2626" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionSuspendText}>Suspendre</Text>
-                      </TouchableOpacity>
-                    )}
-                    {isSuspended && (
-                      <TouchableOpacity onPress={() => handleQuickStatusChange(collector.id, collector.fullName, 'ACTIVE')} style={styles.actionReactivateBtn}>
-                        <Icon name="check" size={12} color="#059669" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionReactivateText}>Réactiver</Text>
-                      </TouchableOpacity>
-                    )}
-                    {business && !isReadOnly && (
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={() => handleGenerateManagerReport(item)}
-                        disabled={generatingManagerReportId === collector.id}
-                        style={styles.actionReportBtn}
-                      >
-                        <Icon name="print" size={12} color="#7C3AED" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionReportText}>
-                          {generatingManagerReportId === collector.id ? 'PDF...' : 'Rapport PDF'}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                    {business && (
-                      <TouchableOpacity onPress={() => handleOpenBusinessAsManager(item)} style={styles.actionSwitchBtn}>
-                        <Icon name="arrow-right" size={12} color="#4338CA" style={{ marginRight: 4 }} />
-                        <Text style={styles.actionSwitchText}>Ouvrir</Text>
-                      </TouchableOpacity>
-                    )}
-                    <TouchableOpacity onPress={() => handleDeleteUser(item)} style={styles.actionDeleteBtn}>
-                      <Icon name="close" size={12} color="#DC2626" />
-                    </TouchableOpacity>
+            return (
+              <Card tone={isSuspended ? 'sunken' : 'default'} style={[styles.cardGap, isPending && styles.cardPending]}>
+                <View style={styles.identityRow}>
+                  <Avatar name={collector.fullName} />
+                  <View style={styles.flexShrink}>
+                    <Text variant="bodyStrong" numberOfLines={2}>
+                      {collector.fullName}
+                    </Text>
+                    <Text variant="caption" tone="muted" selectable>
+                      {collector.phoneNumber} · PIN chiffré
+                    </Text>
                   </View>
                 </View>
-              );
-            }}
-          />
-        </>
+                <View style={styles.pillsRow}>
+                  {pill(roleMeta(role))}
+                  {pill(statusMeta(collector.status))}
+                </View>
+                {collector.zone ? (
+                  <Text variant="caption" tone="muted">
+                    Zone : {collector.zone}
+                  </Text>
+                ) : null}
+                {business && (
+                  <Text variant="caption" tone="muted">
+                    Carnet : {business.name} · {business.totalSlots} enfants · {formatCurrency(business.contributionAmount)}
+                  </Text>
+                )}
+
+                {!isReadOnly ? (
+                  <View style={styles.statsRow}>
+                    <View style={styles.statCell}>
+                      <Text variant="caption" tone="muted">
+                        Enfants
+                      </Text>
+                      <Text variant="amountSmall">{clientsCount}</Text>
+                    </View>
+                    <View style={styles.statCell}>
+                      <Text variant="caption" tone="muted">
+                        Cotisé
+                      </Text>
+                      <AmountText amount={totalCollected} size="small" tone="success" />
+                    </View>
+                    <View style={styles.statCell}>
+                      <Text variant="caption" tone="muted">
+                        Remis
+                      </Text>
+                      <AmountText amount={totalDistributed} size="small" tone="primary" />
+                    </View>
+                  </View>
+                ) : (
+                  <Card tone="sunken" padding="sm">
+                    <View style={styles.rowStart}>
+                      <Icon name="eye" size={16} color={theme.colors.textMuted} />
+                      <Text variant="caption" tone="muted" style={styles.flexShrink}>
+                        Compte en consultation seule (rapports et statistiques).
+                      </Text>
+                    </View>
+                  </Card>
+                )}
+
+                <View style={styles.actionsRow}>
+                  {isPending && (
+                    <Button label="Approuver" icon="check" onPress={() => handleQuickStatusChange(collector.id, collector.fullName, 'ACTIVE')} style={styles.flexGrow} />
+                  )}
+                  {collector.status === 'ACTIVE' && (
+                    <Button
+                      label="Suspendre"
+                      icon="lock"
+                      variant="danger"
+                      onPress={() => handleQuickStatusChange(collector.id, collector.fullName, 'SUSPENDED')}
+                      style={styles.flexGrow}
+                    />
+                  )}
+                  {isSuspended && (
+                    <Button
+                      label="Réactiver"
+                      icon="check"
+                      variant="secondary"
+                      onPress={() => handleQuickStatusChange(collector.id, collector.fullName, 'ACTIVE')}
+                      style={styles.flexGrow}
+                    />
+                  )}
+                  {business && (
+                    <Button label="Ouvrir" icon="arrow-right" iconPosition="right" onPress={() => handleOpenBusinessAsManager(item)} style={styles.flexGrow} />
+                  )}
+                </View>
+
+                <View style={styles.toolsGrid}>
+                  {toolTile('phone', 'Appeler', () => handleCallManager(collector.phoneNumber))}
+                  {toolTile('message', 'WhatsApp', () => handleWhatsAppManager(collector.phoneNumber))}
+                  {toolTile('edit', 'Modifier', () => handleOpenEditModal(item))}
+                  {toolTile('lock', 'Code PIN', () => handleOpenResetPinModal(item))}
+                  {business && !isReadOnly
+                    ? toolTile('printer', 'Rapport', () => handleGenerateManagerReport(item), { busy: generatingManagerReportId === collector.id })
+                    : null}
+                  {toolTile('trash', 'Supprimer', () => handleDeleteUser(item), { danger: true })}
+                </View>
+              </Card>
+            );
+          }}
+        />
       )}
 
       {/* TAB 2: TRANSACTIONS WITH SUPER-ADMIN CANCELLATION */}
       {activeTab === 'TRANSACTIONS' && (
         <FlatList
           data={transactions}
-          keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[SOL_COLORS.primary]} />}
-          contentContainerStyle={styles.listContent}
+          keyExtractor={(item, index) => (item.id ? `${item.id}-${index}` : String(index))}
+          refreshControl={refresh}
+          contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ListHeaderComponent={<View style={styles.listHeader}>{kpiBlock}</View>}
+          ListEmptyComponent={<EmptyState icon="history" title="Aucune opération" message="Les opérations de la plateforme apparaîtront ici." />}
           renderItem={({ item }) => {
             const isPayout = item.type === 'SOL_PAYOUT' || item.type === 'HAND_PAYOUT' || item.type === 'WITHDRAWAL';
             const isReversal = item.type === 'REVERSAL' || item.isReversed;
+            const icon: UiIconName = isReversal ? 'alert' : isPayout ? 'payout' : 'cash';
+            const fg = isReversal ? theme.colors.danger : isPayout ? theme.colors.primary : theme.colors.success;
+            const bg = isReversal ? theme.colors.dangerSoft : isPayout ? theme.colors.primarySoft : theme.colors.successSoft;
             return (
-              <View style={[styles.txCard, isReversal && styles.txCardReversed]}>
-                <View style={styles.txLeft}>
-                  <View style={[styles.txIconBox, isReversal ? styles.txIconReversal : isPayout ? styles.txIconPayout : styles.txIconDeposit]}>
-                    <Icon name={isReversal ? 'arrow-left' : isPayout ? 'arrow-right' : 'arrow-left'} size={16} color="#FFFFFF" />
-                  </View>
-                  <View style={{ marginLeft: 10, flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Text style={styles.txClientName}>{item.clientName || 'Adhérent inconnu'}</Text>
-                      {isReversal && (
-                        <View style={styles.txCancelledBadge}>
-                          <Text style={styles.txCancelledBadgeText}>ANNULÉE</Text>
-                        </View>
-                      )}
+              <Card padding="none" style={styles.ledgerCard}>
+                <ListItem
+                  divider={false}
+                  leading={
+                    <View style={[styles.txIcon, { backgroundColor: bg }]}>
+                      <Icon name={icon} size={18} color={fg} />
                     </View>
-                    <Text style={styles.txNote}>{item.note || item.type}</Text>
-                    <Text style={styles.txDate}>{formatDate(item.createdAtLocal)}</Text>
+                  }
+                  title={item.clientName || 'Adhérent inconnu'}
+                  subtitle={[item.note || item.type, formatDate(item.createdAtLocal)].filter(Boolean).join(' · ')}
+                  meta={
+                    <Text variant="caption" tone={isReversal ? 'danger' : 'muted'} selectable>
+                      #{item.id.slice(0, 8)}
+                      {isReversal ? ' · Annulée' : ''}
+                    </Text>
+                  }
+                  trailing={<AmountText amount={item.amount} size="small" sign={isReversal || isPayout ? 'debit' : 'credit'} tone={isReversal ? 'danger' : isPayout ? 'default' : 'success'} />}
+                />
+                {!isReversal && (
+                  <View style={styles.txAction}>
+                    <Button label="Annuler l'opération" icon="alert" variant="secondary" onPress={() => handleInitiateCancelTx(item)} />
                   </View>
-                </View>
-
-                <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
-                  <Text style={[styles.txAmount, isReversal ? styles.txAmountReversal : isPayout ? styles.txAmountPayout : styles.txAmountDeposit]}>
-                    {isReversal ? '-' : isPayout ? '-' : '+'}
-                    {formatCurrency(item.amount)}
-                  </Text>
-                  <Text style={styles.txRef}>#{item.id.slice(0, 8)}</Text>
-
-                  {!isReversal && (
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => handleInitiateCancelTx(item)}
-                      style={styles.adminCancelTxBtn}
-                    >
-                      <Icon name="alert" size={11} color="#DC2626" style={{ marginRight: 3 }} />
-                      <Text style={styles.adminCancelTxBtnText}>Annuler</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
+                )}
+              </Card>
             );
           }}
         />
@@ -1227,518 +1110,316 @@ export default function AdminScreen() {
 
       {/* TAB 3: AUDIT LOGS */}
       {activeTab === 'AUDIT_LOGS' && (
-        <>
-          <View style={styles.searchSection}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsRow}>
-              <TouchableOpacity onPress={() => setAuditFilter('ALL')} style={[styles.filterChip, auditFilter === 'ALL' && styles.filterChipActive]}>
-                <Text style={[styles.filterChipText, auditFilter === 'ALL' && styles.filterChipTextActive]}>Tous ({auditLogs.length})</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setAuditFilter('CREATE_CLIENT')} style={[styles.filterChip, auditFilter === 'CREATE_CLIENT' && styles.filterChipActive]}>
-                <Text style={[styles.filterChipText, auditFilter === 'CREATE_CLIENT' && styles.filterChipTextActive]}>Inscriptions</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setAuditFilter('PAYOUT_OUT_OF_ORDER')} style={[styles.filterChip, auditFilter === 'PAYOUT_OUT_OF_ORDER' && styles.filterChipActive]}>
-                <Text style={[styles.filterChipText, auditFilter === 'PAYOUT_OUT_OF_ORDER' && styles.filterChipTextActive]}>Décaissements</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setAuditFilter('REVERSE_TRANSACTION')} style={[styles.filterChip, auditFilter === 'REVERSE_TRANSACTION' && styles.filterChipActive]}>
-                <Text style={[styles.filterChipText, auditFilter === 'REVERSE_TRANSACTION' && styles.filterChipTextActive]}>Annulations</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-
-          <FlatList
-            data={filteredAuditLogs}
-            keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[SOL_COLORS.primary]} />}
-            contentContainerStyle={styles.listContent}
-            renderItem={({ item }) => (
-              <View style={styles.auditCard}>
-                <View style={styles.auditHeader}>
-                  <View style={styles.auditActionBadge}>
-                    <Text style={styles.auditActionText}>{item.action}</Text>
-                  </View>
-                  <Text style={styles.auditDate}>{formatDate(item.createdAt)}</Text>
+        <FlatList
+          data={filteredAuditLogs}
+          keyExtractor={(item, index) => (item.id ? `${item.id}-${index}` : String(index))}
+          refreshControl={refresh}
+          contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
+          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ListHeaderComponent={
+            <View style={styles.listHeader}>
+              {kpiBlock}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+                <Chip label={`Tous (${auditLogs.length})`} selected={auditFilter === 'ALL'} onPress={() => setAuditFilter('ALL')} />
+                <Chip label="Inscriptions" selected={auditFilter === 'CREATE_CLIENT'} onPress={() => setAuditFilter('CREATE_CLIENT')} />
+                <Chip label="Remises hors ordre" selected={auditFilter === 'PAYOUT_OUT_OF_ORDER'} onPress={() => setAuditFilter('PAYOUT_OUT_OF_ORDER')} />
+                <Chip label="Annulations" selected={auditFilter === 'REVERSE_TRANSACTION'} tone="danger" onPress={() => setAuditFilter('REVERSE_TRANSACTION')} />
+              </ScrollView>
+            </View>
+          }
+          ListEmptyComponent={<EmptyState icon="shield" title="Aucun événement" message="Le journal d'audit est vide pour ce filtre." />}
+          renderItem={({ item }) => (
+            <Card style={styles.cardGap}>
+              <View style={styles.rowBetween}>
+                <View style={styles.codeChip}>
+                  <Text variant="label" tone="muted" selectable>
+                    {item.action}
+                  </Text>
                 </View>
-                <Text style={styles.auditReason}>{item.reason || 'Aucun motif'}</Text>
-                <View style={styles.auditFooter}>
-                  <Text style={styles.auditUser}>Par : {item.userRole} ({item.userId.slice(0, 8)})</Text>
-                  <Text style={styles.auditEntity}>Cible : {item.entityType} #{item.entityId.slice(0, 8)}</Text>
-                </View>
+                <Text variant="caption" tone="muted">
+                  {formatDate(item.createdAt)}
+                </Text>
               </View>
-            )}
-          />
-        </>
+              <Text variant="body">{item.reason || 'Aucun motif'}</Text>
+              <Text variant="caption" tone="muted" selectable>
+                Par {item.userRole} ({item.userId.slice(0, 8)}) · cible {item.entityType} #{item.entityId.slice(0, 8)}
+              </Text>
+            </Card>
+          )}
+        />
       )}
 
       {/* TAB 4: SYNC STATUS */}
       {activeTab === 'SYNC_STATUS' && (
-        <ScrollView contentContainerStyle={styles.syncScrollContent}>
-          <View style={styles.syncCard}>
-            <View style={styles.syncHeaderRow}>
-              <View>
-                <Text style={styles.syncCardTitle}>État de Synchronisation Supabase</Text>
-                <Text style={styles.syncCardSub}>
-                  {syncSummary.isOnline ? '🟢 En ligne (Cloud connecté)' : '🔴 Hors-ligne'}
-                </Text>
+        <ScrollView contentContainerStyle={[styles.listContent, styles.listHeader, isTablet && styles.listContentTablet]} refreshControl={refresh}>
+          {kpiBlock}
+          <Card style={styles.cardGap}>
+            <View style={styles.rowBetween}>
+              <View style={styles.flexShrink}>
+                <Text variant="subheading">Synchronisation Supabase</Text>
+                <View style={styles.rowStart}>
+                  <Icon name={syncSummary.isOnline ? 'check' : 'alert'} size={16} color={syncSummary.isOnline ? theme.colors.success : theme.colors.textMuted} />
+                  <Text variant="caption" tone={syncSummary.isOnline ? 'success' : 'muted'}>
+                    {syncSummary.isOnline ? 'En ligne · cloud connecté' : 'Hors ligne'}
+                  </Text>
+                </View>
               </View>
-              <TouchableOpacity activeOpacity={0.8} onPress={handleRefresh} style={styles.syncActionBtn}>
-                <Icon name="sync" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.syncActionBtnText}>Actualiser</Text>
-              </TouchableOpacity>
+              <Button label="Actualiser" icon="cycle" variant="secondary" onPress={handleRefresh} />
             </View>
-
-            <View style={styles.syncMetricsGrid}>
-              <View style={styles.syncMetricBox}>
-                <Text style={styles.syncMetricLabel}>EN ATTENTE</Text>
-                <Text style={styles.syncMetricYellow}>{syncSummary.pendingCount}</Text>
-              </View>
-              <View style={styles.syncMetricBox}>
-                <Text style={styles.syncMetricLabel}>SYNCHRONISÉS</Text>
-                <Text style={styles.syncMetricGreen}>{syncSummary.syncedCount}</Text>
-              </View>
-              <View style={styles.syncMetricBox}>
-                <Text style={styles.syncMetricLabel}>ÉCHECS</Text>
-                <Text style={styles.syncMetricRed}>{syncSummary.failedCount}</Text>
-              </View>
+            <View style={styles.statsRow}>
+              <MetricTile label="En attente" value={String(syncSummary.pendingCount)} tone={syncSummary.pendingCount > 0 ? 'warning' : 'default'} />
+              <MetricTile label="Synchronisés" value={String(syncSummary.syncedCount)} tone="success" />
+              <MetricTile label="Échecs" value={String(syncSummary.failedCount)} tone={syncSummary.failedCount > 0 ? 'danger' : 'default'} />
             </View>
-          </View>
+          </Card>
 
           {syncSummary.failedErrors.length > 0 && (
-            <View style={styles.errorLogCard}>
-              <Text style={styles.errorLogTitle}>JOURNAL DES DERNIÈRES ERREURS</Text>
+            <Card tone="danger" style={styles.cardGap}>
+              <Text variant="subheading" tone="danger">
+                Dernières erreurs
+              </Text>
               {syncSummary.failedErrors.map((err, idx) => (
-                <Text key={idx} style={styles.errorLogText}>• {err}</Text>
+                <Text key={idx} variant="caption" tone="danger" selectable>
+                  • {err}
+                </Text>
               ))}
-            </View>
+            </Card>
           )}
         </ScrollView>
       )}
 
       {/* TAB 5: SETTINGS */}
       {activeTab === 'SETTINGS' && (
-        <ScrollView contentContainerStyle={styles.settingsScrollContent}>
-          <View style={styles.settingsCard}>
-            <Text style={styles.settingsCardTitle}>ASSISTANCE & HOTLINE OFFICIELLE</Text>
-            <Text style={styles.settingsCardSub}>
-              Numéro de téléphone d'assistance affiché aux gestionnaires suspendus et sur les reçus officiels.
+        <ScrollView contentContainerStyle={[styles.listContent, styles.listHeader, isTablet && styles.listContentTablet]} keyboardShouldPersistTaps="handled">
+          <Card style={styles.cardGap}>
+            <Text variant="subheading">Assistance et hotline officielle</Text>
+            <Text variant="caption" tone="muted">
+              Coordonnées affichées aux gestionnaires suspendus et sur les reçus officiels.
             </Text>
-            <View style={styles.settingsRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.settingsLabel}>Nom Admin :</Text>
-                <Text style={styles.settingsValue}>{adminProfile.fullName}</Text>
+            {[
+              { label: 'Nom admin', value: adminProfile.fullName },
+              { label: 'Hotline', value: adminProfile.phoneNumber },
+              { label: 'E-mail', value: adminProfile.email || 'Non renseigné' },
+              { label: 'Bureau', value: adminProfile.address || 'Non renseigné' },
+              ...(adminProfile.supportHours ? [{ label: 'Horaires', value: adminProfile.supportHours }] : []),
+            ].map((row) => (
+              <View key={row.label} style={styles.infoRow}>
+                <Text variant="caption" tone="muted" style={styles.infoLabel}>
+                  {row.label}
+                </Text>
+                <Text variant="label" selectable style={styles.infoValue}>
+                  {row.value}
+                </Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.settingsLabel}>Téléphone Hotline :</Text>
-                <Text style={styles.settingsValue}>{adminProfile.phoneNumber}</Text>
-              </View>
-            </View>
-            <View style={[styles.settingsRow, { marginTop: 8 }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.settingsLabel}>Email Support :</Text>
-                <Text style={styles.settingsValue}>{adminProfile.email || 'Non renseigné'}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.settingsLabel}>Adresse / Bureau :</Text>
-                <Text style={styles.settingsValue}>{adminProfile.address || 'Non renseignée'}</Text>
-              </View>
-            </View>
-            {adminProfile.supportHours ? (
-              <View style={{ marginTop: 6, marginBottom: 4 }}>
-                <Text style={styles.settingsLabel}>Horaires de Support :</Text>
-                <Text style={styles.settingsValue}>{adminProfile.supportHours}</Text>
-              </View>
-            ) : null}
-            <TouchableOpacity activeOpacity={0.8} onPress={() => setIsAdminProfileModalOpen(true)} style={styles.settingsEditBtn}>
-              <Text style={styles.settingsEditBtnText}>Modifier Coordonnées Hotline & Support</Text>
-            </TouchableOpacity>
-          </View>
+            ))}
+            <Button label="Modifier les coordonnées" icon="edit" variant="secondary" fullWidth onPress={() => setIsAdminProfileModalOpen(true)} />
+          </Card>
 
-          <View style={styles.settingsCard}>
-            <Text style={styles.settingsCardTitle}>SAUVEGARDE ET RESTAURATION</Text>
-            <Text style={styles.settingsCardSub}>
-              Exportez ou restaurez l'intégralité de la base de données locale (utilisateurs, carnets, adhérents, transactions, audit logs).
+          <Card style={styles.cardGap}>
+            <Text variant="subheading">Sauvegarde et restauration</Text>
+            <Text variant="caption" tone="muted">
+              Exportez ou restaurez toute la base locale : utilisateurs, carnets, adhérents, transactions et journal d'audit.
             </Text>
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity activeOpacity={0.8} onPress={handleExportBackup} style={[styles.backupBtn, { flex: 1 }]}>
-                <Icon name="shield" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.backupBtnText}>Exporter JSON</Text>
-              </TouchableOpacity>
-              <TouchableOpacity activeOpacity={0.8} onPress={() => setIsRestoreModalOpen(true)} style={[styles.restoreBtn, { flex: 1 }]}>
-                <Icon name="history" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.restoreBtnText}>Restaurer JSON</Text>
-              </TouchableOpacity>
+            <View style={styles.actionsRow}>
+              <Button label="Exporter JSON" icon="share" onPress={handleExportBackup} style={styles.flexGrow} />
+              <Button label="Restaurer JSON" icon="history" variant="danger" onPress={() => setIsRestoreModalOpen(true)} style={styles.flexGrow} />
             </View>
-          </View>
+          </Card>
         </ScrollView>
       )}
 
-      {/* Create User Modal */}
-      <Modal visible={isCreateUserModalOpen} transparent animationType="fade" onRequestClose={() => setIsCreateUserModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Créer un Nouvel Utilisateur</Text>
-              <TouchableOpacity
-                onPress={() => setIsCreateUserModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.modalSub}>Définissez son rôle et ses accès sur la plateforme.</Text>
-
-              {/* Role Selection */}
-              <Text style={styles.formLabel}>RÔLE SUR LA PLATEFORME *</Text>
-              <View style={styles.rolePickerRow}>
-                <TouchableOpacity
-                  onPress={() => setNewRole('MANAGER')}
-                  style={[styles.roleOption, newRole === 'MANAGER' && styles.roleOptionActive]}
-                >
-                  <Text style={[styles.roleOptionText, newRole === 'MANAGER' && styles.roleOptionTextActive]}>
-                    💼 Gestionnaire
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setNewRole('READ_ONLY')}
-                  style={[styles.roleOption, newRole === 'READ_ONLY' && styles.roleOptionActive]}
-                >
-                  <Text style={[styles.roleOptionText, newRole === 'READ_ONLY' && styles.roleOptionTextActive]}>
-                    👁️ Consultation
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setNewRole('ADMIN')}
-                  style={[styles.roleOption, newRole === 'ADMIN' && styles.roleOptionActive]}
-                >
-                  <Text style={[styles.roleOptionText, newRole === 'ADMIN' && styles.roleOptionTextActive]}>
-                    🛡️ Admin
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>NOM COMPLET *</Text>
-                <TextInput style={styles.formInput} value={newFullName} onChangeText={setNewFullName} placeholder="Ex: Pierre Richard Joseph" />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>TÉLÉPHONE (+509...) *</Text>
-                <TextInput style={styles.formInput} value={newPhone} onChangeText={setNewPhone} placeholder="+509 3X XX XX XX" keyboardType="phone-pad" />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>ZONE / MARCHÉ</Text>
-                <TextInput style={styles.formInput} value={newZone} onChangeText={setNewZone} placeholder="Ex: Marché Salomon" />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>CODE PIN (4 CHIFFRES) *</Text>
-                <TextInput style={styles.formInput} value={newPin} onChangeText={setNewPin} placeholder="4 chiffres" keyboardType="numeric" maxLength={4} />
-              </View>
-
-              {newRole === 'MANAGER' && (
-                <>
-                  <Text style={[styles.formLabel, { marginTop: 8 }]}>CONFIGURATION DU CARNET ASSOCIÉ</Text>
-                  <View style={styles.formGroup}>
-                    <Text style={styles.formLabel}>NOM DU CARNET</Text>
-                    <TextInput style={styles.formInput} value={newBizName} onChangeText={setNewBizName} placeholder="Ex: Sol Mache Salomon 2026" />
-                  </View>
-                  <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <View style={[styles.formGroup, { flex: 1 }]}>
-                      <Text style={styles.formLabel}>VALEUR PAR MAIN (HTG)</Text>
-                      <TextInput style={styles.formInput} value={newUnitAmount} onChangeText={setNewUnitAmount} keyboardType="numeric" />
-                    </View>
-                    <View style={[styles.formGroup, { flex: 1 }]}>
-                      <Text style={styles.formLabel}>SLOTS PRÉVUS</Text>
-                      <TextInput style={styles.formInput} value={newSlots} onChangeText={setNewSlots} keyboardType="numeric" />
-                    </View>
-                  </View>
-                </>
-              )}
-
-              <View style={styles.modalBtnRow}>
-                <TouchableOpacity onPress={() => setIsCreateUserModalOpen(false)} style={styles.modalCancelBtn}>
-                  <Text style={styles.modalCancelBtnText}>Annuler</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={handleCreateNewUser} style={styles.modalConfirmBtn}>
-                  <Text style={styles.modalConfirmBtnText}>Créer avec PIN</Text>
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
+      {/* Create user */}
+      <Dialog
+        visible={isCreateUserModalOpen}
+        onClose={() => setIsCreateUserModalOpen(false)}
+        title="Créer un utilisateur"
+        subtitle="Définissez son rôle et ses accès sur la plateforme."
+        icon="user"
+        actions={
+          <>
+            <Button label="Annuler" variant="secondary" onPress={() => setIsCreateUserModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Créer (PIN)" onPress={handleCreateNewUser} style={styles.flexGrow} />
+          </>
+        }
+      >
+        <Text variant="label">Rôle sur la plateforme</Text>
+        <View style={styles.chipsWrap}>
+          {ROLE_OPTIONS.map((r) => (
+            <Chip key={r.value} label={r.label} selected={newRole === r.value} onPress={() => setNewRole(r.value)} />
+          ))}
         </View>
-      </Modal>
-
-      {/* Edit User Modal */}
-      <Modal visible={isEditModalOpen} transparent animationType="fade" onRequestClose={() => setIsEditModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Modifier l'Utilisateur</Text>
-              <TouchableOpacity
-                onPress={() => setIsEditModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
+        <TextField label="Nom complet" value={newFullName} onChangeText={setNewFullName} placeholder="Ex : Pierre Richard Joseph" />
+        <TextField label="Téléphone (+509…)" value={newPhone} onChangeText={setNewPhone} placeholder="+509 3X XX XX XX" keyboardType="phone-pad" />
+        <TextField label="Zone / marché" value={newZone} onChangeText={setNewZone} placeholder="Ex : Marché Salomon" />
+        <TextField label="Code PIN (4 chiffres)" value={newPin} onChangeText={setNewPin} placeholder="4 chiffres" keyboardType="numeric" maxLength={4} />
+        {newRole === 'MANAGER' && (
+          <>
+            <Text variant="subheading">Carnet associé</Text>
+            <TextField label="Nom du carnet" value={newBizName} onChangeText={setNewBizName} placeholder="Ex : Sol Mache Salomon 2026" />
+            <View style={styles.actionsRow}>
+              <View style={styles.flexGrow}>
+                <TextField label="Valeur par main (HTG)" value={newUnitAmount} onChangeText={setNewUnitAmount} keyboardType="numeric" />
+              </View>
+              <View style={styles.flexGrow}>
+                <TextField label="Places prévues" value={newSlots} onChangeText={setNewSlots} keyboardType="numeric" />
+              </View>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Role Selection */}
-              <Text style={styles.formLabel}>RÔLE ATTRIBUÉ</Text>
-              <View style={styles.rolePickerRow}>
-                <TouchableOpacity
-                  onPress={() => setEditRole('MANAGER')}
-                  style={[styles.roleOption, editRole === 'MANAGER' && styles.roleOptionActive]}
-                >
-                  <Text style={[styles.roleOptionText, editRole === 'MANAGER' && styles.roleOptionTextActive]}>
-                    💼 Gestionnaire
-                  </Text>
-                </TouchableOpacity>
+          </>
+        )}
+      </Dialog>
 
-                <TouchableOpacity
-                  onPress={() => setEditRole('READ_ONLY')}
-                  style={[styles.roleOption, editRole === 'READ_ONLY' && styles.roleOptionActive]}
-                >
-                  <Text style={[styles.roleOptionText, editRole === 'READ_ONLY' && styles.roleOptionTextActive]}>
-                    👁️ Consultation
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setEditRole('ADMIN')}
-                  style={[styles.roleOption, editRole === 'ADMIN' && styles.roleOptionActive]}
-                >
-                  <Text style={[styles.roleOptionText, editRole === 'ADMIN' && styles.roleOptionTextActive]}>
-                    🛡️ Admin
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>NOM COMPLET</Text>
-                <TextInput style={styles.formInput} value={editFullName} onChangeText={setEditFullName} placeholder="Nom complet" />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>TÉLÉPHONE (+509...)</Text>
-                <TextInput style={styles.formInput} value={editPhone} onChangeText={setEditPhone} keyboardType="phone-pad" />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>MARCHÉ / ZONE</Text>
-                <TextInput style={styles.formInput} value={editZone} onChangeText={setEditZone} placeholder="Ex: Marché Salomon" />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>RÉINITIALISER PIN (4 CHIFFRES)</Text>
-                <TextInput style={styles.formInput} value={editPin} onChangeText={setEditPin} placeholder="Laisser vide ou 4 chiffres" keyboardType="numeric" maxLength={4} />
-              </View>
-              <View style={styles.modalBtnRow}>
-                <TouchableOpacity onPress={() => setIsEditModalOpen(false)} style={styles.modalCancelBtn}>
-                  <Text style={styles.modalCancelBtnText}>Annuler</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={handleSaveEdit} style={styles.modalConfirmBtn}>
-                  <Text style={styles.modalConfirmBtnText}>Valider avec PIN</Text>
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
+      {/* Edit user */}
+      <Dialog
+        visible={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title="Modifier l'utilisateur"
+        icon="edit"
+        actions={
+          <>
+            <Button label="Annuler" variant="secondary" onPress={() => setIsEditModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Valider (PIN)" onPress={handleSaveEdit} style={styles.flexGrow} />
+          </>
+        }
+      >
+        <Text variant="label">Rôle attribué</Text>
+        <View style={styles.chipsWrap}>
+          {ROLE_OPTIONS.map((r) => (
+            <Chip key={r.value} label={r.label} selected={editRole === r.value} onPress={() => setEditRole(r.value)} />
+          ))}
         </View>
-      </Modal>
+        <TextField label="Nom complet" value={editFullName} onChangeText={setEditFullName} placeholder="Nom complet" />
+        <TextField label="Téléphone (+509…)" value={editPhone} onChangeText={setEditPhone} keyboardType="phone-pad" />
+        <TextField label="Marché / zone" value={editZone} onChangeText={setEditZone} placeholder="Ex : Marché Salomon" />
+        <TextField
+          label="Réinitialiser le PIN (4 chiffres)"
+          value={editPin}
+          onChangeText={setEditPin}
+          placeholder="Laisser vide pour ne pas changer"
+          keyboardType="numeric"
+          maxLength={4}
+        />
+      </Dialog>
 
-      {/* Super-Admin Transaction Cancellation Modal */}
-      <Modal visible={isCancelTxModalOpen} transparent animationType="fade" onRequestClose={() => setIsCancelTxModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Annulation Administrative</Text>
-              <TouchableOpacity
-                onPress={() => setIsCancelTxModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSub}>
-              Opération #{selectedTxToCancel?.id.slice(0, 8)} · {selectedTxToCancel?.clientName || 'Adhérent'} · {formatCurrency(selectedTxToCancel?.amount || 0)}
+      {/* Super-admin transaction cancellation */}
+      <Dialog
+        visible={isCancelTxModalOpen}
+        onClose={() => setIsCancelTxModalOpen(false)}
+        title="Annulation administrative"
+        subtitle={`Opération #${selectedTxToCancel?.id.slice(0, 8) ?? ''} · ${selectedTxToCancel?.clientName || 'Adhérent'} · ${formatCurrency(selectedTxToCancel?.amount || 0)}`}
+        icon="alert"
+        tone="danger"
+        actions={
+          <>
+            <Button label="Abandonner" variant="secondary" onPress={() => setIsCancelTxModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Annuler (PIN admin)" variant="danger" onPress={handleConfirmCancelTx} style={styles.flexGrow} />
+          </>
+        }
+      >
+        <Card tone="sunken">
+          <View style={styles.rowStart}>
+            <Icon name="shield" size={18} color={theme.colors.textMuted} />
+            <Text variant="caption" tone="muted" style={styles.flexShrink}>
+              L'enregistrement n'est pas supprimé : une écriture d'annulation certifiée est créée et le solde / l'échéance de l'adhérent sont recalculés.
             </Text>
-
-            <View style={styles.cancellationWarningBox}>
-              <Icon name="shield" size={16} color="#DC2626" style={{ marginRight: 8 }} />
-              <Text style={styles.cancellationWarningText}>
-                Cette opération ne supprime pas physiquement l'enregistrement. Une écriture d'annulation certifiée est générée et le solde/échéance de l'adhérent est recalculé.
-              </Text>
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>MOTIF OBLIGATOIRE DE L'ANNULATION *</Text>
-              <TextInput
-                style={[styles.formInput, { height: 75, textAlignVertical: 'top', paddingTop: 8 }]}
-                value={cancelTxReason}
-                onChangeText={setCancelTxReason}
-                placeholder="Ex: Erreur de saisie de montant / doublon..."
-                placeholderTextColor="#94A3B8"
-                multiline
-              />
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity onPress={() => setIsCancelTxModalOpen(false)} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelBtnText}>Abandonner</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleConfirmCancelTx} style={styles.restoreConfirmBtn}>
-                <Text style={styles.modalConfirmBtnText}>Annuler avec PIN Admin</Text>
-              </TouchableOpacity>
-            </View>
           </View>
+        </Card>
+        <TextField
+          label="Motif obligatoire"
+          multiline
+          value={cancelTxReason}
+          onChangeText={setCancelTxReason}
+          placeholder="Ex : erreur de saisie du montant, doublon"
+        />
+      </Dialog>
+
+      {/* Admin hotline profile */}
+      <Dialog
+        visible={isAdminProfileModalOpen}
+        onClose={() => setIsAdminProfileModalOpen(false)}
+        title="Coordonnées de la hotline"
+        icon="phone"
+        actions={
+          <>
+            <Button label="Annuler" variant="secondary" onPress={() => setIsAdminProfileModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Enregistrer" onPress={handleSaveAdminProfile} style={styles.flexGrow} />
+          </>
+        }
+      >
+        <TextField label="Nom du superviseur / administration" value={adminEditName} onChangeText={setAdminEditName} placeholder="Nom admin" />
+        <TextField label="Numéro hotline / assistance" value={adminEditPhone} onChangeText={setAdminEditPhone} keyboardType="phone-pad" placeholder="+509 XX XX XXXX" />
+        <TextField
+          label="E-mail de support"
+          value={adminEditEmail}
+          onChangeText={setAdminEditEmail}
+          keyboardType="email-address"
+          placeholder="support@solmobile.ht"
+          autoCapitalize="none"
+        />
+        <TextField label="Adresse du bureau / zone" value={adminEditAddress} onChangeText={setAdminEditAddress} placeholder="Ex : Port-au-Prince, Haïti" />
+        <TextField label="Horaires de disponibilité" value={adminEditHours} onChangeText={setAdminEditHours} placeholder="Ex : Lun - Sam : 08h00 - 18h00" />
+        <TextField
+          label="Nouveau code PIN admin (4 chiffres)"
+          value={adminEditPin}
+          onChangeText={setAdminEditPin}
+          placeholder="Laisser vide pour ne pas changer"
+          keyboardType="numeric"
+          maxLength={4}
+        />
+      </Dialog>
+
+      {/* Restore JSON backup */}
+      <Dialog
+        visible={isRestoreModalOpen}
+        onClose={() => setIsRestoreModalOpen(false)}
+        title="Restaurer une sauvegarde"
+        subtitle="Collez le contenu complet du fichier JSON exporté."
+        icon="history"
+        tone="danger"
+        actions={
+          <>
+            <Button label="Annuler" variant="secondary" onPress={() => setIsRestoreModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Restaurer (PIN)" variant="danger" onPress={handleConfirmRestore} style={styles.flexGrow} />
+          </>
+        }
+      >
+        <TextField
+          label="Contenu JSON"
+          multiline
+          numberOfLines={6}
+          value={restoreJsonInput}
+          onChangeText={setRestoreJsonInput}
+          placeholder='{"exportedAt": "...", "version": "...", "data": {...}}'
+        />
+      </Dialog>
+
+      {/* Reset manager PIN */}
+      <Dialog
+        visible={isResetPinModalOpen}
+        onClose={() => setIsResetPinModalOpen(false)}
+        title="Réinitialiser le code PIN"
+        subtitle={`Nouveau code à 4 chiffres pour ${targetManagerForPinReset?.collector.fullName ?? ''} (${targetManagerForPinReset?.collector.phoneNumber ?? ''}).`}
+        icon="lock"
+        actions={
+          <>
+            <Button label="Annuler" variant="secondary" onPress={() => setIsResetPinModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Valider (PIN admin)" onPress={handleConfirmResetPin} style={styles.flexGrow} />
+          </>
+        }
+      >
+        <TextField
+          label="Nouveau code PIN"
+          value={adminNewPinInput}
+          onChangeText={setAdminNewPinInput}
+          placeholder="••••"
+          keyboardType="numeric"
+          maxLength={4}
+          secureTextEntry
+        />
+        <View style={styles.chipsWrap}>
+          <Chip label='Définir "1234"' onPress={() => setAdminNewPinInput('1234')} />
+          <Chip label='Définir "0000"' onPress={() => setAdminNewPinInput('0000')} />
         </View>
-      </Modal>
-
-      {/* Admin Profile Modal */}
-      <Modal visible={isAdminProfileModalOpen} transparent animationType="fade" onRequestClose={() => setIsAdminProfileModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Coordonnées Hotline Admin</Text>
-              <TouchableOpacity
-                onPress={() => setIsAdminProfileModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NOM DU SUPERVISEUR / ADMINISTRATION</Text>
-              <TextInput style={styles.formInput} value={adminEditName} onChangeText={setAdminEditName} placeholder="Nom Admin" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NUMÉRO HOTLINE / ASSISTANCE</Text>
-              <TextInput style={styles.formInput} value={adminEditPhone} onChangeText={setAdminEditPhone} keyboardType="phone-pad" placeholder="+509 XX XX XXXX" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>EMAIL DE SUPPORT</Text>
-              <TextInput style={styles.formInput} value={adminEditEmail} onChangeText={setAdminEditEmail} keyboardType="email-address" placeholder="support@solmobile.ht" autoCapitalize="none" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>ADRESSE DU BUREAU / ZONE</Text>
-              <TextInput style={styles.formInput} value={adminEditAddress} onChangeText={setAdminEditAddress} placeholder="ex: Port-au-Prince, Haïti" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>HORAIRES DE DISPONIBILITÉ</Text>
-              <TextInput style={styles.formInput} value={adminEditHours} onChangeText={setAdminEditHours} placeholder="ex: Lun - Sam : 08h00 - 18h00" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NOUVEAU CODE PIN ADMIN (4 CHIFFRES)</Text>
-              <TextInput style={styles.formInput} value={adminEditPin} onChangeText={setAdminEditPin} placeholder="Laisser vide pour ne pas changer" keyboardType="numeric" maxLength={4} />
-            </View>
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity onPress={() => setIsAdminProfileModalOpen(false)} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleSaveAdminProfile} style={styles.modalConfirmBtn}>
-                <Text style={styles.modalConfirmBtnText}>Enregistrer</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Restore JSON Backup Modal */}
-      <Modal visible={isRestoreModalOpen} transparent animationType="fade" onRequestClose={() => setIsRestoreModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Restaurer une Sauvegarde JSON</Text>
-              <TouchableOpacity
-                onPress={() => setIsRestoreModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSub}>Collez ci-dessous le contenu textuel complet du fichier JSON exporté :</Text>
-            <TextInput
-              style={[styles.formInput, { height: 120, textAlignVertical: 'top' }]}
-              value={restoreJsonInput}
-              onChangeText={setRestoreJsonInput}
-              placeholder='{"exportedAt": "...", "version": "...", "data": {...}}'
-              placeholderTextColor="#94A3B8"
-              multiline
-            />
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity onPress={() => setIsRestoreModalOpen(false)} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleConfirmRestore} style={styles.restoreConfirmBtn}>
-                <Text style={styles.modalConfirmBtnText}>Restaurer avec PIN</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Reset Manager PIN Modal */}
-      <Modal visible={isResetPinModalOpen} transparent animationType="fade" onRequestClose={() => setIsResetPinModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Réinitialiser le Code PIN</Text>
-              <TouchableOpacity
-                onPress={() => setIsResetPinModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSub}>
-              Définir un nouveau code PIN à 4 chiffres pour <Text style={{ fontWeight: '800', color: SOL_COLORS.textPrimary }}>{targetManagerForPinReset?.collector.fullName}</Text> ({targetManagerForPinReset?.collector.phoneNumber}).
-            </Text>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NOUVEAU CODE PIN (4 CHIFFRES) *</Text>
-              <TextInput
-                style={[styles.formInput, { textAlign: 'center', fontSize: 18, fontWeight: '900', letterSpacing: 4 }]}
-                value={adminNewPinInput}
-                onChangeText={setAdminNewPinInput}
-                placeholder="****"
-                placeholderTextColor="#94A3B8"
-                keyboardType="numeric"
-                maxLength={4}
-                secureTextEntry
-              />
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-              <TouchableOpacity
-                onPress={() => setAdminNewPinInput('1234')}
-                style={styles.quickPinBtn}
-              >
-                <Text style={styles.quickPinBtnText}>Définir "1234"</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setAdminNewPinInput('0000')}
-                style={styles.quickPinBtn}
-              >
-                <Text style={styles.quickPinBtnText}>Définir "0000"</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity onPress={() => setIsResetPinModalOpen(false)} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleConfirmResetPin} style={styles.actionResetPinConfirmBtn}>
-                <Text style={styles.modalConfirmBtnText}>Valider avec PIN Admin</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      </Dialog>
 
       {/* Universal Sensitive Action PIN Modal */}
       <PinVerificationModal
@@ -1748,744 +1429,129 @@ export default function AdminScreen() {
         title={pendingActionTitle}
         subtitle={pendingActionSubtitle}
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.background,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 14,
-    backgroundColor: SOL_COLORS.secondary,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
-    ...SHADOWS.sm,
-  },
-  headerTablet: {
-    maxWidth: 900,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  headerLeft: {
-    flex: 1,
-  },
-  adminBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#334155',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-    marginBottom: 4,
-  },
-  adminBadgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: SOL_COLORS.primaryLight,
-    letterSpacing: 0.5,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: -0.3,
-  },
-  headerSub: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginTop: 1,
-    fontWeight: '600',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  pdfExportBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.infoLight,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-  },
-  pdfExportText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: SOL_COLORS.info,
-  },
-  logoutBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#334155',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  kpiContainer: {
-    backgroundColor: SOL_COLORS.secondary,
-    paddingBottom: 12,
-  },
-  kpiScroll: {
-    paddingHorizontal: 16,
-    gap: 10,
-  },
-  kpiCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
-    padding: 12,
-    minWidth: 140,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  kpiLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#94A3B8',
-    letterSpacing: 0.3,
-  },
-  kpiValue: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    marginTop: 4,
-  },
-  kpiGreen: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#34D399',
-    marginTop: 4,
-  },
-  kpiRed: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#F87171',
-    marginTop: 4,
-  },
-  kpiSub: {
-    fontSize: 10,
-    color: '#94A3B8',
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  tabBar: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: SOL_COLORS.border,
-  },
-  tabScroll: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 6,
-  },
-  tabBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 12,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  tabBtnActive: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primary,
-  },
-  tabBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: SOL_COLORS.textSecondary,
-  },
-  tabBtnTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  searchSection: {
-    padding: 14,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: SOL_COLORS.border,
-  },
-  userSectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  userSectionTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: SOL_COLORS.textMuted,
-    letterSpacing: 0.5,
-  },
-  userSectionSub: {
-    fontSize: 11,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  createUserBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    ...SHADOWS.sm,
-  },
-  createUserBtnText: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 42,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    marginBottom: 10,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    color: SOL_COLORS.textPrimary,
-  },
-  filterChipsRow: {
-    gap: 6,
-  },
-  filterChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 10,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  filterChipActive: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primary,
-  },
-  filterChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: SOL_COLORS.textSecondary,
-  },
-  filterChipTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  filterChipSubtle: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    backgroundColor: '#F1F5F9',
-  },
-  filterChipSubtleActive: {
-    backgroundColor: '#334155',
-  },
-  filterChipSubtleText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  filterChipSubtleTextActive: {
-    color: '#FFFFFF',
-  },
-  listContent: {
-    padding: 14,
-    paddingBottom: 40,
-  },
-  managerCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  managerCardPending: { borderColor: '#F59E0B', backgroundColor: '#FFFDF5' },
-  managerCardSuspended: { borderColor: '#FECDD3', backgroundColor: '#FFF1F2' },
-  managerTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-  },
-  avatarCircleSmall: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarTextSmall: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  managerName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  roleBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  roleBadgeAdmin: { backgroundColor: '#EDE9FE' },
-  roleBadgeManager: { backgroundColor: '#DCFCE7' },
-  roleBadgeReadOnly: { backgroundColor: '#F1F5F9' },
-  roleBadgeText: { fontSize: 9, fontWeight: '900' },
-  roleBadgeTextAdmin: { color: '#6D28D9' },
-  roleBadgeTextManager: { color: '#15803D' },
-  roleBadgeTextReadOnly: { color: '#475569' },
-  managerPhone: {
-    fontSize: 12,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  pinBold: { color: SOL_COLORS.info, fontWeight: '800' },
-  zoneText: { fontSize: 11, color: SOL_COLORS.textSecondary, fontWeight: '600', marginTop: 2 },
-  bizInfoText: { fontSize: 11, color: SOL_COLORS.textSecondary, marginTop: 2 },
-  bizBold: { fontWeight: '800', color: SOL_COLORS.primaryDark },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  statusBadgeActive: { backgroundColor: SOL_COLORS.successLighter },
-  statusBadgePending: { backgroundColor: SOL_COLORS.accentLighter },
-  statusBadgeSuspended: { backgroundColor: SOL_COLORS.dangerLighter },
-  statusBadgeText: { fontSize: 9, fontWeight: '900' },
-  statusBadgeTextActive: { color: SOL_COLORS.successDark },
-  statusBadgeTextPending: { color: SOL_COLORS.accent },
-  statusBadgeTextSuspended: { color: SOL_COLORS.dangerDark },
-  managerStatsRow: {
-    flexDirection: 'row',
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  managerStatItem: { flex: 1, alignItems: 'center' },
-  managerStatLabel: { fontSize: 8, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.3 },
-  managerStatValue: { fontSize: 13, fontWeight: '900', color: SOL_COLORS.textPrimary, marginTop: 2 },
-  managerStatGreen: { fontSize: 13, fontWeight: '900', color: SOL_COLORS.successDark, marginTop: 2 },
-  managerStatRed: { fontSize: 13, fontWeight: '900', color: SOL_COLORS.dangerDark, marginTop: 2 },
-  readOnlyNoticeBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    padding: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginBottom: 10,
-  },
-  readOnlyNoticeText: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
-    flex: 1,
-  },
-  managerActionRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  actionCircleBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  actionEditBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  actionEditText: { fontSize: 11, fontWeight: '800', color: '#475569' },
-  actionApproveBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.successDark,
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 10,
-  },
-  actionApproveText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
-  actionSuspendBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.dangerLighter,
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#FECDD3',
-  },
-  actionSuspendText: { fontSize: 11, fontWeight: '800', color: SOL_COLORS.dangerDark },
-  actionReactivateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.successLighter,
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  actionReactivateText: { fontSize: 11, fontWeight: '800', color: SOL_COLORS.successDark },
-  actionReportBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F3FF',
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DDD6FE',
-  },
-  actionReportText: { fontSize: 11, fontWeight: '800', color: '#7C3AED' },
-  actionSwitchBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EEF2FF',
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
-  },
-  actionSwitchText: { fontSize: 11, fontWeight: '800', color: '#4338CA' },
-  actionDeleteBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: SOL_COLORS.dangerLighter,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#FECDD3',
-  },
-  actionResetPinBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 10,
-    height: 34,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  actionResetPinText: { fontSize: 11, fontWeight: '800', color: '#B45309' },
-  quickPinBtn: {
-    flex: 1,
-    backgroundColor: '#F1F5F9',
-    paddingVertical: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  quickPinBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  actionResetPinConfirmBtn: {
-    flex: 1.5,
-    height: 44,
-    backgroundColor: '#D97706',
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  txCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  txCardReversed: { backgroundColor: '#FFF1F2', borderColor: '#FECDD3' },
-  txLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  txIconBox: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
-  txIconDeposit: { backgroundColor: SOL_COLORS.successDark },
-  txIconPayout: { backgroundColor: SOL_COLORS.accent },
-  txIconReversal: { backgroundColor: SOL_COLORS.danger },
-  txClientName: { fontSize: 13, fontWeight: '800', color: SOL_COLORS.textPrimary },
-  txCancelledBadge: {
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-  },
-  txCancelledBadgeText: {
-    fontSize: 8,
-    fontWeight: '900',
-    color: '#DC2626',
-  },
-  adminCancelTxBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FECDD3',
-    marginTop: 4,
-  },
-  adminCancelTxBtnText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#DC2626',
-  },
-  cancellationWarningBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#FECDD3',
-    marginBottom: 12,
-  },
-  cancellationWarningText: {
-    fontSize: 11,
-    color: '#991B1B',
-    fontWeight: '600',
-    flex: 1,
-    lineHeight: 15,
-  },
-  txNote: { fontSize: 11, color: SOL_COLORS.textSecondary, marginTop: 1 },
-  txDate: { fontSize: 10, color: SOL_COLORS.textMuted, marginTop: 1 },
-  txAmount: { fontSize: 14, fontWeight: '900' },
-  txAmountDeposit: { color: SOL_COLORS.successDark },
-  txAmountPayout: { color: SOL_COLORS.accent },
-  txAmountReversal: { color: SOL_COLORS.danger },
-  txRef: { fontSize: 9, color: SOL_COLORS.textMuted, marginTop: 2 },
-  auditCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  auditHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  auditActionBadge: { backgroundColor: '#F1F5F9', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  auditActionText: { fontSize: 10, fontWeight: '800', color: SOL_COLORS.textPrimary },
-  auditDate: { fontSize: 10, color: SOL_COLORS.textMuted },
-  auditReason: { fontSize: 12, color: SOL_COLORS.textSecondary, marginBottom: 6 },
-  auditFooter: { flexDirection: 'row', justifyContent: 'space-between' },
-  auditUser: { fontSize: 10, color: SOL_COLORS.textMuted },
-  auditEntity: { fontSize: 10, color: SOL_COLORS.textMuted },
-  syncScrollContent: { padding: 14 },
-  syncCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  syncHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
-  syncCardTitle: { fontSize: 15, fontWeight: '800', color: SOL_COLORS.textPrimary },
-  syncCardSub: { fontSize: 12, fontWeight: '600', color: SOL_COLORS.textSecondary, marginTop: 2 },
-  syncActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
-  },
-  syncActionBtnText: { fontSize: 11, fontWeight: '800', color: '#FFFFFF' },
-  syncMetricsGrid: { flexDirection: 'row', gap: 10 },
-  syncMetricBox: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 12,
-    padding: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  syncMetricLabel: { fontSize: 9, fontWeight: '800', color: SOL_COLORS.textMuted },
-  syncMetricYellow: { fontSize: 16, fontWeight: '900', color: '#D97706', marginTop: 2 },
-  syncMetricGreen: { fontSize: 16, fontWeight: '900', color: '#059669', marginTop: 2 },
-  syncMetricRed: { fontSize: 16, fontWeight: '900', color: '#DC2626', marginTop: 2 },
-  errorLogCard: {
-    backgroundColor: '#FFF1F2',
-    borderRadius: 16,
-    padding: 14,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#FECDD3',
-  },
-  errorLogTitle: { fontSize: 10, fontWeight: '900', color: '#DC2626', letterSpacing: 0.5, marginBottom: 6 },
-  errorLogText: { fontSize: 11, color: '#991B1B', marginTop: 2 },
-  settingsScrollContent: { padding: 14 },
-  settingsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  settingsCardTitle: { fontSize: 11, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.5 },
-  settingsCardSub: { fontSize: 12, color: SOL_COLORS.textSecondary, marginTop: 4, lineHeight: 16 },
-  settingsRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 12 },
-  settingsLabel: { fontSize: 10, color: SOL_COLORS.textMuted, fontWeight: '700' },
-  settingsValue: { fontSize: 13, fontWeight: '800', color: SOL_COLORS.textPrimary, marginTop: 2 },
-  settingsEditBtn: {
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  settingsEditBtnText: { fontSize: 12, fontWeight: '800', color: SOL_COLORS.textPrimary },
-  backupBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  backupBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
-  restoreBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#475569',
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  restoreBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 20,
-    maxHeight: '90%',
-  },
-  modalHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-    width: '100%',
-  },
-  modalTitle: { fontSize: 17, fontWeight: '900', color: SOL_COLORS.textPrimary },
-  modalSub: { fontSize: 12, color: SOL_COLORS.textSecondary, marginTop: 2, marginBottom: 12 },
-  rolePickerRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  roleOption: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    borderRadius: 10,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    alignItems: 'center',
-  },
-  roleOptionActive: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primary,
-  },
-  roleOptionText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: SOL_COLORS.textSecondary,
-  },
-  roleOptionTextActive: {
-    color: '#FFFFFF',
-  },
-  formGroup: { marginBottom: 10 },
-  formLabel: { fontSize: 9, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.4, marginBottom: 4 },
-  formInput: {
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    height: 44,
-    paddingHorizontal: 12,
-    fontSize: 13,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  modalBtnRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  modalCancelBtn: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    height: 44,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalCancelBtnText: { fontSize: 12, fontWeight: '800', color: SOL_COLORS.textSecondary },
-  modalConfirmBtn: {
-    flex: 1.5,
-    backgroundColor: SOL_COLORS.primary,
-    height: 44,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalConfirmBtnText: { fontSize: 12, fontWeight: '800', color: '#FFFFFF' },
-  restoreConfirmBtn: {
-    flex: 1.5,
-    backgroundColor: '#DC2626',
-    height: 44,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
+  StyleSheet.create({
+    flexShrink: { flex: 1, minWidth: 0 },
+    flexGrow: { flexGrow: 1, flexBasis: 0 },
+    pressed: { backgroundColor: colors.surfacePressed },
+    cardGap: { gap: spacing.sm },
+    rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
+    rowStart: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    onSupervisor: { color: colors.onSupervisor },
+    onSupervisorMuted: { color: colors.onSupervisor, opacity: 0.8 },
+
+    adminHeader: { backgroundColor: colors.supervisor, paddingBottom: spacing.sm, gap: spacing.sm },
+    adminHeaderInner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      width: '100%',
+      maxWidth: layout.maxContentWidth + layout.gutter * 2,
+      alignSelf: 'center',
+      paddingHorizontal: layout.gutter,
+    },
+    adminBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xs },
+    headerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      minWidth: layout.touchTarget,
+      height: layout.touchTarget,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.onSupervisor,
+      justifyContent: 'center',
+    },
+    headerBtnPressed: { opacity: 0.8 },
+    tabsRow: { gap: spacing.sm, paddingHorizontal: layout.gutter },
+    tabChip: {
+      minHeight: layout.touchTarget - spacing.sm,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.onSupervisor,
+    },
+    tabChipActive: { backgroundColor: colors.onSupervisor },
+
+    listContent: { paddingHorizontal: layout.gutter, paddingBottom: spacing.xxl },
+    listContentTablet: { width: '100%', maxWidth: layout.maxContentWidth + layout.gutter * 2, alignSelf: 'center' },
+    listHeader: { gap: spacing.md, paddingTop: spacing.lg, paddingBottom: spacing.md },
+    separator: { height: spacing.sm },
+
+    kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    kpiTile: { flexBasis: '47%', flexGrow: 1 },
+
+    searchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      minHeight: layout.touchTarget,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      backgroundColor: colors.surface,
+    },
+    searchInput: { flex: 1, minWidth: 0, ...typography.body, color: colors.text, paddingVertical: spacing.sm },
+    chipsRow: { gap: spacing.sm, paddingRight: spacing.lg },
+    chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+
+    cardPending: { borderColor: colors.warningLine, borderWidth: 2 },
+    identityRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    pillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    pill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      minHeight: spacing.xxl,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.pill,
+    },
+    statsRow: { flexDirection: 'row', gap: spacing.sm },
+    statCell: { flex: 1, minWidth: 0, gap: spacing.xs, padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.surfaceAlt },
+    actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    toolsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    toolTile: {
+      flexBasis: '30%',
+      flexGrow: 1,
+      minHeight: layout.actionHeight + spacing.sm,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+      padding: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    toolTileDanger: { borderColor: colors.dangerLine, backgroundColor: colors.dangerSoft },
+
+    ledgerCard: { overflow: 'hidden' },
+    txIcon: {
+      width: spacing.xxl + spacing.sm,
+      height: spacing.xxl + spacing.sm,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    txAction: { paddingHorizontal: spacing.md, paddingBottom: spacing.md, alignItems: 'flex-end' },
+    codeChip: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
+
+    infoRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: spacing.md,
+      paddingVertical: spacing.xs,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.divider,
+    },
+    infoLabel: { flex: 1 },
+    infoValue: { flex: 1.4, textAlign: 'right' },
+  });

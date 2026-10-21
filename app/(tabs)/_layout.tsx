@@ -1,17 +1,20 @@
 import React from 'react';
 import { Tabs, Redirect } from 'expo-router';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/AuthContext';
-import { Icon } from '@/components/Icon';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { Icon, UiIconName } from '@/components/ui';
+import { useTheme } from '@/theme';
 
 export default function TabLayout() {
   const { isAuthenticated, isPendingApproval, isLoading } = useAuth();
+  const { colors, spacing, radius, typography, shadows } = useTheme();
+  const insets = useSafeAreaInsets();
 
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={SOL_COLORS.primary} />
+      <View style={{ flex: 1, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -24,88 +27,46 @@ export default function TabLayout() {
     return <Redirect href="/login" />;
   }
 
+  const renderIcon = (name: UiIconName) =>
+    function TabIcon({ color, focused }: { color: ColorValue; focused: boolean }) {
+      return (
+        <View
+          style={{
+            width: spacing.xxxl,
+            height: spacing.xxl,
+            borderRadius: radius.pill,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: focused ? colors.primarySoft : 'transparent',
+          }}
+        >
+          <Icon name={name} size={22} color={focused ? colors.onPrimarySoft : color} strokeWidth={focused ? 2.4 : 2} />
+        </View>
+      );
+    };
+
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: SOL_COLORS.primary,
-        tabBarInactiveTintColor: SOL_COLORS.textMuted,
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textMuted,
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
+          backgroundColor: colors.surface,
           borderTopWidth: 1,
-          borderTopColor: SOL_COLORS.border,
-          height: 66,
-          paddingBottom: 10,
-          paddingTop: 8,
-          ...SHADOWS.sm,
+          borderTopColor: colors.border,
+          height: 68 + insets.bottom,
+          paddingTop: spacing.xs,
+          paddingBottom: Math.max(insets.bottom, spacing.sm),
+          ...shadows.card,
         },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '700',
-          letterSpacing: 0.1,
-        },
+        tabBarLabelStyle: typography.tab,
         headerShown: false,
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Accueil',
-          tabBarIcon: ({ color, focused }) => (
-            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-              <Icon
-                name="dashboard"
-                size={20}
-                color={focused ? SOL_COLORS.primaryDark : color}
-              />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="collect"
-        options={{
-          title: 'Cotisation',
-          tabBarIcon: ({ color, focused }) => (
-            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-              <Icon
-                name="collect"
-                size={20}
-                color={focused ? SOL_COLORS.primaryDark : color}
-              />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="sol"
-        options={{
-          title: 'Cycle SOL',
-          tabBarIcon: ({ color, focused }) => (
-            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-              <Icon
-                name="sol"
-                size={20}
-                color={focused ? SOL_COLORS.primaryDark : color}
-              />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: 'Historique',
-          tabBarIcon: ({ color, focused }) => (
-            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
-              <Icon
-                name="history"
-                size={20}
-                color={focused ? SOL_COLORS.primaryDark : color}
-              />
-            </View>
-          ),
-        }}
-      />
+      <Tabs.Screen name="index" options={{ title: 'Accueil', tabBarIcon: renderIcon('home') }} />
+      <Tabs.Screen name="collect" options={{ title: 'Encaisser', tabBarIcon: renderIcon('cash') }} />
+      <Tabs.Screen name="sol" options={{ title: 'Cycle', tabBarIcon: renderIcon('cycle') }} />
+      <Tabs.Screen name="history" options={{ title: 'Historique', tabBarIcon: renderIcon('history') }} />
       <Tabs.Screen
         name="two"
         options={{
@@ -115,22 +76,3 @@ export default function TabLayout() {
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.background,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  iconWrap: {
-    width: 36,
-    height: 30,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconWrapActive: {
-    backgroundColor: SOL_COLORS.primaryLight,
-  },
-});

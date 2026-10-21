@@ -770,6 +770,30 @@ export async function saveClosedCycleSnapshot(
 /**
  * Retrieves all closed cycles for a collector.
  */
+/**
+ * Returns the ISO instant at which the collector's current cycle started.
+ * Transactions recorded before it belong to a closed cycle.
+ * Uses the most recent closed_cycles archive (exact renewal moment), falling back to
+ * the active business start date for collectors that never archived a cycle.
+ */
+export async function getCurrentCycleBoundary(collectorIdParam?: string): Promise<string | null> {
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+
+  try {
+    const closed = await getClosedCycles(collectorId);
+    const lastClosedAt = closed.reduce<string | null>(
+      (latest, c) => (c.closedAt && (!latest || c.closedAt > latest) ? c.closedAt : latest),
+      null
+    );
+    if (lastClosedAt) return lastClosedAt;
+  } catch (err) {
+    console.warn('Notice: Could not read closed cycles for boundary:', err);
+  }
+
+  const business = await getActiveBusinessConfig(collectorId);
+  return business?.startDate ? new Date(business.startDate).toISOString() : null;
+}
+
 export async function getClosedCycles(collectorIdParam?: string): Promise<ClosedCycle[]> {
   const db = await getDatabase();
   const collectorId = collectorIdParam || (await getActiveCollectorId());

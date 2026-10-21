@@ -1,14 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { getClientById, getAllClients } from '@/db/clientRepository';
@@ -24,10 +15,11 @@ import { Client, BusinessConfig } from '@/types';
 import { formatCurrency, formatDate, getInitials } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { safeBack } from '@/lib/navigation';
-import { Icon } from '@/components/Icon';
+import { Header } from '@/components/Header';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { AmountText, Avatar, Button, Card, Icon, ProgressBar, Screen, Text, TextField } from '@/components/ui';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 import { calculateCycleTotalHands } from '@/services/financialService';
 
@@ -37,6 +29,8 @@ export default function PayoutScreen() {
   const { activeCollector, userRole } = useAuth();
   const { triggerSync } = useSync();
   const { isSmallScreen, contentMaxWidth, horizontalPadding } = useResponsive();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
@@ -204,172 +198,167 @@ export default function PayoutScreen() {
     }
   };
 
+  const header = (
+    <Header
+      title="Décaissement"
+      subtitle={`Bay Men · ${business?.name || 'Carnet SOL'}`}
+      showBack={true}
+      showProfile={false}
+      showScanner={false}
+      fallbackBackRoute="/(tabs)"
+    />
+  );
+
   if (!client) {
     return (
-      <SafeAreaView style={styles.centerContainer}>
-        <Text style={styles.loadingText}>Chargement du dossier...</Text>
-      </SafeAreaView>
+      <Screen edges={['top', 'left', 'right', 'bottom']} header={header} scroll={false}>
+        <View style={styles.loading}>
+          <ActivityIndicator color={theme.colors.primary} />
+          <Text variant="body" tone="muted">
+            Chargement du dossier…
+          </Text>
+        </View>
+      </Screen>
     );
   }
 
-  return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={[styles.headerInner, { maxWidth: contentMaxWidth }]}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => safeBack(router)}
-            style={styles.backBtn}
-          >
-            <Icon name="arrow-left" size={18} color="#FFFFFF" />
-          </TouchableOpacity>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.headerTitle} numberOfLines={1}>Décaissement ("Bay Men")</Text>
-            <Text style={styles.headerSub} numberOfLines={1}>{business?.name || 'Carnet SOL'}</Text>
-          </View>
-        </View>
-      </View>
+  const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`;
+  const details: { label: string; value: string }[] = [
+    { label: 'Effectif total du cycle', value: `${plural(allClients.length, 'enfant')} · ${plural(totalCycleHands, 'main')}` },
+    { label: "Mains souscrites par l'adhérent", value: `${plural(memberHandsCount, 'part')} (rangs #${client.payoutRanks || client.payoutRank || 1})` },
+    { label: 'Cotisation par main', value: formatCurrency(unitAmount) },
+    { label: 'Total à percevoir sur le cycle', value: `${formatCurrency(totalPotAmount * memberHandsCount)} (${plural(memberHandsCount, 'tirage')})` },
+  ];
 
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Recipient Profile Card */}
-        <View style={styles.card}>
-          <View style={styles.profileRow}>
-            <View style={[styles.avatar, isFullyReceived && styles.avatarDisabled]}>
-              <Text style={styles.avatarText}>{getInitials(client.fullName)}</Text>
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.clientName}>{client.fullName}</Text>
-              <Text style={styles.clientPhone}>{client.phoneNumber}</Text>
-              <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
-                {memberHandsCount > 1 && (
-                  <View style={styles.multiHandsBadgeHeader}>
-                    <Icon name="crown" size={11} color="#D97706" style={{ marginRight: 4 }} />
-                    <Text style={styles.multiHandsBadgeHeaderText}>{memberHandsCount} MAINS SOUSCRITES</Text>
-                  </View>
-                )}
-                <View style={styles.rankPill}>
-                  <Icon name="crown" size={12} color={SOL_COLORS.info} style={{ marginRight: 4 }} />
-                  <Text style={styles.rankPillText}>
-                    {memberHandsCount > 1 && client.payoutRanks
-                      ? `Rangs : #${client.payoutRanks}`
-                      : `Main #${client.payoutRank || 1}`}
+  return (
+    <Screen
+      edges={['top', 'left', 'right', 'bottom']}
+      header={header}
+      contentStyle={styles.content}
+      footer={
+        isFullyReceived ? undefined : (
+          <Button
+            size="lg"
+            fullWidth
+            icon="payout"
+            loading={isProcessing}
+            disabled={isProcessing}
+            label={isProcessing ? 'Validation en cours…' : `Valider la remise · ${formatCurrency(totalPotAmount)}`}
+            accessibilityHint="Demande votre code PIN gestionnaire"
+            onPress={handleInitiatePayout}
+          />
+        )
+      }
+    >
+      {/* Recipient Profile Card */}
+      <Card>
+        <View style={styles.profileRow}>
+          <Avatar name={client.fullName} size="lg" highlighted={!isFullyReceived} />
+          <View style={styles.flexShrink}>
+            <Text variant="heading" numberOfLines={2}>
+              {client.fullName}
+            </Text>
+            <Text variant="body" tone="muted">
+              {client.phoneNumber}
+            </Text>
+            <View style={styles.pills}>
+              <View style={styles.pill}>
+                <Icon name="payout" size={14} color={theme.colors.primary} />
+                <Text variant="label" tone="primary">
+                  {memberHandsCount > 1 && client.payoutRanks ? `Rangs #${client.payoutRanks}` : `Main #${client.payoutRank || 1}`}
+                </Text>
+              </View>
+              {memberHandsCount > 1 && (
+                <View style={styles.pill}>
+                  <Text variant="label" tone="primary">
+                    {memberHandsCount} mains souscrites
                   </Text>
                 </View>
-              </View>
+              )}
             </View>
           </View>
         </View>
+      </Card>
 
-        {/* Status Alert if Already Fully Received */}
-        {isFullyReceived ? (
-          <View style={styles.blockedAlertCard}>
-            <View style={styles.blockedIconBox}>
-              <Icon name="check" size={24} color="#059669" />
-            </View>
-            <Text style={styles.blockedTitle}>
-              {memberHandsCount > 1 ? `Toutes les mains remises (${memberHandsCount}/${memberHandsCount})` : 'Main Déjà Remise'}
-            </Text>
-            <Text style={styles.blockedSub}>
-              Cet adhérent a déjà perçu l'intégralité de ses mains ({memberHandsCount} main(s)) pour ce cycle de SOL.
-              {client.handReceivedDate ? `\nDernière remise : ${formatDate(client.handReceivedDate)}.` : ''}
-              {'\n\n'}
-              Règle financière SOL : Un adhérent ne peut pas recevoir plus de mains que son quota souscrit.
-            </Text>
+      {/* Status Alert if Already Fully Received */}
+      {isFullyReceived ? (
+        <Card tone="success" style={styles.doneCard}>
+          <View style={styles.doneDisc}>
+            <Icon name="check" size={28} color={theme.colors.success} />
           </View>
-        ) : (
-          <>
-            {/* Pot Breakdown Card */}
-            <View style={styles.card}>
-              <Text style={styles.sectionLabel}>MONTANT DE LA CAGNOTTE DU TIRAGE</Text>
-              <Text
-                style={styles.potAmountDisplay}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-              >
-                {formatCurrency(totalPotAmount)}
-              </Text>
-              <Text style={styles.potBreakdownText}>
-                Base dynamique : {totalCycleHands} mains effectives au cycle × {formatCurrency(unitAmount)} par main
-              </Text>
+          <Text variant="heading" align="center">
+            {memberHandsCount > 1 ? `Toutes les mains remises (${memberHandsCount}/${memberHandsCount})` : 'Main déjà remise'}
+          </Text>
+          <Text variant="body" align="center">
+            Cet adhérent a déjà perçu l'intégralité de ses mains ({memberHandsCount} main(s)) pour ce cycle de SOL.
+            {client.handReceivedDate ? `\nDernière remise : ${formatDate(client.handReceivedDate)}.` : ''}
+          </Text>
+          <Text variant="caption" tone="muted" align="center">
+            Règle SOL : un adhérent ne peut pas recevoir plus de mains que son quota souscrit.
+          </Text>
+        </Card>
+      ) : (
+        <>
+          {/* Pot Breakdown Card */}
+          <Card tone="hero" style={styles.heroCard}>
+            <Text variant="label" tone="onHeroMuted">
+              Montant de la cagnotte du tirage
+            </Text>
+            <AmountText amount={totalPotAmount} size="hero" tone="onHero" />
+            <Text variant="caption" tone="onHeroMuted">
+              {totalCycleHands} mains effectives au cycle × {formatCurrency(unitAmount)} par main
+            </Text>
+          </Card>
 
-              <View style={styles.divider} />
+          <Card style={styles.detailsCard}>
+            {details.map((d) => (
+              <View key={d.label} style={styles.row}>
+                <Text variant="body" tone="muted" style={styles.flexShrink}>
+                  {d.label}
+                </Text>
+                <Text variant="bodyStrong" align="right" style={styles.value}>
+                  {d.value}
+                </Text>
+              </View>
+            ))}
 
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Effectif total du cycle :</Text>
-                <Text style={styles.infoValue}>{allClients.length} enfant{allClients.length > 1 ? 's' : ''} • {totalCycleHands} main{totalCycleHands > 1 ? 's' : ''}</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Mains souscrites par l'adhérent :</Text>
-                <Text style={styles.infoValue}>{memberHandsCount} part{memberHandsCount > 1 ? 's' : ''} (Rangs : #{client.payoutRanks || client.payoutRank || 1})</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Cotisation unitaire par main :</Text>
-                <Text style={styles.infoValue}>{formatCurrency(unitAmount)}</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Montant de CE tirage ("Bay Men") :</Text>
-                <Text style={styles.infoValue}>{formatCurrency(totalPotAmount)}</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Total à percevoir sur le cycle :</Text>
-                <Text style={styles.infoValue}>{formatCurrency(totalPotAmount * memberHandsCount)} ({memberHandsCount} tirage{memberHandsCount > 1 ? 's' : ''})</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Progression des tirages perçus :</Text>
-                <Text style={styles.infoValue}>{currentReceivedHands} / {memberHandsCount} tirage{memberHandsCount > 1 ? 's' : ''} ({memberPayoutProgressPct}%)</Text>
-              </View>
+            <View style={styles.divider} />
 
-              {/* Recipient Payout Progress Bar */}
-              <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFillAmber, { width: `${memberPayoutProgressPct}%` }]} />
+            {/* Recipient Payout Progress */}
+            <View style={styles.progressBlock}>
+              <View style={styles.row}>
+                <Text variant="label">Tirages perçus</Text>
+                <Text variant="amountSmall">
+                  {currentReceivedHands} / {memberHandsCount} · {memberPayoutProgressPct} %
+                </Text>
               </View>
-
-              <View style={[styles.infoRow, { marginTop: 10 }]}>
-                <Text style={styles.infoLabel}>Mains données au total :</Text>
-                <Text style={styles.infoValue}>{totalHandsTouched} / {totalCycleHands} mains ({cycleProgressPct}%)</Text>
-              </View>
-
-              {/* Global Cycle Progress Bar */}
-              <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFillGreen, { width: `${cycleProgressPct}%` }]} />
-              </View>
+              <ProgressBar value={memberPayoutProgressPct / 100} accessibilityLabel={`Tirages perçus : ${memberPayoutProgressPct} %`} />
             </View>
 
-            {/* Justification / Note */}
-            <View style={styles.card}>
-              <Text style={styles.sectionLabel}>JUSTIFICATION / NOTE DE REMISE *</Text>
-              <TextInput
-                style={styles.noteInput}
-                value={payoutNote}
-                onChangeText={setPayoutNote}
-                placeholder="Motif ou référence de la remise..."
-                placeholderTextColor="#94A3B8"
-                multiline
-              />
+            {/* Global Cycle Progress */}
+            <View style={styles.progressBlock}>
+              <View style={styles.row}>
+                <Text variant="label">Mains données au total</Text>
+                <Text variant="amountSmall">
+                  {totalHandsTouched} / {totalCycleHands} · {cycleProgressPct} %
+                </Text>
+              </View>
+              <ProgressBar value={cycleProgressPct / 100} tone="success" accessibilityLabel={`Mains données au total : ${cycleProgressPct} %`} />
             </View>
+          </Card>
 
-            {/* Payout Trigger Button */}
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={handleInitiatePayout}
-              disabled={isProcessing}
-              style={styles.confirmPayoutBtn}
-            >
-              <Icon name="crown" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.confirmPayoutBtnText}>
-                {isProcessing ? 'Validation en cours...' : `Valider la Remise (${formatCurrency(totalPotAmount)})`}
-              </Text>
-            </TouchableOpacity>
-          </>
-        )}
-      </ScrollView>
+          {/* Justification / Note */}
+          <Card>
+            <TextField
+              label="Justification / note de remise *"
+              value={payoutNote}
+              onChangeText={setPayoutNote}
+              placeholder="Motif ou référence de la remise…"
+              multiline
+            />
+          </Card>
+        </>
+      )}
 
       {/* PIN Modal */}
       <PinVerificationModal
@@ -389,241 +378,42 @@ export default function PayoutScreen() {
           });
         }}
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.background,
-  },
-  centerContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.background,
-  },
-  loadingText: {
-    fontSize: 14,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '700',
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: SOL_COLORS.primary,
-    ...SHADOWS.sm,
-  },
-  headerInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    width: '100%',
-    alignSelf: 'center',
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  headerSub: {
-    fontSize: 11,
-    color: '#CBD5E1',
-    fontWeight: '600',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  profileRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarDisabled: {
-    backgroundColor: '#94A3B8',
-  },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  clientName: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  clientPhone: {
-    fontSize: 12,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  multiHandsBadgeHeader: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    alignSelf: 'flex-start',
-    marginTop: 6,
-  },
-  multiHandsBadgeHeaderText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#D97706',
-  },
-  rankPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-    marginTop: 6,
-  },
-  rankPillText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: SOL_COLORS.info,
-  },
-  blockedAlertCard: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 20,
-    padding: 20,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#86EFAC',
-    marginBottom: 16,
-    ...SHADOWS.sm,
-  },
-  blockedIconBox: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#DCFCE7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  blockedTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#15803D',
-    marginBottom: 8,
-  },
-  blockedSub: {
-    fontSize: 13,
-    color: '#166534',
-    textAlign: 'center',
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-  sectionLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: SOL_COLORS.textMuted,
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  potAmountDisplay: {
-    fontSize: 26,
-    fontWeight: '900',
-    color: SOL_COLORS.accent,
-    marginVertical: 4,
-  },
-  potBreakdownText: {
-    fontSize: 12,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: SOL_COLORS.border,
-    marginVertical: 12,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  infoLabel: {
-    fontSize: 12,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  infoValue: {
-    fontSize: 12,
-    color: SOL_COLORS.textPrimary,
-    fontWeight: '800',
-  },
-  noteInput: {
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    padding: 12,
-    fontSize: 13,
-    color: SOL_COLORS.textPrimary,
-    minHeight: 70,
-    textAlignVertical: 'top',
-  },
-  confirmPayoutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.accent,
-    borderRadius: 16,
-    paddingVertical: 15,
-    ...SHADOWS.md,
-  },
-  confirmPayoutBtnText: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 3,
-    marginTop: 4,
-    marginBottom: 6,
-    overflow: 'hidden',
-  },
-  progressBarFillAmber: {
-    height: '100%',
-    backgroundColor: '#D97706',
-    borderRadius: 3,
-  },
-  progressBarFillGreen: {
-    height: '100%',
-    backgroundColor: '#10B981',
-    borderRadius: 3,
-  },
-});
+const createStyles = ({ colors, spacing, radius }: Theme) =>
+  StyleSheet.create({
+    flexShrink: { flex: 1, minWidth: 0 },
+    content: { gap: spacing.md, paddingTop: spacing.lg, paddingBottom: spacing.xl },
+    loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+
+    profileRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    pills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
+    pill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.pill,
+      backgroundColor: colors.primarySoft,
+    },
+
+    doneCard: { alignItems: 'center', gap: spacing.sm },
+    doneDisc: {
+      width: spacing.xxxl + spacing.sm,
+      height: spacing.xxxl + spacing.sm,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+    },
+
+    heroCard: { gap: spacing.xs },
+    detailsCard: { gap: spacing.sm },
+    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
+    value: { flexShrink: 1, minWidth: 0 },
+    divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.xs },
+    progressBlock: { gap: spacing.xs },
+  });

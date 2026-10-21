@@ -1,23 +1,18 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-} from 'react-native';
+import React, { useState, useMemo } from 'react';
+import { View, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
-import { Icon } from '@/components/Icon';
+import { Button, Card, Icon, PinDots, PinPad, Text } from '@/components/ui';
 import { triggerLightImpact, triggerMediumImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 export default function LoginScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { loginWithPin } = useAuth();
   const { isSmallScreen, isVerySmallScreen, horizontalPadding, height } = useResponsive();
@@ -152,187 +147,109 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { maxWidth: 480, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
-        ]}
+        contentContainerStyle={[styles.scrollContent, { paddingHorizontal: horizontalPadding }]}
         showsVerticalScrollIndicator={false}
         bounces={false}
       >
-        {/* Brand Header */}
-        <View style={styles.header}>
-          <View style={styles.logoCircle}>
-            <Icon name="shield" size={26} color="#FFFFFF" />
+        {/* Brand */}
+        <View style={styles.brand}>
+          <View style={styles.logo} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <Text variant="amountLarge" style={styles.logoLetter}>
+              S
+            </Text>
           </View>
-          <Text style={styles.appName}>SOL MOBILE</Text>
-          <Text style={styles.appTagline}>Tontine & Épargne Sécurisée en Haïti</Text>
+          <View style={styles.flagRule} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <View style={styles.flagBlue} />
+            <View style={styles.flagRed} />
+          </View>
+          <Text variant="title" accessibilityRole="header">
+            SOL Mobile
+          </Text>
+          <Text variant="body" tone="muted" align="center">
+            Tontine et épargne sécurisées en Haïti
+          </Text>
         </View>
 
-        {/* Inputs Card */}
-        <View style={styles.inputCard}>
-          {/* Phone Field */}
-          <TouchableOpacity
-            activeOpacity={0.85}
+        {/* Fields */}
+        <Card style={styles.fieldsCard}>
+          <Pressable
             onPress={() => {
               triggerLightImpact();
               setActiveField('PHONE');
             }}
-            style={[
-              styles.fieldContainer,
-              activeField === 'PHONE' && styles.fieldContainerActive,
-            ]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: activeField === 'PHONE' }}
+            accessibilityLabel={`Numéro de téléphone : ${phoneDigits ? formatPhoneDisplay(phoneDigits) : 'vide'}`}
+            style={[styles.field, activeField === 'PHONE' && styles.fieldActive]}
           >
-            <View style={styles.fieldHeaderRow}>
-              <View style={styles.fieldTitleRow}>
-                <Icon
-                  name="phone"
-                  size={14}
-                  color={activeField === 'PHONE' ? SOL_COLORS.primary : SOL_COLORS.textSecondary}
-                  style={{ marginRight: 6 }}
-                />
-                <Text
-                  style={[
-                    styles.fieldLabel,
-                    activeField === 'PHONE' && styles.fieldLabelActive,
-                  ]}
-                >
-                  NUMÉRO DE TÉLÉPHONE
-                </Text>
-              </View>
-              {activeField === 'PHONE' && (
-                <View style={styles.activeBadge}>
-                  <Text style={styles.activeBadgeText}>ACTIF</Text>
-                </View>
-              )}
+            <View style={styles.fieldLabelRow}>
+              <Icon name="phone" size={16} color={activeField === 'PHONE' ? theme.colors.primary : theme.colors.textMuted} />
+              <Text variant="label" tone={activeField === 'PHONE' ? 'primary' : 'muted'}>
+                Numéro de téléphone
+              </Text>
             </View>
-
-            <View style={styles.phoneDisplayRow}>
-              <View style={styles.countryCodeBadge}>
-                <Text style={styles.countryPillFlagText}>HT</Text>
-                <Text style={styles.countryCodeText}>+509</Text>
+            <View style={styles.phoneRow}>
+              <View style={styles.countryChip}>
+                <Text variant="label">+509</Text>
               </View>
-              <View style={styles.phoneNumberBox}>
-                <Text
-                  style={[
-                    styles.phoneNumberText,
-                    !phoneDigits && styles.phoneNumberPlaceholder,
-                  ]}
-                >
-                  {phoneDigits ? formatPhoneDisplay(phoneDigits) : '__ __ __ __'}
-                </Text>
-                {activeField === 'PHONE' && <View style={styles.cursorBlink} />}
-              </View>
+              <Text variant="amountLarge" tone={phoneDigits ? 'default' : 'muted'} numberOfLines={1}>
+                {phoneDigits ? formatPhoneDisplay(phoneDigits) : '__ __ __ __'}
+              </Text>
+              {activeField === 'PHONE' && <View style={styles.cursor} />}
             </View>
-          </TouchableOpacity>
+          </Pressable>
 
-          {/* PIN Field */}
-          <TouchableOpacity
-            activeOpacity={0.85}
+          <Pressable
             onPress={() => {
               triggerLightImpact();
               setActiveField('PIN');
             }}
-            style={[
-              styles.fieldContainer,
-              activeField === 'PIN' && styles.fieldContainerActive,
-              { marginTop: 10 },
-            ]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: activeField === 'PIN' }}
+            accessibilityLabel="Code PIN personnel, 4 chiffres"
+            style={[styles.field, activeField === 'PIN' && styles.fieldActive]}
           >
-            <View style={styles.fieldHeaderRow}>
-              <View style={styles.fieldTitleRow}>
-                <Icon
-                  name="shield"
-                  size={14}
-                  color={activeField === 'PIN' ? SOL_COLORS.primary : SOL_COLORS.textSecondary}
-                  style={{ marginRight: 6 }}
-                />
-                <Text
-                  style={[
-                    styles.fieldLabel,
-                    activeField === 'PIN' && styles.fieldLabelActive,
-                  ]}
-                >
-                  CODE PIN PERSONNEL (4 CHIFFRES)
-                </Text>
-              </View>
-              {activeField === 'PIN' && (
-                <View style={styles.activeBadge}>
-                  <Text style={styles.activeBadgeText}>ACTIF</Text>
-                </View>
-              )}
+            <View style={styles.fieldLabelRow}>
+              <Icon name="lock" size={16} color={activeField === 'PIN' ? theme.colors.primary : theme.colors.textMuted} />
+              <Text variant="label" tone={activeField === 'PIN' ? 'primary' : 'muted'}>
+                Code PIN personnel (4 chiffres)
+              </Text>
             </View>
-
-            <View style={styles.pinDotsContainer}>
-              {[0, 1, 2, 3].map((idx) => {
-                const isFilled = idx < pin.length;
-                return (
-                  <View
-                    key={idx}
-                    style={[
-                      styles.pinDot,
-                      isFilled && styles.pinDotFilled,
-                      activeField === 'PIN' && idx === pin.length && styles.pinDotCurrent,
-                      errorMessage ? styles.pinDotError : null,
-                    ]}
-                  />
-                );
-              })}
+            <View style={styles.pinRow}>
+              <PinDots filled={pin.length} active={activeField === 'PIN'} error={!!errorMessage} size="md" />
             </View>
-
             {isSubmitting && (
               <View style={styles.submittingRow}>
-                <ActivityIndicator size="small" color={SOL_COLORS.primary} style={{ marginRight: 8 }} />
-                <Text style={styles.submittingText}>Vérification du code PIN en cours...</Text>
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+                <Text variant="label" tone="primary">
+                  Vérification du code PIN…
+                </Text>
               </View>
             )}
-          </TouchableOpacity>
+          </Pressable>
 
-          {/* Error Message */}
           {errorMessage && (
-            <View style={styles.errorContainer}>
-              <Icon name="alert" size={14} color={SOL_COLORS.danger} style={{ marginRight: 6 }} />
-              <Text style={styles.errorText}>{errorMessage}</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Numpad Section */}
-        <View style={styles.keypadSection}>
-          <View style={styles.keypadGrid}>
-            {numpadKeys.map((row, rowIndex) => (
-              <View key={`row-${rowIndex}`} style={styles.keypadRow}>
-                {row.map((k) => {
-                  const isAction = k === 'C' || k === '⌫';
-                  return (
-                    <TouchableOpacity
-                      key={k}
-                      activeOpacity={0.6}
-                      disabled={isSubmitting}
-                      onPress={() => {
-                        if (k === 'C') handleClear();
-                        else if (k === '⌫') handleBackspace();
-                        else handleDigit(k);
-                      }}
-                      style={[
-                        styles.keyButton,
-                        isCompactHeight && { height: 42 },
-                        isAction && styles.actionKeyButton,
-                      ]}
-                    >
-                      <Text style={[styles.keyText, isAction && styles.actionKeyText]}>
-                        {k}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+            <Card tone="danger" padding="sm">
+              <View style={styles.errorRow}>
+                <Icon name="alert" size={16} color={theme.colors.danger} />
+                <Text variant="label" tone="danger" style={styles.flexShrink}>
+                  {errorMessage}
+                </Text>
               </View>
-            ))}
-          </View>
+            </Card>
+          )}
+        </Card>
 
-          {/* Submit / Advance Button */}
-          <TouchableOpacity
-            activeOpacity={0.8}
-            disabled={isSubmitting}
+        {/* Keypad + main action (thumb zone) */}
+        <View style={styles.keypadBlock}>
+          <PinPad onDigit={handleDigit} onBackspace={handleBackspace} onClear={handleClear} disabled={isSubmitting} compact={isCompactHeight} />
+          <Button
+            size="lg"
+            fullWidth
+            loading={isSubmitting}
+            icon={activeField === 'PHONE' ? 'arrow-right' : 'lock'}
+            iconPosition={activeField === 'PHONE' ? 'right' : 'left'}
+            label={activeField === 'PHONE' ? 'Continuer vers le code PIN' : 'Se connecter'}
             onPress={() => {
               if (activeField === 'PHONE') {
                 if (phoneDigits.length >= 8) {
@@ -344,302 +261,84 @@ export default function LoginScreen() {
                 executeLogin(fullPhone, pin);
               }
             }}
-            style={[
-              styles.submitButton,
-              isSubmitting && styles.submitButtonDisabled,
-            ]}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <Text style={styles.submitButtonText}>
-                {activeField === 'PHONE' ? 'Continuer vers le code PIN ➔' : 'Se Connecter'}
-              </Text>
-            )}
-          </TouchableOpacity>
+          />
         </View>
 
-        {/* Footer */}
-        <View style={styles.footer}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => router.push('/register' as any)}
-            style={styles.registerLink}
-          >
-            <Text style={styles.registerLinkText}>
-              Nouveau carnet ?{' '}
-              <Text style={styles.registerLinkHighlight}>Inscrire un Gestionnaire</Text>
+        {/* Register link */}
+        <Pressable
+          onPress={() => router.push('/register' as any)}
+          accessibilityRole="link"
+          accessibilityLabel="Nouveau carnet ? Inscrire un gestionnaire"
+          style={({ pressed }) => [styles.registerLink, pressed && styles.pressedLink]}
+        >
+          <Text variant="body" tone="muted" align="center">
+            Nouveau carnet ?{' '}
+            <Text variant="bodyStrong" tone="primary">
+              Inscrire un gestionnaire
             </Text>
-          </TouchableOpacity>
-        </View>
+          </Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.background,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-  },
-  header: {
-    alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  logoCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-    ...SHADOWS.sm,
-  },
-  appName: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    letterSpacing: -0.5,
-  },
-  appTagline: {
-    fontSize: 12,
-    color: SOL_COLORS.textSecondary,
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  inputCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  fieldContainer: {
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    borderColor: SOL_COLORS.border,
-  },
-  fieldContainerActive: {
-    backgroundColor: '#F0FDFA',
-    borderColor: SOL_COLORS.primary,
-  },
-  fieldHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  fieldTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  fieldLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: SOL_COLORS.textSecondary,
-    letterSpacing: 0.3,
-  },
-  fieldLabelActive: {
-    color: SOL_COLORS.primaryDark,
-  },
-  activeBadge: {
-    backgroundColor: SOL_COLORS.primaryLight,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  activeBadgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: SOL_COLORS.primaryDark,
-  },
-  phoneDisplayRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  countryCodeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    marginRight: 8,
-  },
-  countryPillFlagText: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#1D4ED8',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderRadius: 4,
-    marginRight: 4,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  countryCodeText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  phoneNumberBox: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  phoneNumberText: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    letterSpacing: 1.5,
-  },
-  phoneNumberPlaceholder: {
-    color: SOL_COLORS.textMuted,
-    letterSpacing: 2,
-  },
-  cursorBlink: {
-    width: 2,
-    height: 20,
-    backgroundColor: SOL_COLORS.primary,
-    marginLeft: 4,
-  },
-  pinDotsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    paddingVertical: 6,
-  },
-  pinDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: SOL_COLORS.borderStrong,
-    backgroundColor: '#FFFFFF',
-  },
-  pinDotFilled: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primaryDark,
-  },
-  pinDotCurrent: {
-    borderColor: SOL_COLORS.primary,
-    backgroundColor: SOL_COLORS.primaryLight,
-  },
-  pinDotError: {
-    borderColor: SOL_COLORS.danger,
-    backgroundColor: SOL_COLORS.dangerLight,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.dangerLighter,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    marginTop: 10,
-  },
-  errorText: {
-    color: SOL_COLORS.dangerDark,
-    fontSize: 12,
-    fontWeight: '700',
-    flex: 1,
-  },
-  keypadSection: {
-    marginTop: 10,
-  },
-  keypadGrid: {
-    gap: 8,
-  },
-  keypadRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  keyButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...SHADOWS.sm,
-  },
-  actionKeyButton: {
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-  },
-  keyText: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  actionKeyText: {
-    fontSize: 16,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '700',
-  },
-  submitButton: {
-    height: 52,
-    backgroundColor: SOL_COLORS.primary,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 12,
-    ...SHADOWS.sm,
-  },
-  submitButtonDisabled: {
-    backgroundColor: SOL_COLORS.textMuted,
-  },
-  submitButtonText: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
-  },
-  footer: {
-    alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  registerLink: {
-    paddingVertical: 6,
-  },
-  registerLinkText: {
-    fontSize: 13,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  registerLinkHighlight: {
-    color: SOL_COLORS.primaryDark,
-    fontWeight: '800',
-  },
-  submittingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    paddingVertical: 4,
-  },
-  submittingText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: SOL_COLORS.primary,
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    scrollContent: {
+      flexGrow: 1,
+      width: '100%',
+      maxWidth: 480,
+      alignSelf: 'center',
+      justifyContent: 'center',
+      gap: spacing.lg,
+      paddingVertical: spacing.xl,
+    },
+    flexShrink: { flex: 1, minWidth: 0 },
+
+    brand: { alignItems: 'center', gap: spacing.xs },
+    logo: {
+      width: spacing.xxxl + spacing.lg,
+      height: spacing.xxxl + spacing.lg,
+      borderRadius: radius.lg,
+      borderCurve: 'continuous',
+      backgroundColor: brand.haitiBlue,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    logoLetter: { color: brand.white },
+    flagRule: { flexDirection: 'row', width: spacing.xxxl + spacing.lg, height: spacing.xs, marginBottom: spacing.sm, marginTop: spacing.xs },
+    flagBlue: { flex: 1, backgroundColor: brand.haitiBlue },
+    flagRed: { flex: 1, backgroundColor: brand.haitiRed },
+
+    fieldsCard: { gap: spacing.md },
+    field: {
+      gap: spacing.sm,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceAlt,
+    },
+    fieldActive: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.surface },
+    fieldLabelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    phoneRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    countryChip: {
+      minHeight: spacing.xxl + spacing.xs,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    cursor: { width: 2, height: spacing.xl + spacing.xs, backgroundColor: colors.primary },
+    pinRow: { paddingVertical: spacing.xs },
+    submittingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+    errorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+
+    keypadBlock: { gap: spacing.md },
+    registerLink: { minHeight: layout.touchTarget, justifyContent: 'center', borderRadius: radius.md },
+    pressedLink: { backgroundColor: colors.surfacePressed },
+  });

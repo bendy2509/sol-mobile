@@ -1,18 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  Modal,
-  TouchableOpacity,
-  StyleSheet,
-  Animated,
-  ActivityIndicator,
-} from 'react-native';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { View, Modal, Pressable, StyleSheet, Animated, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/AuthContext';
-import { Icon } from '@/components/Icon';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
+import { Card, Icon, PinDots, PinPad, Text } from '@/components/ui';
 import { triggerLightImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 const MAX_ATTEMPTS = 3;
 
@@ -34,6 +27,8 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   onCancel,
   onLockout,
 }) => {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { verifyPin } = useAuth();
   const { isSmallScreen, isTablet, height } = useResponsive();
   const isShortScreen = height < 680;
@@ -141,309 +136,119 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
     ['C', '0', 'DEL'],
   ];
 
+  const insets = useSafeAreaInsets();
+  const compact = isSmallScreen || isShortScreen;
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={isLocked ? undefined : onCancel}
-    >
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={isLocked ? undefined : onCancel}>
       <View style={[styles.overlay, isTablet && styles.overlayTablet]}>
-        <View style={[styles.card, isTablet && styles.cardTablet, (isSmallScreen || isShortScreen) && styles.cardCompact]}>
-          {/* Header */}
-          <View style={[styles.header, (isSmallScreen || isShortScreen) && { marginBottom: 10 }]}>
-            <View style={[styles.iconCircle, (isSmallScreen || isShortScreen) && { width: 44, height: 44, borderRadius: 22 }, isLocked && styles.iconCircleLocked]}>
-              <Icon name={isLocked ? 'alert' : 'shield'} size={(isSmallScreen || isShortScreen) ? 18 : 22} color="#FFFFFF" />
+        <View style={[styles.sheet, isTablet && styles.sheetTablet, !isTablet && { paddingBottom: insets.bottom + theme.spacing.lg }]}>
+          <View style={styles.headerRow}>
+            <View style={[styles.iconCircle, isLocked && styles.iconCircleLocked]}>
+              <Icon name={isLocked ? 'alert' : 'lock'} size={24} color={isLocked ? theme.colors.danger : theme.colors.primary} />
             </View>
-            <TouchableOpacity
+            <View style={styles.flexShrink}>
+              <Text variant="heading" accessibilityRole="header">
+                {isLocked ? 'Accès verrouillé' : title}
+              </Text>
+              <Text variant={compact ? 'caption' : 'body'} tone="muted">
+                {isLocked ? 'Trop de tentatives incorrectes. Cette opération a été annulée par sécurité.' : subtitle}
+              </Text>
+            </View>
+            <Pressable
               onPress={isLocked ? undefined : onCancel}
-              style={[styles.closeBtn, (isSmallScreen || isShortScreen) && { width: 38, height: 38, borderRadius: 19 }]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityLabel="Fermer"
               disabled={isLocked}
+              accessibilityRole="button"
+              accessibilityLabel="Fermer"
+              style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
             >
-              <Icon name="close" size={16} color={isLocked ? SOL_COLORS.border : SOL_COLORS.textSecondary} />
-            </TouchableOpacity>
+              <Icon name="close" size={22} color={isLocked ? theme.colors.borderStrong : theme.colors.textMuted} />
+            </Pressable>
           </View>
 
-          <Text style={[styles.title, (isSmallScreen || isShortScreen) && { fontSize: 16 }]}>{isLocked ? 'Accès Verrouillé' : title}</Text>
-          <Text style={[styles.subtitle, (isSmallScreen || isShortScreen) && { marginBottom: 14, fontSize: 12 }]}>
-            {isLocked
-              ? 'Trop de tentatives incorrectes. Cette opération a été annulée par sécurité.'
-              : subtitle}
-          </Text>
-
-          {/* Indicateur visuel des tentatives (s'affiche dès la 1ère erreur) */}
           {failureCount > 0 && (
-            <View style={[styles.attemptsRow, (isSmallScreen || isShortScreen) && { marginBottom: 8 }]}>
+            <View style={styles.attemptsRow} accessible accessibilityLabel={`${failureCount} tentative(s) incorrecte(s) sur ${MAX_ATTEMPTS}`}>
               {[1, 2, 3].map((n) => (
-                <View
-                  key={n}
-                  style={[
-                    styles.attemptDot,
-                    n <= failureCount ? styles.attemptDotFailed : styles.attemptDotEmpty,
-                  ]}
-                />
+                <View key={n} style={[styles.attemptDot, n <= failureCount && styles.attemptDotFailed]} />
               ))}
             </View>
           )}
 
-          {/* 4 Dots PIN Display with Shake Animation — masqué si verrouillé */}
           {!isLocked && (
-            <Animated.View
-              style={[styles.dotsRow, (isSmallScreen || isShortScreen) && { marginBottom: 12, gap: 12 }, { transform: [{ translateX: shakeAnim }] }]}
-            >
-              {[0, 1, 2, 3].map((index) => {
-                const isFilled = index < pin.length;
-                return (
-                  <View
-                    key={index}
-                    style={[
-                      styles.dot,
-                      (isSmallScreen || isShortScreen) && { width: 16, height: 16, borderRadius: 8 },
-                      isFilled && styles.dotFilled,
-                      errorMessage ? styles.dotError : null,
-                    ]}
-                  />
-                );
-              })}
+            <Animated.View style={[styles.dotsBox, { transform: [{ translateX: shakeAnim }] }]}>
+              <PinDots filled={pin.length} active={!isVerifying} error={!!errorMessage} size={compact ? 'md' : 'lg'} />
             </Animated.View>
           )}
 
           {isVerifying && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-              <ActivityIndicator size="small" color={SOL_COLORS.primary} style={{ marginRight: 6 }} />
-              <Text style={{ fontSize: 12, fontWeight: '700', color: SOL_COLORS.primary }}>Vérification...</Text>
+            <View style={styles.verifyingRow}>
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+              <Text variant="label" tone="primary">
+                Vérification…
+              </Text>
             </View>
           )}
 
           {errorMessage && (
-            <View style={[styles.errorContainer, (isSmallScreen || isShortScreen) && { marginBottom: 10, paddingVertical: 8 }, isLocked && styles.errorContainerLocked]}>
-              <Icon name="alert" size={14} color={isLocked ? '#991B1B' : SOL_COLORS.danger} style={{ marginRight: 6 }} />
-              <Text style={[styles.errorText, isLocked && styles.errorTextLocked]}>{errorMessage}</Text>
-            </View>
+            <Card tone="danger" padding="sm">
+              <View style={styles.errorRow}>
+                <Icon name="alert" size={16} color={theme.colors.danger} />
+                <Text variant="label" tone="danger" style={styles.flexShrink}>
+                  {errorMessage}
+                </Text>
+              </View>
+            </Card>
           )}
 
-          {/* Keypad — opacité réduite si verrouillé */}
-          <View style={[styles.keypad, (isSmallScreen || isShortScreen) && { gap: 8 }, (isLocked || isVerifying) && styles.keypadLocked]}>
-            {numpadKeys.map((row, rIdx) => (
-              <View key={rIdx} style={[styles.keypadRow, (isSmallScreen || isShortScreen) && { gap: 8 }]}>
-                {row.map((key) => {
-                  const isAction = key === 'C' || key === 'DEL';
-                  return (
-                    <TouchableOpacity
-                      key={key}
-                      activeOpacity={(isLocked || isVerifying) ? 1 : 0.65}
-                      onPress={() => {
-                        if (key === 'C') handleClear();
-                        else if (key === 'DEL') handleBackspace();
-                        else handleDigit(key);
-                      }}
-                      style={[
-                        styles.keyBtn,
-                        (isSmallScreen || isShortScreen) && { height: 50, borderRadius: 14 },
-                        isAction && styles.keyBtnAction,
-                      ]}
-                      accessibilityLabel={key === 'DEL' ? 'Supprimer' : key === 'C' ? 'Effacer' : key}
-                      disabled={isLocked || isVerifying}
-                    >
-                      {key === 'DEL' ? (
-                        <Icon name="arrow-left" size={(isSmallScreen || isShortScreen) ? 18 : 20} color={SOL_COLORS.textSecondary} />
-                      ) : key === 'C' ? (
-                        <Text style={[styles.keyText, styles.keyTextAction, (isSmallScreen || isShortScreen) && { fontSize: 15 }]}>C</Text>
-                      ) : (
-                        <Text style={[styles.keyText, (isSmallScreen || isShortScreen) && { fontSize: 20 }]}>{key}</Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            ))}
-          </View>
-
+          <PinPad onDigit={handleDigit} onBackspace={handleBackspace} onClear={handleClear} disabled={isLocked || isVerifying} compact={compact} />
         </View>
       </View>
     </Modal>
   );
 };
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.82)',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  overlayTablet: {
-    justifyContent: 'center',
-    padding: 24,
-  },
-  card: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    paddingHorizontal: 24,
-    paddingTop: 28,
-    paddingBottom: 40,
-    alignItems: 'center',
-    ...SHADOWS.lg,
-  },
-  cardTablet: {
-    maxWidth: 440,
-    borderRadius: 28,
-  },
-  cardCompact: {
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 24,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-  },
-  header: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  iconCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...SHADOWS.sm,
-  },
-  closeBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    textAlign: 'center',
-    letterSpacing: -0.3,
-  },
-  subtitle: {
-    fontSize: 13,
-    color: SOL_COLORS.textSecondary,
-    textAlign: 'center',
-    marginTop: 6,
-    marginBottom: 26,
-    lineHeight: 19,
-    paddingHorizontal: 8,
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    gap: 18,
-    marginBottom: 18,
-  },
-  dot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: SOL_COLORS.borderStrong,
-    backgroundColor: '#FFFFFF',
-  },
-  dotFilled: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primaryDark,
-  },
-  dotError: {
-    borderColor: SOL_COLORS.danger,
-    backgroundColor: SOL_COLORS.dangerLight,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.dangerLighter,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.dangerLight,
-  },
-  errorText: {
-    color: SOL_COLORS.dangerDark,
-    fontSize: 12,
-    fontWeight: '700',
-    flex: 1,
-  },
-  errorContainerLocked: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-    marginTop: 8,
-  },
-  errorTextLocked: {
-    color: '#991B1B',
-  },
-  iconCircleLocked: {
-    backgroundColor: SOL_COLORS.danger,
-  },
-  attemptsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  attemptDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  attemptDotFailed: {
-    backgroundColor: SOL_COLORS.danger,
-  },
-  attemptDotEmpty: {
-    backgroundColor: SOL_COLORS.border,
-    borderWidth: 1.5,
-    borderColor: SOL_COLORS.borderStrong,
-  },
-  keypadLocked: {
-    opacity: 0.3,
-  },
-  keypad: {
-    width: '100%',
-    gap: 12,
-    marginTop: 6,
-  },
-  keypadRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  keyBtn: {
-    flex: 1,
-    height: 62,
-    borderRadius: 18,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  keyBtnAction: {
-    backgroundColor: '#FFFFFF',
-    borderColor: SOL_COLORS.borderStrong,
-  },
-  keyText: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  keyTextAction: {
-    fontSize: 17,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '700',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+  StyleSheet.create({
+    flexShrink: { flex: 1, minWidth: 0 },
+    pressed: { backgroundColor: colors.surfacePressed },
 
+    overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay },
+    overlayTablet: { justifyContent: 'center', alignItems: 'center', padding: layout.gutter },
+    sheet: {
+      width: '100%',
+      gap: spacing.lg,
+      paddingTop: spacing.xl,
+      paddingHorizontal: layout.gutter,
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.lg,
+      borderTopRightRadius: radius.lg,
+    },
+    sheetTablet: { maxWidth: 440, borderRadius: radius.lg, padding: spacing.xl },
+
+    headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+    iconCircle: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primarySoft,
+    },
+    iconCircleLocked: { backgroundColor: colors.dangerSoft },
+    closeBtn: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      marginTop: -spacing.sm,
+      marginRight: -spacing.sm,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    attemptsRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.sm },
+    attemptDot: { width: spacing.md, height: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt },
+    attemptDotFailed: { backgroundColor: colors.danger },
+    dotsBox: { paddingVertical: spacing.sm },
+    verifyingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+    errorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  });

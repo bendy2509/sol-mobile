@@ -1,38 +1,58 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  Modal,
-  TextInput,
-  Linking,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Pressable, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getClientById, updateClientDetails, deleteClient, getAllClients } from '@/db/clientRepository';
 import { getTransactionsByClient, reverseTransaction } from '@/db/transactionRepository';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { payoutMemberHand } from '@/db/memberRepository';
 import { useAuth } from '@/context/AuthContext';
-import { Badge } from '@/components/Badge';
-import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { ClosedCycleLockNotice } from '@/components/ClosedCycleLockNotice';
+import {
+  AmountText,
+  Avatar,
+  Button,
+  Card,
+  Dialog,
+  EmptyState,
+  Icon,
+  ListItem,
+  MetricTile,
+  ProgressBar,
+  Screen,
+  SectionHeader,
+  StatusBadge,
+  Text,
+  TextField,
+  UiIconName,
+} from '@/components/ui';
 import { BusinessConfig, Client, Transaction } from '@/types';
-import { formatCurrency, formatDate, formatDateShort, getInitials } from '@/lib/formatters';
+import { formatCurrency, formatDate, formatDateShort } from '@/lib/formatters';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { recordAuditLog } from '@/services/auditService';
-import { calculateCycleContributionLimits, calculateCycleTotalHands } from '@/services/financialService';
+import {
+  calculateCycleContributionLimits,
+  calculateCycleTotalHands,
+  isTransactionFromClosedCycle,
+} from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
+
+/** Display label of a ledger entry (presentation only). */
+function getTxTypeLabel(tx: Transaction): string {
+  if (tx.type === 'REVERSAL' || tx.isReversed) return 'Annulation';
+  if (tx.type === 'SABOTAY_DEPOSIT') return 'Dépôt Sabotay';
+  if (tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION') return 'Cotisation Sol';
+  return 'Remise de la main (bay men)';
+}
 
 export default function ClientDetailScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { activeCollector, userRole, getAdminProfile } = useAuth();
@@ -54,6 +74,7 @@ export default function ClientDetailScreen() {
   const [isReversalModalOpen, setIsReversalModalOpen] = useState(false);
   const [selectedTxForReversal, setSelectedTxForReversal] = useState<Transaction | null>(null);
   const [reversalReason, setReversalReason] = useState('');
+  const [cycleBoundary, setCycleBoundary] = useState<string | null>(null);
   const [editFullName, setEditFullName] = useState('');
   const [editPhoneNumber, setEditPhoneNumber] = useState('');
   const [editRank, setEditRank] = useState('');
@@ -69,13 +90,15 @@ export default function ClientDetailScreen() {
 
   const loadClientData = async () => {
     if (!id) return;
-    const [data, txs, activeBiz, clientList] = await Promise.all([
+    const [data, txs, activeBiz, clientList, boundary] = await Promise.all([
       getClientById(id),
       getTransactionsByClient(id),
       getActiveBusinessConfig(),
       getAllClients(),
+      getCurrentCycleBoundary(),
     ]);
     setClient(data);
+    setCycleBoundary(boundary);
     setTransactions(txs);
     setBusiness(activeBiz);
     setAllClients(clientList);
@@ -531,8 +554,11 @@ Reçu archivé avec succès sur SOL Mobile.`;
     });
   };
 
+  const isSelectedTxLocked =
+    !isAdmin && !!selectedTx && isTransactionFromClosedCycle(selectedTx.createdAtLocal, cycleBoundary);
+
   const handleInitiateCancel = () => {
-    if (!selectedTx) return;
+    if (!selectedTx || isSelectedTxLocked) return;
     setIsDetailModalOpen(false);
     setSelectedTxForReversal(selectedTx);
     setReversalReason('');
@@ -573,716 +599,470 @@ Reçu archivé avec succès sur SOL Mobile.`;
 
   if (!client) {
     return (
-      <SafeAreaView style={styles.centerContainer}>
-        <Text style={styles.loadingText}>Chargement du dossier adhérent...</Text>
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text variant="bodyStrong">Chargement du dossier adhérent…</Text>
+        </View>
+      </Screen>
     );
   }
 
+  const isMulti = memberHandsCount > 1;
+  const detailRows: { label: string; value: string; tone?: 'success' | 'primary' }[] = [
+    { label: 'Effectif du sol', value: `${allClients.length} enfant${allClients.length > 1 ? 's' : ''} · ${totalCycleHands} main${totalCycleHands > 1 ? 's' : ''}` },
+    { label: 'Montant par main', value: formatCurrency(unitAmount) },
+    { label: "Cagnotte d'un tirage", value: `${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)})`, tone: 'success' },
+    { label: 'Total à cotiser sur le cycle', value: `${formatCurrency(limits.maxPotAmount)} (${limits.maxAllowedHands} cotisations)` },
+    {
+      label: 'Total à recevoir',
+      value: `${formatCurrency(totalPotAmount * memberHandsCount)} (${memberHandsCount} tirage${memberHandsCount > 1 ? 's' : ''})`,
+      tone: 'success',
+    },
+  ];
+
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingHorizontal: horizontalPadding },
-          isTablet && styles.scrollContentTablet,
-        ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Profile Identity Card */}
-        <View style={styles.profileCard}>
-          <View style={styles.profileTop}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{getInitials(client.fullName)}</Text>
-            </View>
-
-            <View style={styles.profileInfo}>
-              <Text style={styles.fullName}>{client.fullName}</Text>
-              <Text style={styles.phoneNumber}>{client.phoneNumber}</Text>
-              <View style={styles.badgesRow}>
-                <Badge type={client.type} />
-                {client.handsCount && client.handsCount > 1 ? (
-                  <View style={styles.multiHandsBadgeHeader}>
-                    <Icon name="crown" size={11} color="#D97706" style={{ marginRight: 4 }} />
-                    <Text style={styles.multiHandsBadgeHeaderText}>{client.handsCount} MAINS</Text>
-                  </View>
-                ) : client.payoutRank ? (
-                  <View style={styles.rankBadge}>
-                    <Icon name="crown" size={11} color={SOL_COLORS.info} style={{ marginRight: 3 }} />
-                    <Text style={styles.rankBadgeText}>Main #{client.payoutRank}</Text>
-                  </View>
-                ) : null}
-                {isFullyReceived ? (
-                  <View style={styles.handReceivedBadge}>
-                    <Icon name="check" size={11} color={SOL_COLORS.successDark} style={{ marginRight: 4 }} />
-                    <Text style={styles.handReceivedBadgeText}>
-                      {memberHandsCount > 1 ? `TOUTES MAINS REÇUES (${memberHandsCount}/${memberHandsCount})` : 'MAIN REÇUE'}
-                    </Text>
-                  </View>
-                ) : memberHandsCount > 1 && currentReceivedHands > 0 ? (
-                  <View style={styles.handPartialBadgeHeader}>
-                    <Icon name="check" size={11} color="#0369A1" style={{ marginRight: 4 }} />
-                    <Text style={styles.handPartialBadgeHeaderText}>
-                      {currentReceivedHands}/{memberHandsCount} MAINS PERÇUES
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.handPendingBadge}>
-                    <Icon name="clock" size={11} color={SOL_COLORS.accent} style={{ marginRight: 4 }} />
-                    <Text style={styles.handPendingBadgeText}>EN ATTENTE</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          </View>
-
-          {/* Timeline & Coverage details */}
-          <View style={styles.coverageRow}>
-            <View style={styles.coverageItem}>
-              <Text style={styles.coverageLabel}>COUVERT JUSQU'AU</Text>
-              <Text style={styles.coverageValue}>{formatDateShort(client.paidUntilDate || 'En attente')}</Text>
-            </View>
-            <View style={styles.coverageDivider} />
-            <View style={styles.coverageItem}>
-              <Text style={styles.coverageLabel}>TOTAL MAINS PAYÉES</Text>
-              <Text style={styles.coverageValueGreen}>{client.paidHandsCount || 0} / {maxAllowedHands} main(s)</Text>
-            </View>
-          </View>
-
-          {/* Cotisation Progress Bar */}
-          <View style={styles.clientProgressBarSection}>
-            <View style={styles.clientProgressBarLabelRow}>
-              <Text style={styles.clientProgressBarLabel}>Progression des cotisations ({memberContributionProgressPct}%)</Text>
-              <Text style={styles.clientProgressBarCount}>{client.paidHandsCount || 0}/{maxAllowedHands} dues</Text>
-            </View>
-            <View style={styles.clientProgressBarBg}>
-              <View style={[styles.clientProgressBarFill, { width: `${memberContributionProgressPct}%` }]} />
-            </View>
-          </View>
-
-          {/* Quick Metrics based on effective cycle hands count */}
-          <View style={styles.metricsRow}>
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>TOTAL COTISÉ</Text>
-              <Text style={styles.metricValue}>
-                {formatCurrency(client.totalPaidAmount || client.currentBalance)}
-              </Text>
-              <Text style={styles.metricSubHint}>
-                {client.paidHandsCount || 0} / {maxAllowedHands} main(s) dues
-              </Text>
-            </View>
-            <View style={styles.metricItem}>
-              <Text style={styles.metricLabel}>RESTE À VERSER</Text>
-              <Text style={remainingHands === 0 ? styles.metricValueGreen : styles.metricValueOrange}>
-                {remainingHands === 0 ? 'Complété' : formatCurrency(remainingAmount)}
-              </Text>
-              <Text style={styles.metricSubHint}>
-                {remainingHands === 0 ? 'Toutes mains réglées' : `${remainingHands} main(s) restante(s)`}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Multi-Hands Detailed Financial Specs Card */}
-        <View style={styles.multiHandsSpecCard}>
-          <View style={styles.multiHandsSpecHeader}>
-            <Icon name="crown" size={15} color="#D97706" style={{ marginRight: 6 }} />
-            <Text style={styles.multiHandsSpecTitle}>
-              {memberHandsCount > 1
-                ? `RÉCAPITULATIF FINANCIER (${memberHandsCount} MAINS SOUSCRITES)`
-                : 'DÉTAILS DU CYCLE SOL'}
-            </Text>
-          </View>
-
-          <View style={styles.multiHandsSpecGrid}>
-            <View style={styles.multiHandsSpecRow}>
-              <Text style={styles.multiHandsSpecLabel}>Effectif du SOL :</Text>
-              <Text style={styles.multiHandsSpecValueBold}>
-                {allClients.length} enfant{allClients.length > 1 ? 's' : ''} • {totalCycleHands} main{totalCycleHands > 1 ? 's' : ''} au total
-              </Text>
-            </View>
-            <View style={styles.multiHandsSpecRow}>
-              <Text style={styles.multiHandsSpecLabel}>Montant unitaire par main :</Text>
-              <Text style={styles.multiHandsSpecValueBold}>
-                {formatCurrency(unitAmount)}
-              </Text>
-            </View>
-            <View style={styles.multiHandsSpecRow}>
-              <Text style={styles.multiHandsSpecLabel}>Cagnotte d'un tirage :</Text>
-              <Text style={styles.multiHandsSpecValueGreen}>
-                {formatCurrency(totalPotAmount)} ({totalCycleHands} mains × {formatCurrency(unitAmount)})
-              </Text>
-            </View>
-            <View style={styles.multiHandsSpecRow}>
-              <Text style={styles.multiHandsSpecLabel}>Total à cotiser sur le cycle :</Text>
-              <Text style={styles.multiHandsSpecValueBold}>
-                {formatCurrency(limits.maxPotAmount)} ({limits.maxAllowedHands} cotisations de {formatCurrency(unitAmount)})
-              </Text>
-            </View>
-            <View style={styles.multiHandsSpecRow}>
-              <Text style={styles.multiHandsSpecLabel}>Total à recevoir en tirages :</Text>
-              <Text style={styles.multiHandsSpecValueGreen}>
-                {formatCurrency(totalPotAmount * memberHandsCount)} ({memberHandsCount} tirage{memberHandsCount > 1 ? 's' : ''} de {formatCurrency(totalPotAmount)})
-              </Text>
-            </View>
-            <View style={styles.multiHandsSpecRow}>
-              <Text style={styles.multiHandsSpecLabel}>Tirages déjà perçus :</Text>
-              <Text style={isFullyReceived ? styles.multiHandsSpecValueGreen : styles.multiHandsSpecValuePrimary}>
-                {currentReceivedHands} / {memberHandsCount} main{memberHandsCount > 1 ? 's' : ''} remise{memberHandsCount > 1 ? 's' : ''} ({memberPayoutProgressPct}%)
-              </Text>
-            </View>
-
-            {/* Member Payout Progress Bar */}
-            <View style={styles.specProgressBarContainer}>
-              <View style={styles.specProgressBarBg}>
-                <View
-                  style={[
-                    styles.specProgressBarFillAmber,
-                    { width: `${memberPayoutProgressPct}%` },
-                  ]}
-                />
-              </View>
-            </View>
-
-            <View style={[styles.multiHandsSpecRow, { marginTop: 10 }]}>
-              <Text style={styles.multiHandsSpecLabel}>Mains données au total :</Text>
-              <Text style={styles.multiHandsSpecValueBold}>
-                {effectiveTotalHandsTouched} / {totalCycleHands} mains ({cycleProgressPct}%)
-              </Text>
-            </View>
-
-            {/* Global Cycle Progress Bar */}
-            <View style={styles.specProgressBarContainer}>
-              <View style={styles.specProgressBarBg}>
-                <View
-                  style={[
-                    styles.specProgressBarFillGreen,
-                    { width: `${cycleProgressPct}%` },
-                  ]}
-                />
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Action Button: Bay Men */}
-        {isFullyReceived ? (
-          <View style={[styles.payoutButton, styles.payoutButtonDisabled]}>
-            <View style={styles.payoutBtnLeft}>
-              <View style={[styles.payoutIconCircle, styles.payoutIconCircleDisabled]}>
-                <Icon name="check" size={18} color="#059669" />
-              </View>
-              <View style={{ marginLeft: 12, flex: 1 }}>
-                <Text style={styles.payoutBtnTitleDisabled}>
-                  {memberHandsCount > 1 ? `Toutes les mains remises (${memberHandsCount}/${memberHandsCount})` : 'Main déjà remise'}
-                </Text>
-                <Text style={styles.payoutBtnSubDisabled}>
-                  Cagnotte perçue {client.handReceivedDate ? `le ${formatDate(client.handReceivedDate)}` : 'pour ce cycle'} ({formatCurrency(totalPotAmount)})
-                </Text>
-              </View>
-            </View>
-            <View style={styles.completedBadgePill}>
-              <Text style={styles.completedBadgePillText}>RÉGLÉ</Text>
-            </View>
-          </View>
-        ) : (
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={handleInitiatePayout}
-            style={styles.payoutButton}
-          >
-            <View style={styles.payoutBtnLeft}>
-              <View style={styles.payoutIconCircle}>
-                <Icon name="crown" size={18} color="#FFFFFF" />
-              </View>
-              <View style={{ marginLeft: 12 }}>
-                <Text style={styles.payoutBtnTitle}>
-                  {memberHandsCount > 1
-                    ? `Donner la Main ("Bay Men") (${currentReceivedHands + 1}/${memberHandsCount})`
-                    : 'Donner la Main ("Bay Men")'}
-                </Text>
-                <Text style={styles.payoutBtnSub}>
-                  Cagnotte : {formatCurrency(totalPotAmount)} ({totalCycleHands} mains effectives au cycle)
-                </Text>
-              </View>
-            </View>
-            <Icon name="arrow-right" size={16} color="#FFFFFF" />
-          </TouchableOpacity>
-        )}
-
-        {/* Primary Action Buttons Grid */}
-        <View style={[styles.actionRow, isSmallScreen && { gap: isVerySmallScreen ? 4 : 6 }]}>
-          <TouchableOpacity
-            activeOpacity={0.8}
+    <Screen
+      footer={
+        !isReadOnly ? (
+          <Button
+            size="lg"
+            fullWidth
+            icon="cash"
+            label="Encaisser une cotisation"
             onPress={() => {
               triggerLightImpact();
               router.navigate({ pathname: '/(tabs)/collect', params: { clientId: client.id } } as any);
             }}
-            style={[styles.actionBtnPrimary, isSmallScreen && { paddingVertical: 10, paddingHorizontal: 6 }]}
-          >
-            <Icon name="collect" size={isSmallScreen ? 14 : 16} color="#FFFFFF" style={{ marginRight: 4 }} />
-            <Text style={[styles.actionBtnPrimaryText, isSmallScreen && { fontSize: isVerySmallScreen ? 11 : 12 }]} numberOfLines={1} adjustsFontSizeToFit>Encaisser</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleOpenEditModal}
-            style={[styles.actionBtnSecondary, isSmallScreen && { paddingVertical: 10, paddingHorizontal: 6 }]}
-          >
-            <Text style={[styles.actionBtnSecondaryText, isSmallScreen && { fontSize: isVerySmallScreen ? 10.5 : 11.5 }]} numberOfLines={1} adjustsFontSizeToFit>Modifier</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handlePrintOrShare}
-            style={[styles.actionBtnSecondary, isSmallScreen && { paddingVertical: 10, paddingHorizontal: 6 }]}
-          >
-            <Icon name="print" size={isSmallScreen ? 13 : 15} color={SOL_COLORS.textPrimary} style={{ marginRight: 3 }} />
-            <Text style={[styles.actionBtnSecondaryText, isSmallScreen && { fontSize: isVerySmallScreen ? 10.5 : 11.5 }]} numberOfLines={1} adjustsFontSizeToFit>Reçu</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleDeleteClient}
-            style={[styles.actionBtnDanger, isSmallScreen && { width: isVerySmallScreen ? 34 : 38 }]}
-          >
-            <Icon name="close" size={14} color={SOL_COLORS.danger} />
-          </TouchableOpacity>
+          />
+        ) : undefined
+      }
+    >
+      {/* Identity & contributions */}
+      <Card style={styles.cardGap}>
+        <View style={styles.identityRow}>
+          <Avatar name={client.fullName} size="lg" />
+          <View style={styles.flexShrink}>
+            <Text variant="title" numberOfLines={2} selectable>
+              {client.fullName}
+            </Text>
+            <Text variant="body" tone="muted" selectable>
+              {client.phoneNumber}
+            </Text>
+          </View>
         </View>
 
-        {/* Individual Passbook Ledger */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            HISTORIQUE DES COTISATIONS ({transactions.length})
+        <View style={styles.chipsRow}>
+          <View style={styles.infoChip}>
+            <Icon name="payout" size={14} color={theme.colors.textMuted} />
+            <Text variant="label" tone="muted">
+              {isMulti ? `${memberHandsCount} mains · rangs ${client.payoutRanks || client.payoutRank}` : `Main #${client.payoutRank || 1}`}
+            </Text>
+          </View>
+          <View style={styles.infoChip}>
+            <Text variant="label" tone="muted">
+              {client.type === 'SABOTAY' ? 'Sabotay' : client.type === 'SOL' ? 'Sol' : client.type}
+            </Text>
+          </View>
+          {isFullyReceived ? (
+            <StatusBadge status="HAND_RECEIVED" label={isMulti ? `Toutes les mains reçues (${memberHandsCount}/${memberHandsCount})` : 'Main reçue'} />
+          ) : isMulti && currentReceivedHands > 0 ? (
+            <StatusBadge status="HAND_RECEIVED" label={`${currentReceivedHands}/${memberHandsCount} mains reçues`} />
+          ) : (
+            <View style={styles.infoChip}>
+              <Icon name="clock" size={14} color={theme.colors.textMuted} />
+              <Text variant="label" tone="muted">
+                Main à venir
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.metricsRow}>
+          <MetricTile label="Total cotisé" icon="cash">
+            <AmountText amount={client.totalPaidAmount || client.currentBalance} size="medium" />
+          </MetricTile>
+          <MetricTile label="Reste à verser" tone={remainingHands === 0 ? 'success' : 'warning'} hint={remainingHands === 0 ? 'Toutes mains réglées' : `${remainingHands} main(s)`}>
+            {remainingHands === 0 ? (
+              <Text variant="amount" tone="success">
+                Complété
+              </Text>
+            ) : (
+              <AmountText amount={remainingAmount} size="medium" tone="warning" />
+            )}
+          </MetricTile>
+        </View>
+
+        <View style={styles.progressBlock}>
+          <View style={styles.rowBetween}>
+            <Text variant="label">
+              Cotisations : {client.paidHandsCount || 0} / {maxAllowedHands} mains
+            </Text>
+            <Text variant="label" tone="muted">
+              {memberContributionProgressPct} %
+            </Text>
+          </View>
+          <ProgressBar value={memberContributionProgressPct / 100} accessibilityLabel="Progression des cotisations" />
+          <View style={styles.coverageRow}>
+            <Icon name="calendar" size={16} color={theme.colors.textMuted} />
+            <Text variant="caption" tone="muted">
+              Couvert jusqu'au{' '}
+            </Text>
+            <Text variant="label">{client.paidUntilDate ? formatDateShort(client.paidUntilDate) : 'en attente'}</Text>
+          </View>
+        </View>
+      </Card>
+
+      {/* Payout ("bay men") */}
+      {isFullyReceived ? (
+        <Card tone="success">
+          <View style={styles.noticeRow}>
+            <Icon name="check" size={22} color={theme.colors.success} strokeWidth={2.5} />
+            <View style={styles.flexShrink}>
+              <Text variant="subheading" tone="success">
+                {isMulti ? `Toutes les mains remises (${memberHandsCount}/${memberHandsCount})` : 'Main déjà remise'}
+              </Text>
+              <Text variant="body" tone="success">
+                Cagnotte perçue {client.handReceivedDate ? `le ${formatDate(client.handReceivedDate)}` : 'pour ce cycle'} ({formatCurrency(totalPotAmount)})
+              </Text>
+            </View>
+          </View>
+        </Card>
+      ) : !isReadOnly ? (
+        <Card style={styles.cardGap}>
+          <View style={styles.rowBetween}>
+            <Text variant="subheading">Remise de la main</Text>
+            <AmountText amount={totalPotAmount} size="small" />
+          </View>
+          <Text variant="caption" tone="muted">
+            {totalCycleHands} mains effectives au cycle × {formatCurrency(unitAmount)}
+          </Text>
+          <Button
+            icon="payout"
+            fullWidth
+            variant={isOutOfOrder ? 'secondary' : 'primary'}
+            label={isMulti ? `Remettre la main (${currentReceivedHands + 1}/${memberHandsCount})` : 'Remettre la main'}
+            onPress={handleInitiatePayout}
+          />
+        </Card>
+      ) : null}
+
+      {/* Cycle details */}
+      <Card style={styles.cardGap}>
+        <Text variant="subheading" accessibilityRole="header">
+          {isMulti ? `Récapitulatif · ${memberHandsCount} mains souscrites` : 'Détails du cycle'}
+        </Text>
+        {detailRows.map((row) => (
+          <View key={row.label} style={styles.detailRow}>
+            <Text variant="caption" tone="muted" style={styles.detailLabel}>
+              {row.label}
+            </Text>
+            <Text variant="label" tone={row.tone === 'success' ? 'success' : 'default'} style={styles.detailValue}>
+              {row.value}
+            </Text>
+          </View>
+        ))}
+        <View style={styles.progressBlock}>
+          <View style={styles.rowBetween}>
+            <Text variant="caption" tone="muted">
+              Tirages perçus
+            </Text>
+            <Text variant="label" tone={isFullyReceived ? 'success' : 'primary'}>
+              {currentReceivedHands} / {memberHandsCount} ({memberPayoutProgressPct} %)
+            </Text>
+          </View>
+          <ProgressBar value={memberPayoutProgressPct / 100} tone="success" accessibilityLabel="Tirages perçus" />
+        </View>
+        <View style={styles.progressBlock}>
+          <View style={styles.rowBetween}>
+            <Text variant="caption" tone="muted">
+              Mains données dans le sol
+            </Text>
+            <Text variant="label">
+              {effectiveTotalHandsTouched} / {totalCycleHands} ({cycleProgressPct} %)
+            </Text>
+          </View>
+          <ProgressBar value={cycleProgressPct / 100} accessibilityLabel="Mains données dans le sol" />
+        </View>
+      </Card>
+
+      {/* Secondary actions */}
+      <View style={styles.actionsRow}>
+        <Button label="Modifier" icon="edit" variant="secondary" onPress={handleOpenEditModal} style={styles.flexGrow} />
+        <Button label="Fiche / reçu" icon="printer" variant="secondary" onPress={handlePrintOrShare} style={styles.flexGrow} />
+      </View>
+
+      {/* Passbook */}
+      <SectionHeader title="Historique des opérations" count={transactions.length} />
+      {transactions.length === 0 ? (
+        <Card padding="none">
+          <EmptyState icon="history" title="Aucune opération" message="Aucun versement enregistré pour cet adhérent." />
+        </Card>
+      ) : (
+        <Card padding="none" style={styles.ledger}>
+          {transactions.map((tx, i) => {
+            const isDeposit = tx.type === 'SABOTAY_DEPOSIT' || tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION';
+            const isReversal = tx.type === 'REVERSAL' || tx.isReversed;
+            const icon: UiIconName = isReversal ? 'alert' : isDeposit ? 'cash' : 'payout';
+            const iconColor = isReversal ? theme.colors.danger : isDeposit ? theme.colors.success : theme.colors.primary;
+            const iconBg = isReversal ? theme.colors.dangerSoft : isDeposit ? theme.colors.successSoft : theme.colors.primarySoft;
+            return (
+              <ListItem
+                key={tx.id}
+                divider={i < transactions.length - 1}
+                onPress={() => handleTransactionPress(tx)}
+                accessibilityLabel={`${getTxTypeLabel(tx)}, ${formatCurrency(tx.amount)}, ${formatDate(tx.createdAtLocal)}`}
+                leading={
+                  <View style={[styles.txIcon, { backgroundColor: iconBg }]}>
+                    <Icon name={icon} size={18} color={iconColor} />
+                  </View>
+                }
+                title={getTxTypeLabel(tx)}
+                subtitle={formatDate(tx.createdAtLocal)}
+                trailing={
+                  <AmountText
+                    amount={tx.amount}
+                    size="small"
+                    sign={isDeposit && !isReversal ? 'credit' : 'debit'}
+                    tone={isReversal ? 'danger' : isDeposit ? 'success' : 'default'}
+                  />
+                }
+              />
+            );
+          })}
+        </Card>
+      )}
+
+      {!isReadOnly && (
+        <Button label="Supprimer l'adhérent" icon="trash" variant="danger" fullWidth onPress={handleDeleteClient} style={styles.deleteBtn} />
+      )}
+
+      {/* Transaction detail */}
+      <Dialog visible={isDetailModalOpen && !!selectedTx} onClose={() => setIsDetailModalOpen(false)} title="Détail de l'opération">
+        {selectedTx && (
+          <>
+            <AmountText amount={selectedTx.amount} size="large" />
+            {[
+              { label: 'Référence', value: `#${selectedTx.id.slice(0, 8)}` },
+              { label: 'Adhérent', value: client.fullName },
+              { label: 'Type', value: getTxTypeLabel(selectedTx) },
+              { label: 'Mains couvertes', value: `${selectedTx.handsCovered || 1} main(s)` },
+              { label: 'Date et heure', value: formatDate(selectedTx.createdAtLocal) },
+            ].map((row) => (
+              <View key={row.label} style={styles.detailRow}>
+                <Text variant="caption" tone="muted" style={styles.detailLabel}>
+                  {row.label}
+                </Text>
+                <Text variant="label" selectable style={styles.detailValue}>
+                  {row.value}
+                </Text>
+              </View>
+            ))}
+
+            {selectedTx.note && (
+              <View style={styles.noteBox}>
+                <Text variant="caption" tone="muted">
+                  Note d'enregistrement
+                </Text>
+                <Text variant="body" selectable>
+                  {selectedTx.note}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.actionsRow}>
+              <Button label="Reçu PDF" icon="printer" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
+              <Button label="WhatsApp" icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
+            </View>
+
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxLocked && (
+              <ClosedCycleLockNotice transaction={selectedTx} clientName={client.fullName} />
+            )}
+
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && !isSelectedTxLocked && (
+              <Button label="Annuler cette opération" icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
+            )}
+
+            {!isAdmin && (
+              <Button
+                label="Contacter l'administrateur"
+                icon="phone"
+                variant="ghost"
+                fullWidth
+                onPress={async () => {
+                  const profile = await getAdminProfile();
+                  const phone = profile.phoneNumber || '+50900000000';
+                  const digits = phone.replace(/[^0-9+]/g, '');
+                  Linking.openURL(`tel:${digits}`).catch(() => {
+                    Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
+                  });
+                }}
+              />
+            )}
+
+            {isReadOnly && selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
+              <Card tone="sunken">
+                <View style={styles.noticeRow}>
+                  <Icon name="shield" size={18} color={theme.colors.textMuted} />
+                  <Text variant="caption" tone="muted" style={styles.flexShrink}>
+                    Mode consultation seule. Contactez votre gestionnaire ou un Super-Admin pour régularisation.
+                  </Text>
+                </View>
+              </Card>
+            )}
+          </>
+        )}
+      </Dialog>
+
+      {/* Edit member */}
+      <Dialog
+        visible={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title="Modifier l'adhérent"
+        subtitle="Mise à jour des informations de l'adhérent."
+        icon="edit"
+        actions={
+          <>
+            <Button label="Annuler" variant="secondary" onPress={() => setIsEditModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Enregistrer" onPress={handleSaveEdit} style={styles.flexGrow} />
+          </>
+        }
+      >
+        <TextField label="Nom complet" value={editFullName} onChangeText={setEditFullName} placeholder="Ex : Marie Carmelle Jean" />
+        <TextField
+          label="Numéro de téléphone"
+          value={editPhoneNumber}
+          onChangeText={setEditPhoneNumber}
+          placeholder="+509 XX XX XXXX"
+          keyboardType="phone-pad"
+        />
+
+        <View style={styles.cardGap}>
+          <View style={styles.rowBetween}>
+            <Text variant="label">Mains souscrites</Text>
+            <Text variant="label" tone="primary">
+              {formatCurrency(editHandsCount * unitAmount)} / tour
+            </Text>
+          </View>
+          <View style={styles.stepperRow}>
+            <Pressable
+              onPress={() => {
+                const next = Math.max(1, editHandsCount - 1);
+                setEditHandsCount(next);
+                triggerLightImpact();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Retirer une main"
+              style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
+            >
+              <Icon name="minus" size={22} color={theme.colors.text} />
+            </Pressable>
+            <View style={styles.stepperValue}>
+              <Text variant="amountLarge" align="center">
+                {editHandsCount}
+              </Text>
+              <Text variant="caption" tone="muted" align="center">
+                main{editHandsCount > 1 ? 's' : ''}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => {
+                const next = editHandsCount + 1;
+                setEditHandsCount(next);
+                triggerLightImpact();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Ajouter une main"
+              style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
+            >
+              <Icon name="plus" size={22} color={theme.colors.text} />
+            </Pressable>
+          </View>
+          <Text variant="caption" tone="muted">
+            Ajouter une main à cet enfant augmente automatiquement la cagnotte du sol.
           </Text>
         </View>
 
-        {transactions.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Icon name="history" size={28} color={SOL_COLORS.textMuted} />
-            <Text style={styles.emptyText}>Aucun versement enregistré pour cet adhérent.</Text>
-          </View>
-        ) : (
-          transactions.map((tx) => {
-            const isDeposit =
-              tx.type === 'SABOTAY_DEPOSIT' || tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION';
-            const isReversal = tx.type === 'REVERSAL' || tx.isReversed;
-            return (
-              <TouchableOpacity
-                key={tx.id}
-                activeOpacity={0.75}
-                onPress={() => handleTransactionPress(tx)}
-                style={[styles.txRow, isReversal && styles.txRowReversed]}
-              >
-                <View style={styles.txLeft}>
-                  <View
-                    style={[
-                      styles.txIcon,
-                      isReversal ? styles.txIconReversal : isDeposit ? styles.txIconDeposit : styles.txIconWithdraw,
-                    ]}
-                  >
-                    <Icon
-                      name={isReversal ? 'arrow-left' : isDeposit ? 'arrow-right' : 'arrow-left'}
-                      size={14}
-                      color={isReversal ? SOL_COLORS.danger : isDeposit ? SOL_COLORS.successDark : SOL_COLORS.accent}
-                    />
-                  </View>
-                  <View>
-                    <Text style={styles.txTypeName}>
-                      {isReversal
-                        ? 'Annulation'
-                        : tx.type === 'SABOTAY_DEPOSIT'
-                        ? 'Dépôt Sabotay'
-                        : tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION'
-                        ? 'Cotisation Sol'
-                        : 'Décaissement Main ("Bay Men")'}
-                    </Text>
-                    <Text style={styles.txDate}>{formatDate(tx.createdAtLocal)}</Text>
-                  </View>
-                </View>
+        <TextField
+          label="Rang(s) de tirage"
+          value={editMultiRanks}
+          onChangeText={setEditMultiRanks}
+          placeholder="Ex : 1 ou 1, 4, 7"
+          helper="Séparez les rangs par des virgules."
+        />
+      </Dialog>
 
-                <View style={styles.txRight}>
-                  <Text
-                    style={[
-                      styles.txAmount,
-                      isReversal ? styles.txAmountReversal : isDeposit ? styles.txAmountDeposit : styles.txAmountWithdraw,
-                    ]}
-                  >
-                    {isReversal ? '-' : isDeposit ? '+' : '-'} {formatCurrency(tx.amount)}
-                  </Text>
-                  <Badge syncStatus={tx.syncStatus} style={{ marginTop: 2 }} />
-                </View>
-              </TouchableOpacity>
-            );
-          })
-        )}
-      </ScrollView>
-
-      {/* Transaction Detail Modal */}
-      <Modal
-        visible={isDetailModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsDetailModalOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Détail de l'Opération</Text>
-              <TouchableOpacity
-                onPress={() => setIsDetailModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            {selectedTx && (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 6 }}>
-                <View style={styles.detailBody}>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Référence :</Text>
-                    <Text style={styles.detailValue}>#{selectedTx.id.slice(0, 8)}</Text>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Adhérent :</Text>
-                    <Text style={styles.detailValueBold}>{client.fullName}</Text>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Type :</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedTx.type === 'SABOTAY_DEPOSIT'
-                        ? 'Dépôt Sabotay'
-                        : selectedTx.type === 'SOL_CONTRIBUTION' || selectedTx.type === 'CONTRIBUTION'
-                        ? 'Cotisation Sol'
-                        : selectedTx.type === 'REVERSAL' || selectedTx.isReversed
-                        ? 'Annulation'
-                        : 'Décaissement Main ("Bay Men")'}
-                    </Text>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Montant :</Text>
-                    <Text style={styles.detailValueAmount}>{formatCurrency(selectedTx.amount)}</Text>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Mains couvertes :</Text>
-                    <Text style={styles.detailValue}>{selectedTx.handsCovered || 1} main(s)</Text>
-                  </View>
-
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Date & Heure :</Text>
-                    <Text style={styles.detailValue}>{formatDate(selectedTx.createdAtLocal)}</Text>
-                  </View>
-
-                  {selectedTx.note && (
-                    <View style={styles.noteBox}>
-                      <Text style={styles.noteBoxTitle}>NOTE D'ENREGISTREMENT :</Text>
-                      <Text style={styles.noteBoxContent}>{selectedTx.note}</Text>
-                    </View>
-                  )}
-
-                  <View style={styles.modalActionButtons}>
-                    {/* Row 1: Share Actions */}
-                    <View style={styles.shareRow}>
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={handleShareReceipt}
-                        style={styles.shareBtn}
-                      >
-                        <Icon name="print" size={15} color="#1D4ED8" style={{ marginRight: 6 }} />
-                        <Text style={styles.shareBtnText}>Reçu PDF</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={handleWhatsAppShare}
-                        style={styles.whatsappActionBtn}
-                      >
-                        <Icon name="share" size={15} color="#059669" style={{ marginRight: 6 }} />
-                        <Text style={styles.whatsappActionBtnText}>WhatsApp</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {/* Row 2: Cancel / Reversal */}
-                    {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={handleInitiateCancel}
-                        style={styles.cancelOpBtn}
-                      >
-                        <Icon name="alert" size={15} color="#DC2626" style={{ marginRight: 6 }} />
-                        <Text style={styles.cancelOpBtnText}>Annuler cette opération</Text>
-                      </TouchableOpacity>
-                    )}
-
-                    {/* Row 3: Admin Hotline */}
-                    {!isAdmin && (
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        onPress={async () => {
-                          const profile = await getAdminProfile();
-                          const phone = profile.phoneNumber || '+50900000000';
-                          const digits = phone.replace(/[^0-9+]/g, '');
-                          Linking.openURL(`tel:${digits}`).catch(() => {
-                            Alert.alert('Hotline Admin', `Numéro Hotline Administrateur : ${phone}`);
-                          });
-                        }}
-                        style={styles.contactAdminBtn}
-                      >
-                        <Icon name="phone" size={14} color="#0284C7" style={{ marginRight: 6 }} />
-                        <Text style={styles.contactAdminBtnText}>Besoin d'aide ? Contacter l'Admin</Text>
-                      </TouchableOpacity>
-                    )}
-
-                    {isReadOnly && selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
-                      <View style={styles.managerNoticeCard}>
-                        <Icon name="shield" size={14} color="#64748B" style={{ marginRight: 6 }} />
-                        <Text style={styles.managerNoticeText}>
-                          Mode consultation seule. Contactez votre gestionnaire ou un Super-Admin pour régularisation.
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      {/* Edit Profile Modal */}
-      <Modal
-        visible={isEditModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsEditModalOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Modifier l'Adhérent</Text>
-              <TouchableOpacity
-                onPress={() => setIsEditModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSub}>Mise à jour des informations de l'adhérent.</Text>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NOM COMPLET</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editFullName}
-                onChangeText={setEditFullName}
-                placeholder="Ex: Marie Carmelle Jean"
-                placeholderTextColor={SOL_COLORS.textMuted}
-              />
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NUMÉRO DE TÉLÉPHONE</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editPhoneNumber}
-                onChangeText={setEditPhoneNumber}
-                placeholder="+509 XX XX XXXX"
-                placeholderTextColor={SOL_COLORS.textMuted}
-                keyboardType="phone-pad"
-              />
-            </View>
-
-            {/* Number of hands selector / stepper */}
-            <View style={styles.formGroup}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <Text style={styles.formLabel}>NOMBRE DE MAINS SOUSCRITES (PARTS)</Text>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: SOL_COLORS.primary }}>
-                  {editHandsCount} main{editHandsCount > 1 ? 's' : ''} ({formatCurrency(editHandsCount * unitAmount)}/tour)
-                </Text>
-              </View>
-              <View style={styles.stepperContainer}>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    const next = Math.max(1, editHandsCount - 1);
-                    setEditHandsCount(next);
-                    triggerLightImpact();
-                  }}
-                  style={styles.stepperBtn}
-                >
-                  <Text style={styles.stepperBtnText}>−</Text>
-                </TouchableOpacity>
-
-                <View style={styles.stepperDisplay}>
-                  <Text style={styles.stepperDisplayText}>{editHandsCount}</Text>
-                  <Text style={styles.stepperDisplaySub}>main{editHandsCount > 1 ? 's' : ''}</Text>
-                </View>
-
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    const next = editHandsCount + 1;
-                    setEditHandsCount(next);
-                    triggerLightImpact();
-                  }}
-                  style={styles.stepperBtn}
-                >
-                  <Text style={styles.stepperBtnText}>+</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.stepperHelpText}>
-                Augmenter les mains de cet enfant incrémente automatiquement la cagnotte globale du SOL.
-              </Text>
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>RANG(S) DE TIRAGE DANS LE SOL</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editMultiRanks}
-                onChangeText={setEditMultiRanks}
-                placeholder="Ex: 1 ou 1, 4, 7"
-                placeholderTextColor={SOL_COLORS.textMuted}
-              />
-              <Text style={{ fontSize: 10, color: '#64748B', marginTop: 3 }}>
-                Rangs d'attribution des mains pour cet enfant (séparés par des virgules).
-              </Text>
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity onPress={() => setIsEditModalOpen(false)} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleSaveEdit} style={styles.modalSaveBtn}>
-                <Text style={styles.modalSaveBtnText}>Sauvegarder</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Payout ("Bay Men") Modal */}
-      <Modal
+      {/* Payout ("bay men") */}
+      <Dialog
         visible={isPayoutModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsPayoutModalOpen(false)}
+        onClose={() => setIsPayoutModalOpen(false)}
+        title="Remise de la main"
+        subtitle="Validation par code PIN gestionnaire."
+        icon="payout"
+        actions={
+          <>
+            <Button label="Annuler" variant="secondary" onPress={() => setIsPayoutModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Valider avec PIN" icon="lock" onPress={handleConfirmPayout} style={styles.flexGrow} />
+          </>
+        }
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Remise de la Main ("Bay Men")</Text>
-              <TouchableOpacity
-                onPress={() => setIsPayoutModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSub}>
-              Le gestionnaire peut donner la main à cet adhérent avec validation de sécurité.
-            </Text>
-
-            {isOutOfOrder && (
-              <View style={styles.outOfOrderWarning}>
-                <Icon name="alert" size={14} color={SOL_COLORS.accent} style={{ marginRight: 6 }} />
-                <Text style={styles.outOfOrderWarningText}>
-                  ⚠️ Cette remise ne correspond pas au rang normal prévu (#{expectedNextRank}).
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.payoutDetailCard}>
-              <Text style={styles.payoutDetailLabel}>BÉNÉFICIAIRE :</Text>
-              <Text style={styles.payoutDetailName}>{client.fullName} ({client.phoneNumber})</Text>
-
-              <Text style={[styles.payoutDetailLabel, { marginTop: 8 }]}>CAGNOTTE CALCULÉE :</Text>
-              <Text style={styles.payoutDetailAmount}>{formatCurrency(totalPotAmount)}</Text>
-              <Text style={styles.payoutDetailFormula}>
-                {totalCycleHands} mains au total × {formatCurrency(unitAmount)}
+        {isOutOfOrder && (
+          <Card tone="warning">
+            <View style={styles.noticeRow}>
+              <Icon name="alert" size={18} color={theme.colors.warning} />
+              <Text variant="label" tone="warning" style={styles.flexShrink}>
+                Cette remise ne suit pas l'ordre prévu (rang #{expectedNextRank} attendu). Justification obligatoire.
               </Text>
             </View>
+          </Card>
+        )}
 
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>MOTIF / JUSTIFICATION :</Text>
-              <TextInput
-                style={styles.formInput}
-                value={payoutNote}
-                onChangeText={setPayoutNote}
-                placeholder="Ex: Remise normale du cycle #1"
-                placeholderTextColor={SOL_COLORS.textMuted}
-              />
-            </View>
+        <Card tone="sunken" style={styles.cardGap}>
+          <Text variant="caption" tone="muted">
+            Bénéficiaire
+          </Text>
+          <Text variant="bodyStrong">
+            {client.fullName} · {client.phoneNumber}
+          </Text>
+          <Text variant="caption" tone="muted">
+            Cagnotte calculée
+          </Text>
+          <AmountText amount={totalPotAmount} size="large" />
+          <Text variant="caption" tone="muted">
+            {totalCycleHands} mains au total × {formatCurrency(unitAmount)}
+          </Text>
+        </Card>
 
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity onPress={() => setIsPayoutModalOpen(false)} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
+        <TextField
+          label={isOutOfOrder ? 'Justification (obligatoire)' : 'Motif / justification'}
+          value={payoutNote}
+          onChangeText={setPayoutNote}
+          placeholder="Ex : remise normale du cycle 1"
+        />
+      </Dialog>
 
-              <TouchableOpacity onPress={handleConfirmPayout} style={styles.modalPayoutConfirmBtn}>
-                <Icon name="crown" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.modalPayoutConfirmBtnText}>Valider PIN</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Reversal Confirmation Modal */}
-      <Modal
+      {/* Reversal */}
+      <Dialog
         visible={isReversalModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsReversalModalOpen(false)}
+        onClose={() => setIsReversalModalOpen(false)}
+        title="Annuler une opération"
+        subtitle="Le solde, les mains payées et la couverture de l'adhérent seront recalculés."
+        icon="alert"
+        tone="danger"
+        actions={
+          <>
+            <Button label="Retour" variant="secondary" onPress={() => setIsReversalModalOpen(false)} style={styles.flexGrow} />
+            <Button label="Confirmer l'annulation" variant="danger" onPress={handleConfirmReversal} style={styles.flexGrow} />
+          </>
+        }
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Annuler une Transaction</Text>
-              <TouchableOpacity
-                onPress={() => setIsReversalModalOpen(false)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Fermer"
-              >
-                <Icon name="close" size={20} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSub}>
-              L'annulation recalculera fidèlement le solde, les mains payées et la couverture de l'adhérent.
-            </Text>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>MOTIF OBLIGATOIRE DE L'ANNULATION :</Text>
-              <TextInput
-                style={styles.formInput}
-                value={reversalReason}
-                onChangeText={setReversalReason}
-                placeholder="Ex: Erreur de saisie du montant"
-                placeholderTextColor={SOL_COLORS.textMuted}
-              />
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity onPress={() => setIsReversalModalOpen(false)} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelBtnText}>Retour</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={handleConfirmReversal} style={styles.modalDangerBtn}>
-                <Text style={styles.modalDangerBtnText}>Confirmer Annulation</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        <TextField
+          label="Motif obligatoire"
+          value={reversalReason}
+          onChangeText={setReversalReason}
+          placeholder="Ex : erreur de saisie du montant"
+        />
+      </Dialog>
 
       {/* Universal Sensitive Action PIN Modal */}
       <PinVerificationModal
@@ -1292,553 +1072,74 @@ Reçu archivé avec succès sur SOL Mobile.`;
         title={pendingActionTitle}
         subtitle={pendingActionSubtitle}
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: SOL_COLORS.background },
-  centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { fontSize: 14, color: SOL_COLORS.textSecondary },
-  scrollContent: { padding: 16, paddingBottom: 40 },
-  scrollContentTablet: {
-    maxWidth: 768,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  profileCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    marginBottom: 14,
-    ...SHADOWS.sm,
-  },
-  profileTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
-  avatar: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: SOL_COLORS.primaryLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-    borderWidth: 1.5,
-    borderColor: '#99F6E4',
-  },
-  avatarText: { fontSize: 20, fontWeight: '900', color: SOL_COLORS.primaryDark },
-  profileInfo: { flex: 1 },
-  fullName: { fontSize: 18, fontWeight: '900', color: SOL_COLORS.textPrimary },
-  phoneNumber: { fontSize: 13, color: SOL_COLORS.textSecondary, fontWeight: '600', marginTop: 2 },
-  badgesRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' },
-  rankBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.infoLighter,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  rankBadgeText: { fontSize: 10, fontWeight: '800', color: SOL_COLORS.info },
-  multiHandsBadgeHeader: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  multiHandsBadgeHeaderText: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#D97706',
-  },
-  handReceivedBadge: { backgroundColor: SOL_COLORS.successLighter, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  handReceivedBadgeText: { fontSize: 9, fontWeight: '900', color: SOL_COLORS.successDark },
-  handPartialBadgeHeader: {
-    backgroundColor: '#E0F2FE',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-  },
-  handPartialBadgeHeaderText: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#0369A1',
-  },
-  handPendingBadge: { backgroundColor: SOL_COLORS.accentLighter, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  handPendingBadgeText: { fontSize: 9, fontWeight: '900', color: SOL_COLORS.accent },
-  coverageRow: {
-    flexDirection: 'row',
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    alignItems: 'center',
-  },
-  coverageDivider: {
-    width: 1,
-    height: 24,
-    backgroundColor: SOL_COLORS.border,
-  },
-  coverageItem: { flex: 1, alignItems: 'center' },
-  coverageLabel: { fontSize: 9, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.3 },
-  coverageValue: { fontSize: 14, fontWeight: '800', color: SOL_COLORS.textPrimary, marginTop: 2 },
-  coverageValueGreen: { fontSize: 14, fontWeight: '900', color: SOL_COLORS.primaryDark, marginTop: 2 },
-  metricsRow: { flexDirection: 'row', gap: 10 },
-  metricItem: { flex: 1, backgroundColor: SOL_COLORS.surfaceSubtle, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: SOL_COLORS.border, alignItems: 'center' },
-  metricLabel: { fontSize: 9, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.3 },
-  metricValue: { fontSize: 15, fontWeight: '900', color: SOL_COLORS.textPrimary, marginTop: 2 },
-  metricValueGreen: { fontSize: 15, fontWeight: '900', color: SOL_COLORS.successDark, marginTop: 2 },
-  metricValueOrange: { fontSize: 15, fontWeight: '900', color: '#D97706', marginTop: 2 },
-  metricSubHint: { fontSize: 10, color: SOL_COLORS.textSecondary, fontWeight: '700', marginTop: 2 },
-  multiHandsSpecCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#FEF3C7',
-    ...SHADOWS.sm,
-  },
-  multiHandsSpecHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#FEF3C7',
-    paddingBottom: 8,
-  },
-  multiHandsSpecTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#B45309',
-    letterSpacing: 0.3,
-  },
-  multiHandsSpecGrid: {
-    gap: 8,
-  },
-  multiHandsSpecRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  multiHandsSpecLabel: {
-    fontSize: 12,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-    flex: 1,
-  },
-  multiHandsSpecValueBold: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  multiHandsSpecValueGreen: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: SOL_COLORS.successDark,
-  },
-  multiHandsSpecValuePrimary: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: SOL_COLORS.primary,
-  },
-  payoutButton: {
-    backgroundColor: SOL_COLORS.secondary,
-    borderRadius: 18,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-    ...SHADOWS.sm,
-  },
-  payoutButtonDisabled: {
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  payoutBtnLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  payoutIconCircle: { width: 38, height: 38, borderRadius: 19, backgroundColor: SOL_COLORS.accent, alignItems: 'center', justifyContent: 'center' },
-  payoutIconCircleDisabled: {
-    backgroundColor: '#DCFCE7',
-  },
-  payoutBtnTitle: { fontSize: 15, fontWeight: '900', color: '#FFFFFF' },
-  payoutBtnTitleDisabled: { fontSize: 15, fontWeight: '900', color: '#15803D' },
-  payoutBtnSub: { fontSize: 11, color: '#94A3B8', marginTop: 2, fontWeight: '600' },
-  payoutBtnSubDisabled: { fontSize: 11, color: '#166534', marginTop: 2, fontWeight: '600' },
-  completedBadgePill: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#86EFAC',
-  },
-  completedBadgePillText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#15803D',
-  },
-  actionRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  actionBtnPrimary: {
-    flex: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    borderRadius: 14,
-    paddingVertical: 12,
-    ...SHADOWS.sm,
-  },
-  actionBtnPrimaryText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
-  actionBtnSecondary: {
-    flex: 1.2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  actionBtnSecondaryText: { fontSize: 12, fontWeight: '700', color: SOL_COLORS.textPrimary },
-  actionBtnDanger: {
-    width: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.dangerLighter,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#FECDD3',
-  },
-  sectionHeader: { marginBottom: 8 },
-  sectionTitle: { fontSize: 11, fontWeight: '900', color: SOL_COLORS.textMuted, letterSpacing: 0.5 },
-  emptyCard: { backgroundColor: '#FFFFFF', padding: 24, borderRadius: 18, alignItems: 'center', borderWidth: 1, borderColor: SOL_COLORS.border },
-  emptyText: { fontSize: 12, color: SOL_COLORS.textMuted, marginTop: 8 },
-  txRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  txRowReversed: { backgroundColor: SOL_COLORS.dangerLighter, borderColor: '#FECDD3' },
-  txLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  txIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  txIconDeposit: { backgroundColor: SOL_COLORS.successLighter },
-  txIconWithdraw: { backgroundColor: SOL_COLORS.accentLighter },
-  txIconReversal: { backgroundColor: SOL_COLORS.dangerLighter },
-  txTypeName: { fontSize: 14, fontWeight: '800', color: SOL_COLORS.textPrimary },
-  txDate: { fontSize: 11, color: SOL_COLORS.textMuted, marginTop: 2, fontWeight: '600' },
-  txRight: { alignItems: 'flex-end' },
-  txAmount: { fontSize: 14, fontWeight: '900' },
-  txAmountDeposit: { color: SOL_COLORS.successDark },
-  txAmountWithdraw: { color: SOL_COLORS.accent },
-  txAmountReversal: { color: SOL_COLORS.dangerDark },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.75)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  modalCard: { width: '100%', maxWidth: 380, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 22, ...SHADOWS.lg },
-  modalHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-    width: '100%',
-  },
-  modalTitle: { fontSize: 18, fontWeight: '900', color: SOL_COLORS.textPrimary },
-  modalSub: { fontSize: 12, color: SOL_COLORS.textSecondary, marginBottom: 14, lineHeight: 16 },
-  outOfOrderWarning: {
-    flexDirection: 'row',
-    backgroundColor: SOL_COLORS.accentLighter,
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  outOfOrderWarningText: { fontSize: 11, color: SOL_COLORS.accent, fontWeight: '700', flex: 1 },
-  payoutDetailCard: { backgroundColor: SOL_COLORS.surfaceSubtle, padding: 14, borderRadius: 14, marginBottom: 12, borderWidth: 1, borderColor: SOL_COLORS.border },
-  payoutDetailLabel: { fontSize: 9, fontWeight: '800', color: SOL_COLORS.textMuted },
-  payoutDetailName: { fontSize: 14, fontWeight: '900', color: SOL_COLORS.textPrimary, marginTop: 2 },
-  payoutDetailAmount: { fontSize: 22, fontWeight: '900', color: SOL_COLORS.primaryDark, marginTop: 2 },
-  payoutDetailFormula: { fontSize: 11, color: SOL_COLORS.textSecondary, marginTop: 2 },
-  formGroup: { marginBottom: 12 },
-  formLabel: { fontSize: 10, fontWeight: '800', color: SOL_COLORS.textSecondary, marginBottom: 4 },
-  formInput: {
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    fontWeight: '600',
-    color: SOL_COLORS.textPrimary,
-  },
-  stepperContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    padding: 4,
-    height: 48,
-  },
-  stepperBtn: {
-    width: 42,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    ...SHADOWS.sm,
-  },
-  stepperBtnText: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: SOL_COLORS.primary,
-  },
-  stepperDisplay: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 4,
-  },
-  stepperDisplayText: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  stepperDisplaySub: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  stepperHelpText: {
-    fontSize: 10,
-    color: '#64748B',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  modalBtnRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  modalCancelBtn: { flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: SOL_COLORS.surfaceSubtle, alignItems: 'center' },
-  modalCancelBtnText: { fontSize: 13, fontWeight: '700', color: SOL_COLORS.textSecondary },
-  modalSaveBtn: { flex: 1.5, paddingVertical: 12, borderRadius: 14, backgroundColor: SOL_COLORS.primary, alignItems: 'center' },
-  modalSaveBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
-  modalPayoutConfirmBtn: { flex: 1.5, paddingVertical: 12, borderRadius: 14, backgroundColor: SOL_COLORS.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
-  modalPayoutConfirmBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
-  modalDangerBtn: { flex: 1.5, paddingVertical: 12, borderRadius: 14, backgroundColor: SOL_COLORS.danger, alignItems: 'center' },
-  modalDangerBtnText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
-  detailBody: {
-    paddingVertical: 4,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  detailLabel: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  detailValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  detailValueBold: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  detailValueAmount: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: SOL_COLORS.primary,
-  },
-  noteBox: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 10,
-    marginVertical: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  noteBoxTitle: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#64748B',
-    marginBottom: 4,
-  },
-  noteBoxContent: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  modalActionButtons: {
-    gap: 8,
-    marginTop: 12,
-    width: '100%',
-  },
-  shareRow: {
-    flexDirection: 'row',
-    gap: 8,
-    width: '100%',
-  },
-  shareBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-  },
-  shareBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  whatsappActionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1.5,
-    borderColor: '#A7F3D0',
-  },
-  whatsappActionBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  cancelOpBtn: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-  },
-  cancelOpBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#DC2626',
-  },
-  contactAdminBtn: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F0F9FF',
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#BAE6FD',
-    marginTop: 2,
-  },
-  contactAdminBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0284C7',
-  },
-  managerNoticeCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginTop: 4,
-  },
-  managerNoticeText: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
-    flex: 1,
-  },
-  clientProgressBarSection: {
-    marginTop: 10,
-    marginBottom: 6,
-    paddingHorizontal: 2,
-  },
-  clientProgressBarLabelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  clientProgressBarLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: SOL_COLORS.textSecondary,
-  },
-  clientProgressBarCount: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: SOL_COLORS.primaryDark,
-  },
-  clientProgressBarBg: {
-    height: 6,
-    backgroundColor: '#E2E8F0',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  clientProgressBarFill: {
-    height: '100%',
-    backgroundColor: SOL_COLORS.primary,
-    borderRadius: 3,
-  },
-  specProgressBarContainer: {
-    marginTop: 4,
-    marginBottom: 6,
-  },
-  specProgressBarBg: {
-    height: 6,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  specProgressBarFillAmber: {
-    height: '100%',
-    backgroundColor: '#D97706',
-    borderRadius: 3,
-  },
-  specProgressBarFillGreen: {
-    height: '100%',
-    backgroundColor: '#10B981',
-    borderRadius: 3,
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+  StyleSheet.create({
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
+    flexShrink: { flex: 1, minWidth: 0 },
+    flexGrow: { flexGrow: 1, flexBasis: 0 },
+    pressed: { backgroundColor: colors.surfacePressed },
+    cardGap: { gap: spacing.sm },
+    rowBetween: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: spacing.sm },
+
+    identityRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    infoChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      minHeight: spacing.xxl,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surfaceAlt,
+    },
+    metricsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+    progressBlock: { gap: spacing.sm, marginTop: spacing.xs },
+    coverageRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.xs },
+    noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+
+    detailRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: spacing.md,
+      paddingVertical: spacing.xs,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.divider,
+    },
+    detailLabel: { flex: 1 },
+    detailValue: { flex: 1.4, textAlign: 'right' },
+
+    actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    ledger: { overflow: 'hidden' },
+    txIcon: {
+      width: spacing.xxl + spacing.sm,
+      height: spacing.xxl + spacing.sm,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    deleteBtn: { marginTop: spacing.lg },
+    noteBox: {
+      gap: spacing.xs,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceAlt,
+    },
+
+    stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xl },
+    stepperBtn: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+    },
+    stepperValue: { minWidth: layout.actionHeight, alignItems: 'center' },
+  });

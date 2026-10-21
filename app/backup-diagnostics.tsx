@@ -1,23 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { View, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Header } from '@/components/Header';
-import { Icon } from '@/components/Icon';
+import { Button, Card, Icon, MetricTile, Screen, SectionHeader, Text } from '@/components/ui';
 
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
-import { SHADOWS } from '@/constants/Colors';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 interface DiagnosticState {
   isHealthy: boolean;
@@ -30,6 +21,8 @@ interface DiagnosticState {
 
 export default function BackupDiagnosticsScreen() {
   const { contentMaxWidth, horizontalPadding } = useResponsive();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [loading, setLoading] = useState(true);
   const [diagnostics, setDiagnostics] = useState<DiagnosticState | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -126,249 +119,106 @@ export default function BackupDiagnosticsScreen() {
     }
   };
 
+  const pending = diagnostics?.pendingSyncCount || 0;
+  const statusTone = !diagnostics ? 'sunken' : diagnostics.isHealthy ? 'success' : 'danger';
+
   return (
-    <SafeAreaView style={styles.container}>
-      <Header
-        title="Diagnostic & Sauvegarde"
-        subtitle="Contrôle d’intégrité locale et sécurité des écritures"
-        showBack
-        showProfile={false}
-        showScanner={false}
-        fallbackBackRoute="/(tabs)"
-      />
-
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Statut de Santé Global */}
-        <View style={[styles.statusCard, diagnostics?.isHealthy ? styles.statusCardOk : styles.statusCardError]}>
-          <View style={styles.statusIconWrap}>
-            <Icon
-              name={diagnostics?.isHealthy ? 'shield' : 'alert'}
-              size={24}
-              color={diagnostics?.isHealthy ? '#047857' : '#BE123C'}
-            />
-          </View>
-          <View style={styles.statusTextGroup}>
-            <Text style={styles.statusHeading}>
-              {diagnostics?.isHealthy ? 'Base SQLite Intègre (WAL Mode)' : 'Anomalie Détectée'}
-            </Text>
-            <Text style={styles.statusSub}>
-              {diagnostics?.isHealthy
-                ? `Vérification réussie à ${diagnostics.lastCheckTime}. Aucune corruption de bloc.`
-                : 'La structure locale présente des incohérences.'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Métriques Locales Inspectées */}
-        <Text style={styles.sectionTitle}>MÉTRIQUES DE PERSISTANCE LOCALE</Text>
-
-        <View style={styles.metricsGrid}>
-          <View style={styles.metricTile}>
-            <Text style={styles.metricLabel}>ADHÉRENTS ENRÔLÉS</Text>
-            <Text style={styles.metricValue}>{diagnostics?.totalClients ?? '-'}</Text>
-            <Text style={styles.metricHint}>Stockés sur l’appareil</Text>
-          </View>
-
-          <View style={styles.metricTile}>
-            <Text style={styles.metricLabel}>TOTAL TRANSACTIONS</Text>
-            <Text style={styles.metricValue}>{diagnostics?.totalTransactions ?? '-'}</Text>
-            <Text style={styles.metricHint}>Entrées immuables</Text>
-          </View>
-
-          <View style={[styles.metricTile, (diagnostics?.pendingSyncCount || 0) > 0 && styles.metricTileAlert]}>
-            <Text style={styles.metricLabel}>EN ATTENTE DE SYNC</Text>
-            <Text style={[styles.metricValue, (diagnostics?.pendingSyncCount || 0) > 0 && styles.metricValueAlert]}>
-              {diagnostics?.pendingSyncCount ?? '-'}
-            </Text>
-            <Text style={styles.metricHint}>Transactions locales</Text>
-          </View>
-
-          <View style={styles.metricTile}>
-            <Text style={styles.metricLabel}>SÉCURITÉ ATOMIQUE</Text>
-            <Text style={styles.metricValueSafe}>Active</Text>
-            <Text style={styles.metricHint}>withTransactionAsync</Text>
-          </View>
-        </View>
-
-        {/* Actions Terrain */}
-        <View style={styles.actionBlock}>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={runDiagnostics}
-            disabled={loading}
-            style={styles.refreshBtn}
-          >
-            {loading ? (
-              <ActivityIndicator color="#0F172A" />
-            ) : (
-              <>
-                <Icon name="sync" size={16} color="#0F172A" style={{ marginRight: 8 }} />
-                <Text style={styles.refreshBtnText}>Relancer le test d'intégrité</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={handleExportBackup}
+    <Screen
+      edges={['top', 'left', 'right', 'bottom']}
+      header={
+        <Header
+          title="Diagnostic & sauvegarde"
+          subtitle="Intégrité locale et sécurité des écritures"
+          showBack
+          showProfile={false}
+          showScanner={false}
+          fallbackBackRoute="/(tabs)"
+        />
+      }
+      contentStyle={styles.content}
+      footer={
+        <View style={styles.footer}>
+          <Button
+            size="lg"
+            fullWidth
+            icon="share"
+            loading={isExporting}
             disabled={isExporting}
-            style={styles.backupBtn}
-          >
-            {isExporting ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Icon name="share" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.backupBtnText}>Exporter la Sauvegarde Sécurisée</Text>
-              </>
-            )}
-          </TouchableOpacity>
+            label="Exporter la sauvegarde"
+            accessibilityLabel="Exporter la sauvegarde sécurisée"
+            onPress={handleExportBackup}
+          />
+          <Button variant="secondary" fullWidth icon="cycle" loading={loading} disabled={loading} label="Relancer le test d'intégrité" onPress={runDiagnostics} />
         </View>
-      </ScrollView>
-    </SafeAreaView>
+      }
+    >
+      {/* Statut de Santé Global */}
+      <Card tone={statusTone}>
+        <View style={styles.statusRow}>
+          <View style={styles.statusDisc}>
+            {!diagnostics ? (
+              <ActivityIndicator color={theme.colors.primary} />
+            ) : (
+              <Icon
+                name={diagnostics.isHealthy ? 'shield' : 'alert'}
+                size={24}
+                color={diagnostics.isHealthy ? theme.colors.success : theme.colors.danger}
+              />
+            )}
+          </View>
+          <View style={styles.flexShrink}>
+            <Text variant="subheading" tone={!diagnostics ? 'default' : diagnostics.isHealthy ? 'success' : 'danger'}>
+              {!diagnostics ? 'Vérification en cours…' : diagnostics.isHealthy ? 'Base SQLite intègre (mode WAL)' : 'Anomalie détectée'}
+            </Text>
+            <Text variant="caption" tone="muted">
+              {!diagnostics
+                ? 'Contrôle de la base locale.'
+                : diagnostics.isHealthy
+                  ? `Vérification réussie à ${diagnostics.lastCheckTime}. Aucune corruption de bloc.`
+                  : 'La structure locale présente des incohérences.'}
+            </Text>
+          </View>
+        </View>
+      </Card>
+
+      {/* Métriques Locales Inspectées */}
+      <View style={styles.section}>
+        <SectionHeader title="Persistance locale" />
+        <View style={styles.grid}>
+          <MetricTile label="Adhérents enrôlés" icon="users" value={String(diagnostics?.totalClients ?? '–')} hint="Stockés sur l'appareil" style={styles.tile} />
+          <MetricTile label="Transactions" icon="history" value={String(diagnostics?.totalTransactions ?? '–')} hint="Entrées immuables" style={styles.tile} />
+          <MetricTile
+            label="En attente de sync"
+            icon="cycle"
+            value={String(diagnostics?.pendingSyncCount ?? '–')}
+            hint="Transactions locales"
+            tone={pending > 0 ? 'warning' : 'default'}
+            style={styles.tile}
+          />
+          <MetricTile label="Sécurité atomique" icon="lock" value="Active" hint="withTransactionAsync" tone="success" style={styles.tile} />
+        </View>
+      </View>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  statusCard: {
-    flexDirection: 'row',
-    borderRadius: 20,
-    padding: 18,
-    borderWidth: 1,
-    marginBottom: 20,
-    ...SHADOWS.sm,
-  },
-  statusCardOk: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  statusCardError: {
-    backgroundColor: '#FFF1F2',
-    borderColor: '#FECDD3',
-  },
-  statusIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-  },
-  statusTextGroup: {
-    flex: 1,
-  },
-  statusHeading: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  statusSub: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#334155',
-    marginTop: 3,
-    lineHeight: 17,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.6,
-    marginBottom: 10,
-  },
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 24,
-  },
-  metricTile: {
-    width: '48.4%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    ...SHADOWS.sm,
-  },
-  metricTileAlert: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
-  },
-  metricLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.4,
-  },
-  metricValue: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#0F172A',
-    marginVertical: 4,
-  },
-  metricValueAlert: {
-    color: '#D97706',
-  },
-  metricValueSafe: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#0D9488',
-    marginVertical: 4,
-  },
-  metricHint: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  actionBlock: {
-    gap: 12,
-  },
-  refreshBtn: {
-    minHeight: 48,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    ...SHADOWS.sm,
-  },
-  refreshBtnText: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  backupBtn: {
-    minHeight: 52,
-    backgroundColor: '#0D9488',
-    borderRadius: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    ...SHADOWS.md,
-  },
-  backupBtnText: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+  StyleSheet.create({
+    flexShrink: { flex: 1, minWidth: 0 },
+    content: { gap: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.xl },
+    footer: { gap: spacing.sm },
+    section: { gap: spacing.md },
+
+    statusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    statusDisc: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+    },
+
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    tile: { flexBasis: '47%', flexGrow: 1 },
+  });
