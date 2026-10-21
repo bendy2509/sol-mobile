@@ -103,7 +103,7 @@ function RootNavigator({ ready }: { ready: boolean }) {
           <Stack.Screen
             name="register"
             options={{
-              title: 'Nouveau Carnet SOL',
+              title: 'Inscription',
               headerBackTitle: 'Connexion',
             }}
           />
