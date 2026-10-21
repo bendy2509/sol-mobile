@@ -1,28 +1,21 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Linking,
-  Alert,
-  ScrollView,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, StyleSheet, Linking, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '@/context/AuthContext';
-import { Icon } from '@/components/Icon';
+import { Button, Card, Icon, Screen, Text } from '@/components/ui';
 import { getActiveCollector } from '@/db/sqlite';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 export default function SuspendedScreen() {
   const router = useRouter();
   const { logout, refreshSession, activeCollector } = useAuth();
   const { horizontalPadding } = useResponsive();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [adminName, setAdminName] = useState('Administration SOL');
   const [adminPhone, setAdminPhone] = useState('+50900000000');
@@ -92,246 +85,96 @@ export default function SuspendedScreen() {
     router.replace('/login' as any);
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { maxWidth: 520, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Warning Icon Badge */}
-        <View style={styles.iconCircle}>
-          <Icon name="shield" size={48} color="#DC2626" />
-        </View>
+  const restrictions = [
+    'Encaissements et collectes de cotisations bloqués',
+    'Décaissements et remises de mains ("Bay Men") verrouillés',
+    "Ajout et modification d'adhérents interdits",
+  ];
 
-        <Text style={styles.title}>COMPTE SUSPENDU</Text>
-        <Text style={styles.subtitle}>
+  return (
+    <Screen
+      edges={['top', 'left', 'right']}
+      contentStyle={styles.content}
+      footer={
+        <View style={styles.footer}>
+          <Button
+            size="lg"
+            fullWidth
+            icon="cycle"
+            loading={isChecking}
+            disabled={isChecking}
+            label={isChecking ? 'Vérification en cours…' : 'Actualiser mon statut'}
+            onPress={handleCheckStatus}
+          />
+          <Button variant="ghost" fullWidth icon="logout" label="Se déconnecter" onPress={handleLogout} />
+        </View>
+      }
+    >
+      {/* Suspended status */}
+      <View style={styles.hero}>
+        <View style={styles.disc}>
+          <Icon name="shield" size={36} color={theme.colors.danger} />
+        </View>
+        <Text variant="title" tone="danger" align="center" accessibilityRole="header">
+          Compte suspendu
+        </Text>
+        <Text variant="body" tone="muted" align="center">
           L'accès de votre compte gestionnaire a été temporairement suspendu par l'administration générale de la plateforme SOL.
         </Text>
+      </View>
 
-        {/* Security Restrictions Box */}
-        <View style={styles.restrictionsCard}>
-          <Text style={styles.restrictionsHeader}>RESTRICTIONS EN VIGUEUR</Text>
-          <View style={styles.restrictionItem}>
-            <Icon name="close" size={14} color="#DC2626" style={{ marginTop: 2 }} />
-            <Text style={styles.restrictionText}>Encaissements et collectes de cotisations bloqués</Text>
+      {/* Security Restrictions Box */}
+      <Card tone="danger" style={styles.card}>
+        <Text variant="label" tone="danger">
+          Restrictions en vigueur
+        </Text>
+        {restrictions.map((r) => (
+          <View key={r} style={styles.restriction}>
+            <Icon name="lock" size={16} color={theme.colors.danger} />
+            <Text variant="body" style={styles.flexShrink}>
+              {r}
+            </Text>
           </View>
-          <View style={styles.restrictionItem}>
-            <Icon name="close" size={14} color="#DC2626" style={{ marginTop: 2 }} />
-            <Text style={styles.restrictionText}>Décaissements et remises de mains ("Bay Men") verrouillés</Text>
-          </View>
-          <View style={styles.restrictionItem}>
-            <Icon name="close" size={14} color="#DC2626" style={{ marginTop: 2 }} />
-            <Text style={styles.restrictionText}>Ajout et modification d'adhérents interdits</Text>
-          </View>
+        ))}
+      </Card>
+
+      {/* Administrator Contact Info */}
+      <Card style={styles.card}>
+        <Text variant="label" tone="muted">
+          Contacter l'administration pour déblocage
+        </Text>
+        <Text variant="heading">{adminName}</Text>
+        <Text variant="amount" tone="primary">
+          {adminPhone}
+        </Text>
+        <View style={styles.contactRow}>
+          <Button variant="secondary" icon="phone" label="Appeler" onPress={handleCallAdmin} style={styles.flexOne} />
+          <Button variant="secondary" icon="message" label="WhatsApp" onPress={handleWhatsAppAdmin} style={styles.flexOne} />
         </View>
-
-        {/* Administrator Contact Info */}
-        <View style={styles.contactCard}>
-          <Text style={styles.contactHeader}>CONTACTER L'ADMINISTRATION POUR DÉBLOCAGE</Text>
-          <Text style={styles.contactName}>{adminName}</Text>
-          <Text style={styles.contactPhone}>{adminPhone}</Text>
-
-          <View style={styles.contactBtnRow}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={handleCallAdmin}
-              style={styles.callBtn}
-            >
-              <Icon name="phone" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-              <Text style={styles.callBtnText}>Appeler</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={handleWhatsAppAdmin}
-              style={styles.whatsappBtn}
-            >
-              <Text style={styles.whatsappBtnText}>WhatsApp</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Check Status Button */}
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={handleCheckStatus}
-          disabled={isChecking}
-          style={styles.refreshBtn}
-        >
-          <Icon name="sync" size={16} color="#1D4ED8" style={{ marginRight: 6 }} />
-          <Text style={styles.refreshBtnText}>
-            {isChecking ? 'Vérification en cours...' : 'Actualiser mon statut'}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Logout */}
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={handleLogout}
-          style={styles.logoutBtn}
-        >
-          <Text style={styles.logoutBtnText}>Se Déconnecter</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+      </Card>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FEF2F2',
-  },
-  scrollContent: {
-    padding: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '100%',
-  },
-  iconCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: '#FEE2E2',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#FECACA',
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#DC2626',
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#7F1D1D',
-    fontWeight: '600',
-    textAlign: 'center',
-    lineHeight: 19,
-    marginTop: 8,
-    marginBottom: 20,
-    paddingHorizontal: 10,
-  },
-  restrictionsCard: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-    marginBottom: 16,
-  },
-  restrictionsHeader: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#991B1B',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
-  restrictionItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  restrictionText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
-    marginLeft: 8,
-    flex: 1,
-  },
-  contactCard: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  contactHeader: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-    textAlign: 'center',
-    marginBottom: 6,
-  },
-  contactName: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  contactPhone: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1D4ED8',
-    marginTop: 2,
-    marginBottom: 12,
-  },
-  contactBtnRow: {
-    flexDirection: 'row',
-    gap: 10,
-    width: '100%',
-  },
-  callBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#1D4ED8',
-    height: 42,
-    borderRadius: 10,
-  },
-  callBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  whatsappBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#059669',
-    height: 42,
-    borderRadius: 10,
-  },
-  whatsappBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  refreshBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-    marginBottom: 10,
-  },
-  refreshBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  logoutBtn: {
-    padding: 10,
-  },
-  logoutBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#94A3B8',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+  StyleSheet.create({
+    flexOne: { flex: 1 },
+    flexShrink: { flex: 1, minWidth: 0 },
+    content: { width: '100%', maxWidth: 520, alignSelf: 'center', gap: spacing.lg, paddingTop: spacing.xl, paddingBottom: spacing.lg },
+    footer: { width: '100%', maxWidth: 520, alignSelf: 'center', gap: spacing.xs },
+
+    hero: { alignItems: 'center', gap: spacing.sm },
+    disc: {
+      width: layout.touchTarget + spacing.xl,
+      height: layout.touchTarget + spacing.xl,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.xs,
+      backgroundColor: colors.dangerSoft,
+    },
+
+    card: { gap: spacing.sm },
+    restriction: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+    contactRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  });

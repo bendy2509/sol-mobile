@@ -115,6 +115,13 @@ function RootNavigator({ ready }: { ready: boolean }) {
             }}
           />
           <Stack.Screen
+            name="suspended"
+            options={{
+              headerShown: false,
+              gestureEnabled: false,
+            }}
+          />
+          <Stack.Screen
             name="admin"
             options={{
               headerShown: false,
