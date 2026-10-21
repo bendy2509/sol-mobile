@@ -10,7 +10,7 @@ export interface PinPadProps {
   onBackspace: () => void;
   onClear: () => void;
   disabled?: boolean;
-  /** 52dp keys instead of 64dp (short screens, dialogs). */
+  /** 44dp keys instead of 48dp (short screens). */
   compact?: boolean;
 }
 
@@ -22,12 +22,12 @@ const ROWS = [
 ];
 
 /**
- * Numeric keypad for phone numbers and PINs. Large keys for one-handed field use.
+ * Numeric keypad for phone numbers and PINs. Flat 48dp keys, one-handed use.
  * Haptic feedback stays in the screen handlers (they already trigger it).
  */
 export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compact = false }: PinPadProps) {
-  const { colors, spacing, radius, layout, shadows } = useTheme();
-  const keyHeight = compact ? layout.touchTarget + spacing.xs : layout.actionHeight + spacing.sm;
+  const { colors, spacing, radius, layout } = useTheme();
+  const keyHeight = compact ? layout.touchTarget : layout.actionHeight;
 
   return (
     <View style={{ gap: spacing.sm, opacity: disabled ? 0.6 : 1 }}>
@@ -49,14 +49,13 @@ export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compac
                   borderCurve: 'continuous',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: pressed ? colors.surfacePressed : isAction ? colors.surfaceAlt : colors.surface,
-                  ...(isAction || pressed ? null : shadows.card),
+                  backgroundColor: pressed ? colors.surfacePressed : isAction ? 'transparent' : colors.surfaceAlt,
                 })}
               >
                 {k === 'DEL' ? (
-                  <Icon name="backspace" size={24} color={colors.textMuted} />
+                  <Icon name="backspace" size={22} color={colors.textMuted} />
                 ) : k === 'C' ? (
-                  <Text variant="subheading" tone="muted">
+                  <Text variant="label" tone="muted">
                     Effacer
                   </Text>
                 ) : (

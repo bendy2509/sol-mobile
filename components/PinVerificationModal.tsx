@@ -157,15 +157,13 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={[styles.overlay, isTablet && styles.overlayTablet]}>
         <View style={[styles.sheet, isTablet && styles.sheetTablet, !isTablet && { paddingBottom: insets.bottom + theme.spacing.lg }]}>
+          {!isTablet && <View style={styles.handle} />}
           <View style={styles.headerRow}>
-            <View style={[styles.iconCircle, isLocked && styles.iconCircleLocked]}>
-              <Icon name={isLocked ? 'alert' : 'lock'} size={24} color={isLocked ? theme.colors.danger : theme.colors.primary} />
-            </View>
             <View style={styles.flexShrink}>
               <Text variant="heading" accessibilityRole="header">
                 {isLocked ? 'Accès verrouillé' : title}
               </Text>
-              <Text variant={compact ? 'caption' : 'body'} tone="muted">
+              <Text variant="caption" tone={isLocked ? 'danger' : 'muted'}>
                 {isLocked ? 'Saisie du code PIN suspendue pour votre sécurité.' : subtitle}
               </Text>
             </View>
@@ -230,24 +228,17 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
     sheet: {
       width: '100%',
       gap: spacing.lg,
-      paddingTop: spacing.xl,
+      paddingTop: spacing.sm,
       paddingHorizontal: layout.gutter,
       backgroundColor: colors.surface,
-      borderTopLeftRadius: radius.lg,
-      borderTopRightRadius: radius.lg,
+      borderTopLeftRadius: radius.xl,
+      borderTopRightRadius: radius.xl,
+      borderCurve: 'continuous',
     },
+    handle: { alignSelf: 'center', width: spacing.xxl, height: spacing.xs, borderRadius: radius.pill, backgroundColor: colors.borderStrong },
     sheetTablet: { maxWidth: 440, borderRadius: radius.lg, padding: spacing.xl },
 
     headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
-    iconCircle: {
-      width: layout.touchTarget,
-      height: layout.touchTarget,
-      borderRadius: radius.pill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.primarySoft,
-    },
-    iconCircleLocked: { backgroundColor: colors.dangerSoft },
     closeBtn: {
       width: layout.touchTarget,
       height: layout.touchTarget,
@@ -259,7 +250,7 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
     },
 
     attemptsRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.sm },
-    attemptDot: { width: spacing.md, height: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt },
+    attemptDot: { width: spacing.sm, height: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt },
     attemptDotFailed: { backgroundColor: colors.danger },
     dotsBox: { paddingVertical: spacing.sm },
     verifyingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },

@@ -182,7 +182,7 @@ export default function LoginScreen() {
         </View>
 
         {/* Fields */}
-        <Card style={styles.fieldsCard}>
+        <View style={styles.fieldsCard}>
           <Pressable
             onPress={() => {
               triggerLightImpact();
@@ -249,7 +249,7 @@ export default function LoginScreen() {
               </View>
             </Card>
           )}
-        </Card>
+        </View>
 
         {/* Keypad + main action (thumb zone) */}
         <View style={styles.keypadBlock}>
@@ -260,7 +260,7 @@ export default function LoginScreen() {
             loading={isSubmitting}
             icon={activeField === 'PHONE' ? 'arrow-right' : 'lock'}
             iconPosition={activeField === 'PHONE' ? 'right' : 'left'}
-            label={activeField === 'PHONE' ? 'Continuer vers le code PIN' : 'Se connecter'}
+            label={activeField === 'PHONE' ? 'Continuer' : 'Se connecter'}
             onPress={() => {
               if (activeField === 'PHONE') {
                 if (phoneDigits.length >= 8) {
@@ -323,16 +323,16 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
 
     brand: { alignItems: 'center', gap: spacing.xs },
     logo: {
-      width: spacing.xxxl + spacing.lg,
-      height: spacing.xxxl + spacing.lg,
-      borderRadius: radius.lg,
+      width: spacing.xxxl,
+      height: spacing.xxxl,
+      borderRadius: radius.md,
       borderCurve: 'continuous',
       backgroundColor: brand.haitiBlue,
       alignItems: 'center',
       justifyContent: 'center',
     },
     logoLetter: { color: brand.white },
-    flagRule: { flexDirection: 'row', width: spacing.xxxl + spacing.lg, height: spacing.xs, marginBottom: spacing.sm, marginTop: spacing.xs },
+    flagRule: { flexDirection: 'row', width: spacing.xxxl, height: spacing.xs, marginBottom: spacing.sm, marginTop: spacing.xs },
     flagBlue: { flex: 1, backgroundColor: brand.haitiBlue },
     flagRed: { flex: 1, backgroundColor: brand.haitiRed },
 
@@ -345,7 +345,7 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
       borderColor: colors.surfaceAlt,
       backgroundColor: colors.surfaceAlt,
     },
-    fieldActive: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.surface },
+    fieldActive: { borderColor: colors.primary, backgroundColor: colors.surface },
     fieldLabelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     phoneRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     countryChip: {
