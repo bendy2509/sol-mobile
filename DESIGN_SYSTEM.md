@@ -96,7 +96,7 @@ Tout s'importe depuis `@/components/ui`.
 | `MetricTile` | Chiffre clé | `tone` `danger` / `warning` teinte la tuile entière (attention requise), `success` colore seulement la valeur. |
 | `SectionHeader` | Titre de section | « Adhérents (4) » + action texte (cible 48 dp). |
 | `EmptyState` | Liste vide, aucun résultat | Dit ce qui manque et propose l'action suivante. |
-| `Icon` | Icônes SVG locales | 35 icônes au trait sur une grille 24. Elles remplacent `components/Icon.tsx` et les emojis. |
+| `Icon` | Icônes SVG locales | 35 icônes au trait sur une grille 24. Elles remplacent l'ancien `components/Icon.tsx` (supprimé) et les emojis. |
 
 ## Thème clair / sombre
 
