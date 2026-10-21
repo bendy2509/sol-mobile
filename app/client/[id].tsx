@@ -842,7 +842,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
             {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
             {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
-              <Button label="Annuler cette opération" icon="alert" variant="ghost" fullWidth onPress={handleInitiateCancel} />
+              <Button label="Annuler cette opération" icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
             )}
 
 

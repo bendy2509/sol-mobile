@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, TextInput, FlatList, Pressable, StyleSheet, RefreshControl, ScrollView, Alert, Share, Linking } from 'react-native';
+import { View, TextInput, FlatList, Pressable, StyleSheet, RefreshControl, Alert, Share, Linking } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
-import { Header } from '@/components/Header';
+import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
-import { AmountText, Button, Card, Chip, Dialog, EmptyState, Icon, ListItem, Screen, Text, TextField, UiIconName } from '@/components/ui';
+import { AmountText, BottomSheet, Button, Card, EmptyState, Icon, ListItem, Screen, SegmentedControl, Text, TextField, UiIconName } from '@/components/ui';
 import { getAllTransactions, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveCollector } from '@/db/sqlite';
 import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
@@ -14,17 +14,17 @@ import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile 
 import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
 import { Transaction, TransactionType } from '@/types';
-import { formatCurrency, formatDate } from '@/lib/formatters';
+import { formatCurrency, formatDate, formatDayMonth } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { isTransactionFromClosedCycle } from '@/services/financialService';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 
-const FILTERS: { key: TransactionType | 'ALL'; label: string }[] = [
-  { key: 'ALL', label: 'Toutes' },
-  { key: 'SOL_CONTRIBUTION', label: 'Cotisations' },
-  { key: 'SOL_PAYOUT', label: 'Mains remises' },
-  { key: 'REVERSAL', label: 'Annulations' },
+const FILTERS: { value: TransactionType | 'ALL'; label: string }[] = [
+  { value: 'ALL', label: 'Tout' },
+  { value: 'SOL_CONTRIBUTION', label: 'Entrées' },
+  { value: 'SOL_PAYOUT', label: 'Remises' },
+  { value: 'REVERSAL', label: 'Annulées' },
 ];
 
 export default function HistoryScreen() {
@@ -264,7 +264,7 @@ Reçu certifié et archivé avec succès. Merci !`;
               </View>
             }
             title={item.clientName || 'Adhérent SOL'}
-            subtitle={[getTransactionTypeLabel(item.type) || 'Opération', formatDate(item.createdAtLocal)].filter(Boolean).join(' · ')}
+            subtitle={[getTransactionTypeLabel(item.type) || 'Opération', formatDayMonth(item.createdAtLocal)].filter(Boolean).join(' · ')}
             meta={
               item.isReversed ? (
                 <Text variant="caption" tone="danger">
@@ -274,13 +274,6 @@ Reçu certifié et archivé avec succès. Merci !`;
                 <Text variant="caption" tone="danger">
                   Échec de synchronisation
                 </Text>
-              ) : item.syncStatus !== 'SYNCED' ? (
-                <View style={styles.syncRow}>
-                  <Icon name="cycle" size={12} color={theme.colors.textMuted} />
-                  <Text variant="caption" tone="muted">
-                    À synchroniser
-                  </Text>
-                </View>
               ) : undefined
             }
             trailing={
@@ -305,8 +298,18 @@ Reçu certifié et archivé avec succès. Merci !`;
       edges={['top', 'left', 'right']}
       header={
         <>
-          <Header title="Historique" subtitle="Versements, remises et annulations" onRefresh={handleRefresh} />
           <View style={styles.toolbar}>
+            <View style={styles.titleRow}>
+              <View style={styles.flexShrink}>
+                <Text variant="title" accessibilityRole="header">
+                  Historique
+                </Text>
+                <Text variant="caption" tone="muted">
+                  Versements, remises et annulations
+                </Text>
+              </View>
+              <SyncBadge onSyncComplete={handleRefresh} compact />
+            </View>
             <View style={styles.searchBar}>
               <Icon name="search" size={18} color={theme.colors.textMuted} />
               <TextInput
@@ -323,11 +326,7 @@ Reçu certifié et archivé avec succès. Merci !`;
                 </Pressable>
               )}
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-              {FILTERS.map((f) => (
-                <Chip key={f.key} label={f.label} selected={filterType === f.key} tone={f.key === 'REVERSAL' ? 'danger' : 'primary'} onPress={() => handleFilter(f.key)} />
-              ))}
-            </ScrollView>
+            <SegmentedControl options={FILTERS} value={filterType} onChange={handleFilter} accessibilityLabel="Type d'opération" />
           </View>
         </>
       }
@@ -363,16 +362,18 @@ Reçu certifié et archivé avec succès. Merci !`;
       />
 
       {/* Transaction detail */}
-      <Dialog visible={isDetailModalOpen && !!selectedTx} onClose={() => setIsDetailModalOpen(false)} title="Détail de l'opération">
+      <BottomSheet
+        visible={isDetailModalOpen && !!selectedTx}
+        onClose={() => setIsDetailModalOpen(false)}
+        title={selectedTx ? getTransactionTypeLabel(selectedTx.type) || 'Opération' : "Détail de l'opération"}
+        subtitle={selectedTx ? [selectedTx.clientName, formatDate(selectedTx.createdAtLocal)].filter(Boolean).join(' · ') : undefined}
+      >
         {selectedTx && (
           <>
-            <AmountText amount={selectedTx.amount} size="large" />
+            <AmountText amount={selectedTx.amount} size="hero" />
             {[
               { label: 'Référence', value: `#${selectedTx.id.slice(0, 8)}` },
-              { label: 'Adhérent', value: selectedTx.clientName || 'Adhérent' },
-              { label: 'Type', value: getTransactionTypeLabel(selectedTx.type) || 'Opération' },
               { label: 'Mains couvertes', value: `${selectedTx.handsCovered || 1} main(s)` },
-              { label: 'Date et heure', value: formatDate(selectedTx.createdAtLocal) || '—' },
             ].map((row) => (
               <View key={row.label} style={styles.detailRow}>
                 <Text variant="caption" tone="muted" style={styles.detailLabel}>
@@ -419,22 +420,15 @@ Reçu certifié et archivé avec succès. Merci !`;
             )}
           </>
         )}
-      </Dialog>
+      </BottomSheet>
 
       {/* Cancellation reason */}
-      <Dialog
+      <BottomSheet
         visible={isCancelPromptOpen}
         onClose={() => setIsCancelPromptOpen(false)}
-        title="Motif de l'annulation"
-        subtitle="L'opération sera rectifiée dans le solde de l'adhérent ; une écriture d'annulation est archivée pour l'audit."
-        icon="alert"
-        tone="danger"
-        actions={
-          <>
-            <Button label="Abandonner" variant="secondary" onPress={() => setIsCancelPromptOpen(false)} style={styles.flexGrow} />
-            <Button label="Continuer (PIN)" variant="danger" onPress={handleConfirmCancelReason} style={styles.flexGrow} />
-          </>
-        }
+        title="Annuler l'opération"
+        subtitle="Une écriture d'annulation est archivée pour l'audit. Motif et code PIN obligatoires."
+        footer={<Button size="lg" fullWidth label="Continuer avec le PIN" icon="lock" variant="danger" onPress={handleConfirmCancelReason} />}
       >
         <TextField
           label="Motif obligatoire"
@@ -444,13 +438,13 @@ Reçu certifié et archivé avec succès. Merci !`;
           value={cancelReason}
           onChangeText={setCancelReason}
         />
-      </Dialog>
+      </BottomSheet>
 
       {/* 4-Digit PIN Modal */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Confirmation de l'Annulation"
-        subtitle="Saisissez votre code PIN gestionnaire pour confirmer l'écriture d'annulation."
+        title="Confirmer l'annulation"
+        subtitle="Votre code PIN valide l'écriture d'annulation."
         onSuccess={handlePinSuccessCancel}
         onCancel={() => setIsPinModalOpen(false)}
       />
@@ -463,27 +457,26 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     flexShrink: { flex: 1, minWidth: 0 },
     flexGrow: { flexGrow: 1, flexBasis: 0 },
 
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     toolbar: {
       width: '100%',
       maxWidth: layout.maxContentWidth + layout.gutter * 2,
       alignSelf: 'center',
-      paddingTop: spacing.md,
-      gap: spacing.sm,
+      paddingHorizontal: layout.gutter,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.xs,
+      gap: spacing.md,
     },
     searchBar: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.sm,
-      marginHorizontal: layout.gutter,
       minHeight: layout.touchTarget,
       paddingHorizontal: spacing.md,
       borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.borderStrong,
-      backgroundColor: colors.surface,
+      backgroundColor: colors.surfaceAlt,
     },
     searchInput: { flex: 1, ...typography.body, color: colors.text, paddingVertical: spacing.sm },
-    chipsRow: { gap: spacing.sm, paddingHorizontal: layout.gutter, paddingBottom: spacing.xs },
 
     list: { flex: 1 },
     listContent: { paddingHorizontal: layout.gutter, paddingTop: spacing.md, paddingBottom: spacing.xxl },

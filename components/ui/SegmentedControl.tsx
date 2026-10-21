@@ -51,7 +51,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange, a
               {
                 flex: 1,
                 minHeight: layout.touchTarget - spacing.sm,
-                paddingHorizontal: spacing.sm,
+                paddingHorizontal: spacing.xs,
                 borderRadius: radius.sm,
                 borderCurve: 'continuous',
                 alignItems: 'center',
