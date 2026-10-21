@@ -1,32 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { View, TextInput, StyleSheet, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Header } from '@/components/Header';
-import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { AmountText, Button, Card, EmptyState, Icon, Screen, SectionHeader, Text, TextField } from '@/components/ui';
 import { createCashClosure, getCashClosures } from '@/db/cashClosureRepository';
 import { getTodayStats } from '@/db/transactionRepository';
 import { CashClosure, DashboardStats } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { generateCashClosureReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 export default function CashClosureScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { activeCollector, activeBusiness } = useAuth();
   const { isTablet, horizontalPadding } = useResponsive();
@@ -148,447 +139,221 @@ export default function CashClosureScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Header
-        title="Clôture Journalière"
-        subtitle="Arrêté de caisse & contrôle des espèces"
-        showBack={true}
-        showProfile={false}
-        showScanner={false}
-        fallbackBackRoute="/(tabs)"
-      />
-
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: horizontalPadding },
-            isTablet && styles.scrollContentTablet,
-          ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Theoretical Summary Box */}
-          <View style={styles.summaryCard}>
-            <View style={styles.summaryCardHeader}>
-              <Icon name="cash" size={16} color={SOL_COLORS.primary} />
-              <Text style={styles.summaryTitle}>SITUATION THÉORIQUE DU JOUR</Text>
-            </View>
-
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total Encaissements (Cotisations) :</Text>
-              <Text style={styles.summaryValueIn}>
-                +{formatCurrency(todayStats.sabotayDepositsToday)}
-              </Text>
-            </View>
-
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total Décaissements (Mains remises) :</Text>
-              <Text style={styles.summaryValueOut}>
-                -{formatCurrency(todayStats.withdrawalsToday)}
-              </Text>
-            </View>
-
-            <View style={styles.divider} />
-
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabelBold}>Solde Théorique en Caisse :</Text>
-              <Text style={styles.summaryTheoreticalBalance}>
-                {formatCurrency(theoreticalBalance)}
-              </Text>
-            </View>
-          </View>
-
-          {/* Declared Cash Input */}
-          <View style={styles.inputSection}>
-            <Text style={styles.sectionLabel}>MONTANT RÉEL CONSTATÉ EN ESPÈCES (HTG)</Text>
-            <View style={styles.inputBox}>
-              <Icon name="cash" size={16} color="#64748B" style={{ marginRight: 8 }} />
-              <TextInput
-                style={styles.textInput}
-                placeholder="0"
-                placeholderTextColor="#94A3B8"
-                keyboardType="numeric"
-                value={declaredCash}
-                onChangeText={setDeclaredCash}
-              />
-            </View>
-          </View>
-
-          {/* Discrepancy Indicator Card */}
-          <View
-            style={[
-              styles.discrepancyCard,
-              hasDiscrepancy ? styles.discrepancyCardAlert : styles.discrepancyCardBalanced,
-            ]}
-          >
-            <View style={styles.discrepancyHeader}>
-              <Icon
-                name={hasDiscrepancy ? 'alert' : 'check'}
-                size={14}
-                color={hasDiscrepancy ? '#DC2626' : '#059669'}
-              />
-              <Text
-                style={[
-                  styles.discrepancyTitle,
-                  { color: hasDiscrepancy ? '#DC2626' : '#059669' },
-                ]}
-              >
-                {hasDiscrepancy
-                  ? `ÉCART DÉTECTÉ : ${formatCurrency(discrepancy)}`
-                  : 'CAISSE ÉQUILIBRÉE (AUCUN ÉCART)'}
-              </Text>
-            </View>
-            <Text style={styles.discrepancySub}>
-              {hasDiscrepancy
-                ? discrepancy > 0
-                  ? 'Excédent constaté par rapport au calcul système.'
-                  : 'Déficit constaté par rapport au calcul système.'
-                : 'Le montant physique correspond parfaitement aux enregistrements.'}
-            </Text>
-          </View>
-
-          {/* Mandatory Discrepancy Note */}
-          {hasDiscrepancy && (
-            <View style={styles.noteSection}>
-              <Text style={styles.noteLabel}>JUSTIFICATION OBLIGATOIRE DE L'ÉCART</Text>
-              <TextInput
-                style={styles.noteInput}
-                multiline
-                numberOfLines={3}
-                placeholder="Ex: Erreur de rendu de monnaie lors de la dernière tournée."
-                placeholderTextColor="#94A3B8"
-                value={discrepancyNote}
-                onChangeText={setDiscrepancyNote}
-              />
-            </View>
-          )}
-
-          {/* Submit Closure Button */}
-          <TouchableOpacity
-            activeOpacity={0.8}
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flexOne}>
+      <Screen
+        edges={['top', 'left', 'right', 'bottom']}
+        header={
+          <Header
+            title="Clôture de caisse"
+            subtitle="Arrêté du jour et contrôle des espèces"
+            showBack={true}
+            showProfile={false}
+            showScanner={false}
+            fallbackBackRoute="/(tabs)"
+          />
+        }
+        footerSafeArea={false}
+        footer={
+          <Button
+            size="lg"
+            fullWidth
+            icon="lock"
+            label={isSubmitting ? 'Enregistrement…' : 'Valider la clôture (PIN)'}
+            loading={isSubmitting}
             onPress={handleOpenPinValidation}
-            disabled={isSubmitting}
-            style={styles.submitBtn}
-          >
-            <Icon name="shield" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
-            <Text style={styles.submitBtnText}>
-              {isSubmitting ? 'Enregistrement...' : 'Valider la Clôture (Code PIN)'}
+          />
+        }
+      >
+        {/* Theoretical summary */}
+        <Card style={styles.cardGap}>
+          <Text variant="subheading" accessibilityRole="header">
+            Situation théorique du jour
+          </Text>
+          <View style={styles.summaryRow}>
+            <Text variant="body" tone="muted" style={styles.flexShrink}>
+              Encaissements (cotisations)
             </Text>
-          </TouchableOpacity>
-
-          {/* Recent Closures History */}
-          <View style={styles.historySection}>
-            <Text style={styles.historySectionTitle}>HISTORIQUE DES CLÔTURES RÉCENTES</Text>
-
-            {closureHistory.length === 0 ? (
-              <Text style={styles.emptyHistoryText}>Aucune clôture enregistrée.</Text>
-            ) : (
-              closureHistory.map((item) => (
-                <View key={item.id} style={styles.historyCard}>
-                  <View style={styles.historyTopRow}>
-                    <Text style={styles.historyDate}>
-                      Clôture du {formatDateShort(item.closureDate)}
-                    </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <View style={styles.historyBadge}>
-                        <Text style={styles.historyBadgeText}>{item.status}</Text>
-                      </View>
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        onPress={() => handleShareClosurePdf(item)}
-                        style={styles.pdfBadgeBtn}
-                      >
-                        <Icon name="print" size={12} color="#1D4ED8" />
-                        <Text style={styles.pdfBadgeText}>Bordereau PDF</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  <View style={styles.historyDetailRow}>
-                    <Text style={styles.historyDetailLabel}>Déclaré :</Text>
-                    <Text style={styles.historyDetailValue}>
-                      {formatCurrency(item.totalCashDeclared)}
-                    </Text>
-                  </View>
-
-                  <View style={styles.historyDetailRow}>
-                    <Text style={styles.historyDetailLabel}>Théorique :</Text>
-                    <Text style={styles.historyDetailValue}>
-                      {formatCurrency(item.totalSystemCalculated)}
-                    </Text>
-                  </View>
-
-                  {item.discrepancyReason && (
-                    <Text style={styles.historyNoteText}>
-                      Motif : {item.discrepancyReason}
-                    </Text>
-                  )}
-                </View>
-              ))
-            )}
+            <AmountText amount={todayStats.sabotayDepositsToday} size="small" sign="credit" tone="success" />
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          <View style={styles.summaryRow}>
+            <Text variant="body" tone="muted" style={styles.flexShrink}>
+              Décaissements (mains remises)
+            </Text>
+            <AmountText amount={todayStats.withdrawalsToday} size="small" sign="debit" tone="danger" />
+          </View>
+          <View style={[styles.summaryRow, styles.totalRow]}>
+            <Text variant="bodyStrong" style={styles.flexShrink}>
+              Solde théorique en caisse
+            </Text>
+            <AmountText amount={theoreticalBalance} size="large" tone="primary" />
+          </View>
+        </Card>
 
-      {/* 4-Digit PIN Verification Modal */}
-      <PinVerificationModal
-        visible={isPinModalOpen}
-        title="Confirmation de la Clôture"
-        subtitle={`Veuillez saisir votre code PIN pour verrouiller la journée et enregistrer le solde déclaré de ${formatCurrency(numDeclared)}.`}
-        onSuccess={handlePinSuccessSubmit}
-        onCancel={() => setIsPinModalOpen(false)}
-      />
-    </SafeAreaView>
+        {/* Declared cash */}
+        <Card style={styles.cardGap}>
+          <Text variant="label">Montant constaté en caisse (HTG)</Text>
+          <View style={styles.cashInputBox}>
+            <Icon name="cash" size={24} color={theme.colors.textMuted} />
+            <TextInput
+              style={styles.cashInput}
+              placeholder="0"
+              placeholderTextColor={theme.colors.textPlaceholder}
+              keyboardType="numeric"
+              value={declaredCash}
+              onChangeText={setDeclaredCash}
+              accessibilityLabel="Montant réel constaté en espèces, en gourdes"
+              selectTextOnFocus
+            />
+            <Text variant="heading" tone="muted">
+              HTG
+            </Text>
+          </View>
+        </Card>
+
+        {/* Discrepancy */}
+        <Card tone={hasDiscrepancy ? 'danger' : 'success'}>
+          <View style={styles.noticeRow}>
+            <Icon
+              name={hasDiscrepancy ? 'alert' : 'check'}
+              size={22}
+              color={hasDiscrepancy ? theme.colors.danger : theme.colors.success}
+              strokeWidth={2.5}
+            />
+            <View style={styles.flexShrink}>
+              {hasDiscrepancy ? (
+                <View style={styles.discrepancyTitle}>
+                  <Text variant="subheading" tone="danger">
+                    Écart
+                  </Text>
+                  <AmountText amount={discrepancy} size="medium" tone="danger" sign={discrepancy > 0 ? 'credit' : 'debit'} />
+                </View>
+              ) : (
+                <Text variant="subheading" tone="success">
+                  Caisse équilibrée
+                </Text>
+              )}
+              <Text variant="body" tone={hasDiscrepancy ? 'danger' : 'success'}>
+                {hasDiscrepancy
+                  ? discrepancy > 0
+                    ? 'Excédent par rapport au calcul du système.'
+                    : 'Déficit par rapport au calcul du système.'
+                  : 'Le montant en caisse correspond aux enregistrements.'}
+              </Text>
+            </View>
+          </View>
+        </Card>
+
+        {hasDiscrepancy && (
+          <TextField
+            label="Justification obligatoire de l'écart"
+            multiline
+            numberOfLines={3}
+            placeholder="Ex : erreur de rendu de monnaie lors de la dernière tournée"
+            value={discrepancyNote}
+            onChangeText={setDiscrepancyNote}
+          />
+        )}
+
+        {/* Recent closures */}
+        <SectionHeader title="Clôtures récentes" count={closureHistory.length} />
+        {closureHistory.length === 0 ? (
+          <Card padding="none">
+            <EmptyState icon="history" title="Aucune clôture enregistrée" message="Vos arrêtés de caisse quotidiens apparaîtront ici." />
+          </Card>
+        ) : (
+          closureHistory.map((item) => {
+            const diff = item.totalCashDeclared - item.totalSystemCalculated;
+            return (
+              <Card key={item.id} style={styles.cardGap}>
+                <View style={styles.summaryRow}>
+                  <Text variant="bodyStrong" style={styles.flexShrink}>
+                    Clôture du {formatDateShort(item.closureDate)}
+                  </Text>
+                  <View style={styles.statusChip}>
+                    <Text variant="label" tone="muted">
+                      {item.status}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text variant="caption" tone="muted">
+                    Déclaré
+                  </Text>
+                  <AmountText amount={item.totalCashDeclared} size="small" />
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text variant="caption" tone="muted">
+                    Théorique
+                  </Text>
+                  <AmountText amount={item.totalSystemCalculated} size="small" />
+                </View>
+                {Math.abs(diff) > 0.01 && (
+                  <View style={styles.summaryRow}>
+                    <Text variant="caption" tone="danger">
+                      Écart
+                    </Text>
+                    <AmountText amount={diff} size="small" tone="danger" sign={diff > 0 ? 'credit' : 'debit'} />
+                  </View>
+                )}
+                {item.discrepancyReason && (
+                  <Text variant="caption" tone="muted">
+                    Motif : {item.discrepancyReason}
+                  </Text>
+                )}
+                <Button
+                  label="Bordereau PDF"
+                  icon="printer"
+                  variant="secondary"
+                  fullWidth
+                  loading={isExportingPdf}
+                  onPress={() => handleShareClosurePdf(item)}
+                />
+              </Card>
+            );
+          })
+        )}
+
+        {/* 4-Digit PIN Verification Modal */}
+        <PinVerificationModal
+          visible={isPinModalOpen}
+          title="Confirmation de la Clôture"
+          subtitle={`Veuillez saisir votre code PIN pour verrouiller la journée et enregistrer le solde déclaré de ${formatCurrency(numDeclared)}.`}
+          onSuccess={handlePinSuccessSubmit}
+          onCancel={() => setIsPinModalOpen(false)}
+        />
+      </Screen>
+    </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  scrollContentTablet: {
-    maxWidth: 720,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  summaryCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    marginBottom: 14,
-  },
-  summaryCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 10,
-  },
-  summaryTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  summaryLabel: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  summaryLabelBold: {
-    fontSize: 13,
-    color: SOL_COLORS.textPrimary,
-    fontWeight: '800',
-  },
-  summaryValueIn: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  summaryValueOut: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#DC2626',
-  },
-  summaryTheoreticalBalance: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: SOL_COLORS.primary,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E2E8F0',
-    marginVertical: 8,
-  },
-  inputSection: {
-    marginBottom: 12,
-  },
-  sectionLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  inputBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    height: 48,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  textInput: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  discrepancyCard: {
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    marginBottom: 12,
-  },
-  discrepancyCardBalanced: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  discrepancyCardAlert: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
-  },
-  discrepancyHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4,
-  },
-  discrepancyTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  discrepancySub: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  noteSection: {
-    marginBottom: 14,
-  },
-  noteLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#DC2626',
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  noteInput: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-    padding: 12,
-    fontSize: 13,
-    fontWeight: '600',
-    color: SOL_COLORS.textPrimary,
-    minHeight: 70,
-    textAlignVertical: 'top',
-  },
-  submitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    height: 52,
-    borderRadius: 14,
-    marginBottom: 20,
-    elevation: 2,
-  },
-  submitBtnText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  historySection: {
-    marginTop: 6,
-  },
-  historySectionTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
-  emptyHistoryText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontWeight: '600',
-  },
-  historyCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    marginBottom: 8,
-  },
-  historyTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  historyDate: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  historyBadge: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  historyBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#047857',
-  },
-  pdfBadgeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  pdfBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  historyDetailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 2,
-  },
-  historyDetailLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  historyDetailValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  historyNoteText: {
-    fontSize: 11,
-    color: '#D97706',
-    fontWeight: '600',
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
+  StyleSheet.create({
+    flexOne: { flex: 1, backgroundColor: colors.background },
+    flexShrink: { flex: 1, minWidth: 0 },
+    cardGap: { gap: spacing.sm },
+    summaryRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: spacing.md },
+    totalRow: { marginTop: spacing.xs, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider },
+
+    cashInputBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      minHeight: layout.actionHeight + spacing.lg,
+      paddingHorizontal: spacing.lg,
+      borderRadius: radius.md,
+      borderWidth: 2,
+      borderColor: colors.primary,
+      backgroundColor: colors.surface,
+    },
+    cashInput: { flex: 1, minWidth: 0, ...typography.amountLarge, color: colors.text, paddingVertical: spacing.sm },
+
+    noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+    discrepancyTitle: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm, flexWrap: 'wrap' },
+    statusChip: {
+      minHeight: spacing.xxl,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surfaceAlt,
+    },
+  });
