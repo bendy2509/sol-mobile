@@ -212,7 +212,6 @@ export default function CycleManagementScreen() {
       title="Gestion du cycle"
       subtitle="Clôture et réouverture"
       showBack={true}
-      showProfile={false}
       showScanner={false}
       fallbackBackRoute="/(tabs)/sol"
     />

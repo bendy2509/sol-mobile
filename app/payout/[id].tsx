@@ -203,7 +203,6 @@ export default function PayoutScreen() {
       title="Décaissement"
       subtitle={`Bay Men · ${business?.name || 'Carnet SOL'}`}
       showBack={true}
-      showProfile={false}
       showScanner={false}
       fallbackBackRoute="/(tabs)"
     />

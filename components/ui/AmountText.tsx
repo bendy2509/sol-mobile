@@ -23,7 +23,7 @@ const VARIANT = { hero: 'amountHero', large: 'amountLarge', medium: 'amount', sm
  * HTG amount with tabular figures. A zero is always neutral: never red, never signed,
  * so "-0 HTG" can't be read as a loss.
  */
-export function AmountText({ amount, currency = 'HTG', size = 'medium', tone = 'default', sign = 'none', align, style }: AmountTextProps) {
+export function AmountText({ amount, currency, size = 'medium', tone = 'default', sign = 'none', align, style }: AmountTextProps) {
   const value = Number.isFinite(amount) ? amount : 0;
   const isZero = value === 0;
   const prefix = isZero || sign === 'none' ? '' : sign === 'credit' ? '+' : '−';

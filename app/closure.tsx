@@ -147,7 +147,6 @@ export default function CashClosureScreen() {
             title="Clôture de caisse"
             subtitle="Arrêté du jour et contrôle des espèces"
             showBack={true}
-            showProfile={false}
             showScanner={false}
             fallbackBackRoute="/(tabs)"
           />

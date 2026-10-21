@@ -2,7 +2,14 @@
  * Utility functions for formatting currencies, dates, phone numbers and IDs in French
  */
 
-export function formatCurrency(amount: number, currency: string = 'HTG'): string {
+let displayCurrency = 'HTG';
+
+/** Currency label chosen in Réglages (display only). */
+export function setDisplayCurrency(label: string): void {
+  displayCurrency = label || 'HTG';
+}
+
+export function formatCurrency(amount: number, currency: string = displayCurrency): string {
   if (isNaN(amount) || amount === null || amount === undefined) {
     return `0 ${currency}`;
   }

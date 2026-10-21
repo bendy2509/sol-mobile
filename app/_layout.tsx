@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 
 import { initDatabase } from '@/db/sqlite';
+import { loadReceiptPreferences } from '@/lib/receiptPreferences';
 import { syncEngine } from '@/db/syncEngine';
 import { AuthProvider } from '@/context/AuthContext';
 import { SyncProvider } from '@/context/SyncContext';
@@ -33,7 +34,7 @@ export default function RootLayout() {
 
     async function prepare() {
       try {
-        await initDatabase();
+        await Promise.all([initDatabase(), loadReceiptPreferences()]);
         syncEngine.startAutoSync(30000);
       } catch (err) {
         console.warn('Database initialization error:', err);
@@ -116,7 +117,7 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
           <Stack.Screen name="recover-pin" options={{ title: 'Code PIN oublié', headerBackTitle: 'Connexion' }} />
           <Stack.Screen name="restore-backup" options={{ title: 'Restaurer une sauvegarde', headerBackTitle: 'Retour' }} />
           <Stack.Screen name="recovery-code" options={{ title: 'Code de récupération', headerBackVisible: false, gestureEnabled: false }} />
-          <Stack.Screen name="security" options={{ title: 'Sécurité et sauvegarde', headerBackTitle: 'Retour' }} />
+          <Stack.Screen name="security" options={{ headerShown: false }} />
           <Stack.Screen
             name="profile"
             options={{

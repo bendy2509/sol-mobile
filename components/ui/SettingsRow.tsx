@@ -21,10 +21,12 @@ export interface SettingsRowProps {
   divider?: boolean;
   /** Shows a lock: the action asks for the PIN. */
   requiresPin?: boolean;
+  /** Current choice in a list of options (langue): check mark instead of chevron. */
+  selected?: boolean;
 }
 
 /** One line of the Réglages screen: icon · label / description · value or switch · chevron. */
-export function SettingsRow({ label, description, icon, value, toggle, onPress, tone = 'default', divider = true, requiresPin }: SettingsRowProps) {
+export function SettingsRow({ label, description, icon, value, toggle, onPress, tone = 'default', divider = true, requiresPin, selected }: SettingsRowProps) {
   const { colors, spacing, layout } = useTheme();
   const fg = tone === 'danger' ? colors.danger : colors.text;
 
@@ -59,6 +61,8 @@ export function SettingsRow({ label, description, icon, value, toggle, onPress, 
           thumbColor={colors.surface}
           accessibilityLabel={label}
         />
+      ) : selected !== undefined ? (
+        selected ? <Icon name="check" size={20} color={colors.primary} strokeWidth={2.5} /> : null
       ) : onPress ? (
         <Icon name="chevron-right" size={18} color={colors.textMuted} />
       ) : null}
@@ -83,6 +87,7 @@ export function SettingsRow({ label, description, icon, value, toggle, onPress, 
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={value ? `${label}, ${value}` : label}
+      accessibilityState={selected !== undefined ? { selected } : undefined}
       accessibilityHint={requiresPin ? 'Demande votre code PIN' : undefined}
       style={({ pressed }) => [style, pressed && { backgroundColor: colors.surfacePressed }]}
     >

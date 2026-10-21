@@ -86,7 +86,6 @@ export default function BackupDiagnosticsScreen() {
           title="Diagnostic & sauvegarde"
           subtitle="Intégrité locale et sécurité des écritures"
           showBack
-          showProfile={false}
           showScanner={false}
           fallbackBackRoute="/(tabs)"
         />
@@ -94,7 +93,7 @@ export default function BackupDiagnosticsScreen() {
       contentStyle={styles.content}
       footer={
         <View style={styles.footer}>
-          <Button size="lg" fullWidth icon="download" label="Sauvegarde chiffrée" onPress={() => router.push('/security' as any)} />
+          <Button size="lg" fullWidth icon="download" label="Sauvegarde chiffrée" onPress={() => router.push('/(tabs)/settings' as any)} />
           <Button variant="secondary" fullWidth icon="cycle" loading={loading} disabled={loading} label="Relancer le test d'intégrité" onPress={runDiagnostics} />
         </View>
       }

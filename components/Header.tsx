@@ -13,7 +13,6 @@ interface HeaderProps {
   title?: string;
   subtitle?: string;
   showScanner?: boolean;
-  showProfile?: boolean;
   showBack?: boolean;
   onRefresh?: () => void;
   fallbackBackRoute?: string;
@@ -23,7 +22,6 @@ export const Header: React.FC<HeaderProps> = ({
   title,
   subtitle,
   showScanner = true,
-  showProfile = true,
   showBack = false,
   onRefresh,
   fallbackBackRoute = '/(tabs)',
@@ -36,7 +34,6 @@ export const Header: React.FC<HeaderProps> = ({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { colors } = theme;
 
-  const isProfileScreen = pathname === '/profile' || pathname?.endsWith('/profile');
   const isScanScreen = pathname === '/scan' || pathname?.endsWith('/scan');
 
   const handleBackPress = () => {
@@ -47,12 +44,6 @@ export const Header: React.FC<HeaderProps> = ({
     if (isScanScreen) return;
     triggerLightImpact();
     router.push('/scan' as any);
-  };
-
-  const handleProfilePress = () => {
-    if (isProfileScreen) return;
-    triggerLightImpact();
-    router.navigate('/profile' as any);
   };
 
   const getFirstName = () => {
@@ -99,32 +90,17 @@ export const Header: React.FC<HeaderProps> = ({
             </Pressable>
           )}
 
-          {showProfile && !isProfileScreen && (
-            <Pressable
-              onPress={handleProfilePress}
-              accessibilityRole="button"
-              accessibilityLabel="Mon Profil"
-              style={({ pressed }) => [styles.iconButton, styles.profileButton, pressed && styles.iconButtonPressed]}
-            >
-              <Icon name="user" size={22} color={colors.onPrimarySoft} />
-            </Pressable>
-          )}
         </View>
       </View>
 
-      {/* Liseré: brand bicolor accent */}
-      <View style={styles.flagRule} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        <View style={styles.flagBlue} />
-        <View style={styles.flagRed} />
-      </View>
     </View>
   );
 };
 
-const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
   StyleSheet.create({
     headerWrapper: {
-      backgroundColor: colors.surface,
+      backgroundColor: colors.background,
       zIndex: 90,
     },
     container: {
@@ -156,13 +132,4 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
     iconButtonPressed: {
       backgroundColor: colors.surfacePressed,
     },
-    profileButton: {
-      backgroundColor: colors.primarySoft,
-    },
-    flagRule: {
-      flexDirection: 'row',
-      height: 2,
-    },
-    flagBlue: { flex: 1, backgroundColor: brand.haitiBlue },
-    flagRed: { flex: 1, backgroundColor: brand.haitiRed },
   });

@@ -234,7 +234,6 @@ export default function NewClientScreen() {
             title="Nouvel adhérent"
             subtitle={`${business?.name || 'Carnet actif'} · ${formatCurrency(unitAmount)} / main`}
             showBack={true}
-            showProfile={false}
             showScanner={false}
             fallbackBackRoute="/(tabs)"
           />
