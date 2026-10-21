@@ -162,6 +162,12 @@ function RootNavigator({ ready }: { ready: boolean }) {
             }}
           />
           <Stack.Screen
+            name="payout/[id]"
+            options={{
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
             name="client/new"
             options={{
               headerShown: false,
