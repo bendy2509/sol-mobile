@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
 import {
   EMPTY_LOCK_STATE,
@@ -17,6 +17,8 @@ import {
 } from '../services/securityPolicy';
 import { decryptBackup, encryptBackup, isBackupEnvelope, MIN_BACKUP_PASSWORD_LENGTH } from '../services/backupCrypto';
 import { hashPin, verifyPinHash } from '../lib/crypto';
+
+const randomBytes = (n: number) => globalThis.crypto.getRandomValues(new Uint8Array(n));
 
 console.log('==================================================');
 console.log('TEST SUITE: MANAGER SECURITY (LOCKOUT, RECOVERY, BACKUP)');
@@ -88,7 +90,7 @@ const payload = { collectorId: 'c-1', tables: { clients: [{ id: 'x', full_name: 
 const password = 'carnet-2026!';
 const envelope = encryptBackup(payload, password, { salt: new Uint8Array(randomBytes(16)), nonce: new Uint8Array(randomBytes(12)) });
 assert(isBackupEnvelope(envelope), 'Envelope has the SOL Mobile backup format');
-assert(!envelope.data.includes(Buffer.from('Marie').toString('hex')), 'Plaintext names do not appear in the file');
+assert(!envelope.data.includes(bytesToHex(utf8ToBytes('Marie'))), 'Plaintext names do not appear in the file');
 assert(JSON.stringify(decryptBackup(envelope, password)) === JSON.stringify(payload), 'Round trip restores the exact payload');
 assert(throws(() => decryptBackup(envelope, 'wrong-password'), 'Mot de passe incorrect'), 'Wrong password is rejected');
 const tampered = { ...envelope, data: (envelope.data[0] === 'a' ? 'b' : 'a') + envelope.data.slice(1) };

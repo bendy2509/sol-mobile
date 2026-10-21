@@ -12,7 +12,8 @@ import { syncEngine } from '@/db/syncEngine';
 import { AuthProvider } from '@/context/AuthContext';
 import { SyncProvider } from '@/context/SyncContext';
 import { Text } from '@/components/ui';
-import { ThemeProvider, fontAssets, useTheme } from '@/theme';
+import { I18nProvider } from '@/i18n';
+import { ThemeProvider, fontAssets, useTheme, useThemePreference } from '@/theme';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -54,19 +55,23 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AuthProvider>
-          <SyncProvider>
-            <RootNavigator ready={databaseReady && (fontsLoaded || !!fontError)} />
-          </SyncProvider>
-        </AuthProvider>
+        <I18nProvider>
+          <AuthProvider>
+            <SyncProvider>
+              <RootNavigator ready={databaseReady && (fontsLoaded || !!fontError)} />
+            </SyncProvider>
+          </AuthProvider>
+        </I18nProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );
 }
 
 /** Stack, status bar and boot screen, themed (rendered inside ThemeProvider). */
-function RootNavigator({ ready }: { ready: boolean }) {
-  const { colors, fonts, spacing, isDark } = useTheme();
+function RootNavigator({ ready: bootReady }: { ready: boolean }) {
+  const { colors, spacing, isDark, typography } = useTheme();
+  const { ready: preferencesReady } = useThemePreference();
+  const ready = bootReady && preferencesReady;
 
   return (
     <>
@@ -84,9 +89,10 @@ function RootNavigator({ ready }: { ready: boolean }) {
             },
             headerTintColor: colors.text,
             headerTitleStyle: {
-              fontFamily: fonts.bold,
-              fontSize: 18,
+              fontFamily: typography.subheading.fontFamily,
+              fontSize: typography.subheading.fontSize,
             },
+            headerShadowVisible: false,
             contentStyle: {
               backgroundColor: colors.background,
             },

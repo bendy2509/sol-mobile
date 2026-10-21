@@ -6,7 +6,7 @@ import { Theme, useTheme } from '@/theme';
 import { Icon, UiIconName } from './Icon';
 import { Text } from './Text';
 
-/** inverse = white button on the blue hero band. */
+/** inverse = ink button (high-contrast action on a tinted surface). */
 export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'inverse';
 export type ButtonSize = 'md' | 'lg';
 
@@ -14,7 +14,7 @@ export interface ButtonProps {
   label: string;
   onPress?: () => void;
   variant?: ButtonVariant;
-  /** md = 48dp (default), lg = 56dp main action in the thumb zone. */
+  /** md = 44dp (default), lg = 48dp main action in the thumb zone. */
   size?: ButtonSize;
   icon?: UiIconName;
   iconPosition?: 'left' | 'right';
@@ -43,7 +43,7 @@ function variantColors(theme: Theme, variant: ButtonVariant, pressed: boolean) {
     case 'danger':
       return { bg: pressed ? c.dangerLine : c.dangerSoft, fg: c.danger, border: 'transparent' };
     case 'inverse':
-      return { bg: pressed ? c.onHeroMuted : c.onHero, fg: c.hero, border: 'transparent' };
+      return { bg: pressed ? c.textMuted : c.text, fg: c.textInverse, border: 'transparent' };
     case 'ghost':
       return { bg: pressed ? c.surfacePressed : 'transparent', fg: c.link, border: 'transparent' };
   }
@@ -89,7 +89,7 @@ export function Button({
         const v = variantColors(theme, variant, pressed && !inactive);
         const base: ViewStyle = {
           minHeight: height,
-          paddingHorizontal: size === 'lg' ? spacing.xl : spacing.md,
+          paddingHorizontal: size === 'lg' ? spacing.xl : spacing.lg,
           borderRadius: radius.md,
           borderCurve: 'continuous',
           borderWidth: 1,
@@ -120,7 +120,7 @@ export function Button({
             ) : locked ? (
               <Icon name="lock" size={18} color={fg} />
             ) : icon ? (
-              <Icon name={icon} size={size === 'lg' ? 22 : 18} color={fg} />
+              <Icon name={icon} size={size === 'lg' ? 20 : 18} color={fg} />
             ) : null}
             <View style={{ flexShrink: 1 }}>
               <Text variant={size === 'lg' ? 'buttonLarge' : 'button'} style={{ color: fg }} numberOfLines={2} align="center">

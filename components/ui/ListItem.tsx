@@ -23,7 +23,7 @@ export interface ListItemProps {
   accessibilityLabel?: string;
 }
 
-/** Ledger row: leading · title / subtitle / meta · trailing. Min height 64dp. */
+/** Ledger row: leading · title / subtitle / meta · trailing. Min height 56dp. */
 export const ListItem = React.memo(function ListItem({
   title,
   subtitle,
@@ -36,7 +36,7 @@ export const ListItem = React.memo(function ListItem({
   selected = false,
   accessibilityLabel,
 }: ListItemProps) {
-  const { colors, spacing } = useTheme();
+  const { colors, spacing, layout } = useTheme();
 
   const content = (
     <>
@@ -61,7 +61,7 @@ export const ListItem = React.memo(function ListItem({
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: spacing.md,
-    minHeight: 64,
+    minHeight: layout.rowHeight,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
     borderBottomWidth: divider ? 1 : 0,

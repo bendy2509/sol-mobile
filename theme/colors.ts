@@ -1,11 +1,13 @@
 /**
- * SOL Mobile — Semantic color palette (Direction A « Registre »).
+ * SOL Mobile — Semantic color palette (Direction A « Registre sobre »).
  * Screens never use raw hex values: they read these roles through useTheme().
  *
  * Rules:
- * - Haitian blue (#00209F) is the brand signature (primary, hero, liseré).
- * - Haitian red (#D21034) is ONLY used in the bicolor liseré and official documents,
- *   never as a status. Errors / overdue use `danger` (burnt orange), a distinct hue.
+ * - One action color: a calm institutional blue (#1F3FB8), lighter than the flag blue.
+ * - The flag blue (#00209F) and red (#D21034) are brand accents only: logo and receipts.
+ *   The interface never depends on them, and the red is never a status.
+ * - The hero is a number on a plain surface, not a colored block.
+ * - Errors / overdue use `danger` (burnt orange), a distinct hue.
  * - Every financial status pairs its color with an icon and a label.
  */
 
@@ -76,23 +78,23 @@ export interface ThemeColors {
 }
 
 const light: ThemeColors = {
-  primary: '#00209F',
-  primaryPressed: '#001A80',
+  primary: '#1F3FB8',
+  primaryPressed: '#18329A',
   onPrimary: '#FFFFFF',
-  primarySoft: '#E7EBFF',
-  onPrimarySoft: '#00209F',
+  primarySoft: '#EBEEFA',
+  onPrimarySoft: '#1F3FB8',
 
-  hero: '#00209F',
-  onHero: '#FFFFFF',
-  onHeroMuted: '#C9D2FF',
-  heroTrack: '#2E44B8',
-  heroTrackActive: '#FFFFFF',
+  hero: '#FFFFFF',
+  onHero: '#141B2D',
+  onHeroMuted: '#4A5368',
+  heroTrack: '#EEF0F4',
+  heroTrackActive: '#1F3FB8',
 
   background: '#F4F5F8',
   surface: '#FFFFFF',
   surfaceAlt: '#EEF0F4',
   surfacePressed: '#E3E6EC',
-  border: '#E3E6EC',
+  border: '#E6E8EE',
   borderStrong: '#C5CBD8',
   divider: '#EEF0F4',
   overlay: 'rgba(14, 19, 34, 0.55)',
@@ -101,7 +103,7 @@ const light: ThemeColors = {
   textMuted: '#4A5368',
   textPlaceholder: '#6B7385',
   textInverse: '#FFFFFF',
-  link: '#00209F',
+  link: '#1F3FB8',
 
   success: '#0B6E47',
   successSoft: '#E6F4EC',
@@ -115,9 +117,9 @@ const light: ThemeColors = {
   danger: '#B83A0B',
   dangerSoft: '#FDEDE4',
   dangerLine: '#F0B9A0',
-  info: '#00209F',
-  infoSoft: '#E7EBFF',
-  infoLine: '#B9C4FA',
+  info: '#1F3FB8',
+  infoSoft: '#EBEEFA',
+  infoLine: '#C3CCF2',
 
   locked: '#4A5368',
   lockedSoft: '#EEF0F4',
@@ -125,17 +127,17 @@ const light: ThemeColors = {
 };
 
 const dark: ThemeColors = {
-  primary: '#8EA0FF',
-  primaryPressed: '#A9B7FF',
+  primary: '#93A6FF',
+  primaryPressed: '#AEBCFF',
   onPrimary: '#0B1440',
-  primarySoft: '#1E2A5C',
+  primarySoft: '#1F2950',
   onPrimarySoft: '#C9D2FF',
 
-  hero: '#14247A',
-  onHero: '#FFFFFF',
-  onHeroMuted: '#B7C2FF',
-  heroTrack: '#2C3C96',
-  heroTrackActive: '#FFFFFF',
+  hero: '#171E31',
+  onHero: '#EEF1F8',
+  onHeroMuted: '#A8B0C4',
+  heroTrack: '#26304D',
+  heroTrackActive: '#93A6FF',
 
   background: '#0E1322',
   surface: '#171E31',
@@ -150,7 +152,7 @@ const dark: ThemeColors = {
   textMuted: '#A8B0C4',
   textPlaceholder: '#8C95AB',
   textInverse: '#0E1322',
-  link: '#A9B7FF',
+  link: '#AEBCFF',
 
   success: '#4CC38A',
   successSoft: '#12301F',
@@ -164,8 +166,8 @@ const dark: ThemeColors = {
   danger: '#FF8A5C',
   dangerSoft: '#3A1A10',
   dangerLine: '#6B3220',
-  info: '#8EA0FF',
-  infoSoft: '#1E2A5C',
+  info: '#93A6FF',
+  infoSoft: '#1F2950',
   infoLine: '#33438A',
 
   locked: '#A8B0C4',

@@ -62,8 +62,9 @@ export function StatusBadge({ status, detail, label, appearance = 'chip', style 
           gap: spacing.xs,
         },
         isChip && {
-          minHeight: spacing.xxl,
-          paddingHorizontal: spacing.md,
+          minHeight: spacing.xl + spacing.xs,
+          paddingVertical: spacing.xs,
+          paddingHorizontal: spacing.sm + spacing.xs,
           borderRadius: radius.pill,
           borderWidth: 1,
           backgroundColor: colors[cfg.bg],

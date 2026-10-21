@@ -15,14 +15,14 @@ export interface CardProps {
   style?: StyleProp<ViewStyle>;
 }
 
-/** Surface container. `hero` is the blue cagnotte band; status tones tint the card. */
+/** Surface container. `hero` holds the screen's single hero amount; status tones tint the card. */
 export function Card({ children, tone = 'default', padding = 'md', onPress, accessibilityLabel, style }: CardProps) {
   const { colors, radius, spacing, shadows } = useTheme();
 
   const toneStyle: Record<CardTone, ViewStyle> = {
     default: { backgroundColor: colors.surface, borderColor: 'transparent', ...shadows.card },
     sunken: { backgroundColor: colors.surfaceAlt, borderColor: colors.surfaceAlt },
-    hero: { backgroundColor: colors.hero, borderColor: colors.hero },
+    hero: { backgroundColor: colors.hero, borderColor: 'transparent', ...shadows.card },
     success: { backgroundColor: colors.successSoft, borderColor: colors.successSoft },
     warning: { backgroundColor: colors.warningSoft, borderColor: colors.warningSoft },
     danger: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerSoft },
