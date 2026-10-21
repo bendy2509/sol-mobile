@@ -410,12 +410,9 @@ export default function CollectScreen() {
 
       {/* Amount to collect: the hero of the screen */}
       <Card tone="hero" padding="lg">
-        <Text variant="label" tone="onHeroMuted">
-          Montant à encaisser
-        </Text>
         <AmountText amount={totalAmount} size="hero" tone="onHero" />
         <Text variant="body" tone="onHeroMuted">
-          {handsLabel} × {formatCurrency(unitAmount)}
+          À encaisser · {handsLabel} × {formatCurrency(unitAmount)}
         </Text>
         {memberHandsCount > 1 && (
           <Text variant="caption" tone="onHeroMuted">

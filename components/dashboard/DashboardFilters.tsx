@@ -59,9 +59,7 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
           gap: spacing.sm,
           minHeight: layout.touchTarget,
           paddingHorizontal: spacing.md,
-          borderRadius: radius.md,
-          borderWidth: 1,
-          borderColor: colors.borderStrong,
+          borderRadius: radius.pill,
           backgroundColor: colors.surface,
         }}
       >

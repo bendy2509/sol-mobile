@@ -158,7 +158,7 @@ export default function SolMatrixScreen() {
     <Screen
       edges={['top', 'left', 'right']}
       header={
-        <Header title={business?.name || 'Sol (ROSCA)'} subtitle="Ordre de passage des mains" onRefresh={handleRefresh} />
+        <Header title={business?.name || 'Sol (ROSCA)'} subtitle={`Ordre de passage · ${getFrequencyLabel(business?.frequency || 'DAILY')}`} onRefresh={handleRefresh} />
       }
       refreshControl={
         <RefreshControl
@@ -171,20 +171,10 @@ export default function SolMatrixScreen() {
     >
       {/* Cycle hero */}
       <Card tone="hero" padding="lg" style={styles.heroCard}>
-        <Text variant="label" tone="onHeroMuted">
-          Cycle en cours · {getFrequencyLabel(business?.frequency || 'DAILY')}
-        </Text>
-        <Text variant="heading" tone="onHero" numberOfLines={2}>
-          {business?.name || 'Groupe Sol'}
-        </Text>
-
         <View style={styles.heroPot}>
-          <Text variant="caption" tone="onHeroMuted">
-            Cagnotte par tour
-          </Text>
           <AmountText amount={potValue} size="hero" tone="onHero" />
           <Text variant="body" tone="onHeroMuted">
-            {totalHandsCount} mains × {formatCurrency(business?.contributionAmount || 250)}
+            Cagnotte par tour · {totalHandsCount} mains × {formatCurrency(business?.contributionAmount || 250)}
           </Text>
         </View>
 
@@ -237,65 +227,82 @@ export default function SolMatrixScreen() {
           <EmptyState icon="users" title="Aucun adhérent dans ce cycle" message="Inscrivez les enfants du sol pour établir l'ordre de passage." />
         </Card>
       ) : (
-        members.map((member, index) => {
-          const memberHandsCount = Math.max(1, member.handsCount || 1);
-          const receivedCount = Number(member.receivedHandsCount || 0);
-          const hasReceived = receivedCount >= memberHandsCount || Boolean(member.hasReceivedHand || member.hasReceivedPayout);
+        <Card padding="none" style={styles.ledger}>
+          {members.map((member, index) => {
+            const memberHandsCount = Math.max(1, member.handsCount || 1);
+            const receivedCount = Number(member.receivedHandsCount || 0);
+            const hasReceived = receivedCount >= memberHandsCount || Boolean(member.hasReceivedHand || member.hasReceivedPayout);
 
-          const ranksList = (member.payoutRanks ? String(member.payoutRanks).split(',') : [String(member.payoutRank || '')])
-            .map((r) => Number(r.trim()))
-            .filter((n) => !isNaN(n) && n > 0);
-          const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
-          const isMulti = memberHandsCount > 1;
+            const ranksList = (member.payoutRanks ? String(member.payoutRanks).split(',') : [String(member.payoutRank || '')])
+              .map((r) => Number(r.trim()))
+              .filter((n) => !isNaN(n) && n > 0);
+            const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
+            const isMulti = memberHandsCount > 1;
+            const isLast = index === members.length - 1;
+            const payoutLabel = isMulti ? `Remettre la main (${receivedCount + 1}/${memberHandsCount})` : 'Remettre la main';
 
-          return (
-            <Card
-              key={`${member.id}-${index}`}
-              padding="none"
-              style={[styles.rankCard, isNextTurn && styles.rankCardCurrent, hasReceived && styles.rankCardDone]}
-            >
-              <ListItem
-                divider={false}
-                leading={<Avatar rank={member.rankOrder || member.payoutRank || index + 1} highlighted={isNextTurn} />}
-                title={member.fullName}
-                subtitle={member.phoneNumber}
-                meta={
-                  <View style={styles.meta}>
-                    {isNextTurn && <StatusBadge status="UPCOMING_PAYOUT" appearance="inline" />}
-                    {hasReceived && (
-                      <StatusBadge
-                        status="HAND_RECEIVED"
-                        appearance="inline"
-                        label={isMulti ? `${memberHandsCount}/${memberHandsCount} mains reçues` : 'Main reçue'}
-                        detail={!isMulti && member.handReceivedDate ? formatDateShort(member.handReceivedDate) : undefined}
-                      />
-                    )}
-                    {isMulti && !hasReceived && (
-                      <>
+            return (
+              <View key={`${member.id}-${index}`} style={isNextTurn && styles.rowCurrent}>
+                <ListItem
+                  divider={false}
+                  leading={<Avatar rank={member.rankOrder || member.payoutRank || index + 1} highlighted={isNextTurn} />}
+                  title={member.fullName}
+                  meta={
+                    <View style={styles.meta}>
+                      {isNextTurn && <StatusBadge status="UPCOMING_PAYOUT" appearance="inline" />}
+                      {hasReceived && (
+                        <StatusBadge
+                          status="HAND_RECEIVED"
+                          appearance="inline"
+                          label={isMulti ? `${memberHandsCount}/${memberHandsCount} mains reçues` : 'Main reçue'}
+                          detail={!isMulti && member.handReceivedDate ? formatDateShort(member.handReceivedDate) : undefined}
+                        />
+                      )}
+                      {isMulti && !hasReceived && (
+                        <>
+                          <Text variant="caption" tone="muted">
+                            {receivedCount}/{memberHandsCount} mains reçues · rangs {member.payoutRanks || member.payoutRank}
+                          </Text>
+                          <ProgressBar value={receivedCount / memberHandsCount} size="sm" tone="success" />
+                        </>
+                      )}
+                      {!isNextTurn && !hasReceived && !isMulti && (
                         <Text variant="caption" tone="muted">
-                          {receivedCount}/{memberHandsCount} mains reçues · rangs {member.payoutRanks || member.payoutRank}
+                          En attente de son tour
                         </Text>
-                        <ProgressBar value={receivedCount / memberHandsCount} size="sm" tone="success" />
-                      </>
-                    )}
+                      )}
+                    </View>
+                  }
+                  trailing={
+                    !hasReceived && !isNextTurn ? (
+                      <Pressable
+                        onPress={() => handleInitiatePayout(member)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${payoutLabel} à ${member.fullName} (hors tour)`}
+                        hitSlop={4}
+                        style={({ pressed }) => [styles.roundAction, pressed && styles.pressed]}
+                      >
+                        <Icon name="payout" size={20} color={theme.colors.textMuted} />
+                      </Pressable>
+                    ) : undefined
+                  }
+                />
+                {isNextTurn && (
+                  <View style={styles.rankAction}>
+                    <Button
+                      icon="payout"
+                      fullWidth
+                      label={payoutLabel}
+                      onPress={() => handleInitiatePayout(member)}
+                      accessibilityLabel={`Remettre la main à ${member.fullName}`}
+                    />
                   </View>
-                }
-              />
-              {!hasReceived && (
-                <View style={styles.rankAction}>
-                  <Button
-                    variant={isNextTurn ? 'primary' : 'secondary'}
-                    icon="payout"
-                    fullWidth
-                    label={isMulti ? `Remettre la main (${receivedCount + 1}/${memberHandsCount})` : 'Remettre la main'}
-                    onPress={() => handleInitiatePayout(member)}
-                    accessibilityLabel={`Remettre la main à ${member.fullName}`}
-                  />
-                </View>
-              )}
-            </Card>
-          );
-        })
+                )}
+                {!isLast && <View style={styles.rule} />}
+              </View>
+            );
+          })}
+        </Card>
       )}
 
       {/* Payout justification */}
@@ -372,21 +379,29 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     flexTwo: { flexGrow: 2, flexBasis: 0 },
     pressed: { backgroundColor: colors.surfacePressed },
 
-    heroCard: { gap: spacing.xs },
-    heroPot: { marginTop: spacing.md },
-    heroProgress: { marginTop: spacing.md, gap: spacing.sm },
+    heroCard: { gap: spacing.lg },
+    heroPot: { gap: spacing.xs },
+    heroProgress: { gap: spacing.sm },
     heroProgressRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
     segments: { flexDirection: 'row', gap: spacing.xs },
-    segment: { flex: 1, height: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.heroTrack },
+    segment: { flex: 1, height: spacing.xs, borderRadius: radius.pill, backgroundColor: colors.heroTrack },
     segmentDone: { backgroundColor: colors.heroTrackActive },
 
     noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
 
-    rankCard: { overflow: 'hidden' },
-    rankCardCurrent: { borderColor: colors.primary, borderWidth: 2 },
-    rankCardDone: { backgroundColor: colors.surfaceAlt },
+    ledger: { overflow: 'hidden' },
+    rowCurrent: { backgroundColor: colors.primarySoft },
+    rule: { height: 1, marginLeft: spacing.md + spacing.xxxl - spacing.sm + spacing.md, backgroundColor: colors.divider },
     meta: { gap: spacing.xs },
     rankAction: { paddingHorizontal: spacing.md, paddingBottom: spacing.md },
+    roundAction: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceAlt,
+    },
 
     modalOverlay: {
       flex: 1,

@@ -1,9 +1,9 @@
 import React from 'react';
 import { View } from 'react-native';
 import { Member } from '@/types';
-import { Avatar, Button, Text } from '@/components/ui';
-import { formatCurrency } from '@/lib/formatters';
+import { Button, Text } from '@/components/ui';
 import { useResponsive } from '@/hooks/useResponsive';
+import { getInitials } from '@/lib/formatters';
 import { useTheme } from '@/theme';
 
 interface BeneficiaryBannerProps {
@@ -12,9 +12,9 @@ interface BeneficiaryBannerProps {
   onPayout: (member: Member) => void;
 }
 
-/** Current beneficiary of the pot, shown as a white inset inside the hero band. */
-export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiary, potAmount, onPayout }) => {
-  const { colors, spacing, radius } = useTheme();
+/** Current beneficiary of the pot, set directly on the hero band (no inset card). */
+export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiary, onPayout }) => {
+  const { colors, spacing, radius, layout } = useTheme();
   const { isSmallScreen } = useResponsive();
   const isMulti = !!beneficiary.handsCount && beneficiary.handsCount > 1;
   const nextHand = (beneficiary.receivedHandsCount || 0) + 1;
@@ -25,26 +25,34 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
         flexDirection: isSmallScreen ? 'column' : 'row',
         alignItems: isSmallScreen ? 'stretch' : 'center',
         gap: spacing.md,
-        padding: spacing.md,
-        borderRadius: radius.md,
-        backgroundColor: colors.surface,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1, minWidth: 0 }}>
-        <Avatar name={beneficiary.fullName} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text variant="bodyStrong" numberOfLines={2}>
-            {beneficiary.fullName}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: isSmallScreen ? undefined : 1, minWidth: 0 }}>
+        <View
+          style={{
+            width: layout.touchTarget,
+            height: layout.touchTarget,
+            borderRadius: radius.pill,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: colors.heroTrack,
+          }}
+        >
+          <Text variant="label" tone="onHero">
+            {getInitials(beneficiary.fullName)}
           </Text>
-          <Text variant="caption" tone="muted" numberOfLines={2}>
-            {isMulti
-              ? `Main ${nextHand}/${beneficiary.handsCount} · rangs ${beneficiary.payoutRanks || beneficiary.payoutRank}`
-              : `Reçoit la main ${beneficiary.rankOrder || 1}`}{' '}
-            · {formatCurrency(potAmount)}
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text variant="caption" tone="onHeroMuted">
+            {isMulti ? `Reçoit la main ${nextHand}/${beneficiary.handsCount}` : `Reçoit la main ${beneficiary.rankOrder || 1}`}
+          </Text>
+          <Text variant="subheading" tone="onHero" numberOfLines={1}>
+            {beneficiary.fullName}
           </Text>
         </View>
       </View>
       <Button
+        variant="inverse"
         label={isMulti ? `Remettre (${nextHand}/${beneficiary.handsCount})` : 'Remettre'}
         icon="payout"
         onPress={() => onPayout(beneficiary)}

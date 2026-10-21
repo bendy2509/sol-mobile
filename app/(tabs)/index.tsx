@@ -243,20 +243,20 @@ export default function DashboardScreen() {
   );
 
   const renderMemberItem = useCallback(
-    ({ item }: { item: Member }) => (
+    ({ item, index }: { item: Member; index: number }) => (
       <MemberCard
         member={item}
         isPayoutTurn={metrics.currentPayoutBeneficiary?.id === item.id}
-        onPayoutHand={handleInitiatePayout}
+        isFirst={index === 0}
+        isLast={index === members.length - 1}
       />
     ),
-    [metrics.currentPayoutBeneficiary?.id, handleInitiatePayout]
+    [metrics.currentPayoutBeneficiary?.id, members.length]
   );
 
-  const quickActions: { label: string; icon: UiIconName; onPress: () => void; busy?: boolean }[] = [
-    { label: 'Ajouter un enfant', icon: 'plus', onPress: () => router.push('/client/new' as any) },
-    { label: 'Cycle', icon: 'cycle', onPress: () => router.navigate('/(tabs)/sol' as any) },
-    { label: 'Rapport PDF', icon: 'printer', onPress: handleGenerateBusinessReport, busy: isGeneratingReport },
+  const quickActions: { label: string; a11y: string; icon: UiIconName; onPress: () => void; busy?: boolean }[] = [
+    { label: 'Nouvel enfant', a11y: 'Inscrire un nouvel enfant', icon: 'plus', onPress: () => router.push('/client/new' as any) },
+    { label: 'Rapport PDF', a11y: 'Générer le rapport PDF du carnet', icon: 'printer', onPress: handleGenerateBusinessReport, busy: isGeneratingReport },
   ];
 
   return (
@@ -272,18 +272,6 @@ export default function DashboardScreen() {
         />
       }
       footerSafeArea={false}
-      footer={
-        !isReadOnly ? (
-          <Button
-            size="lg"
-            fullWidth
-            icon="cash"
-            label="Encaisser une cotisation"
-            haptic
-            onPress={() => router.navigate('/(tabs)/collect' as any)}
-          />
-        ) : undefined
-      }
     >
       <FlatList
         data={members}
@@ -295,7 +283,6 @@ export default function DashboardScreen() {
         removeClippedSubviews={true}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -320,19 +307,16 @@ export default function DashboardScreen() {
 
             <View style={styles.quickActionsRow}>
               {quickActions.map((action) => (
-                <Pressable
+                <Button
                   key={action.label}
+                  variant="secondary"
+                  icon={action.icon}
+                  loading={action.busy}
+                  label={action.busy ? 'Génération…' : action.label}
+                  accessibilityLabel={action.a11y}
                   onPress={action.onPress}
-                  disabled={action.busy}
-                  accessibilityRole="button"
-                  accessibilityState={{ busy: action.busy }}
-                  style={({ pressed }) => [styles.quickAction, pressed && styles.quickActionPressed]}
-                >
-                  <Icon name={action.icon} size={20} color={theme.colors.primary} />
-                  <Text variant="label" align="center" numberOfLines={2}>
-                    {action.busy ? 'Génération…' : action.label}
-                  </Text>
-                </Pressable>
+                  style={styles.flexOne}
+                />
               ))}
             </View>
 
@@ -462,28 +446,13 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
       maxWidth: layout.maxContentWidth,
       alignSelf: 'center',
     },
-    separator: { height: spacing.sm },
     dashboardHeader: {
       paddingTop: spacing.lg,
       paddingBottom: spacing.md,
-      gap: spacing.md,
+      gap: spacing.lg,
     },
 
     quickActionsRow: { flexDirection: 'row', gap: spacing.sm },
-    quickAction: {
-      flex: 1,
-      minHeight: layout.actionHeight + spacing.lg,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.xs,
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.xs,
-      borderRadius: radius.md,
-      borderCurve: 'continuous',
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-    },
     quickActionPressed: { backgroundColor: colors.surfacePressed },
 
     modalOverlay: {
