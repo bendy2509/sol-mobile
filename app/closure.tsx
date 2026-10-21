@@ -171,13 +171,13 @@ export default function CashClosureScreen() {
           <AmountText amount={theoreticalBalance} size="hero" />
           <View style={[styles.summaryRow, styles.totalRow]}>
             <Text variant="body" tone="muted" style={styles.flexShrink}>
-              Encaissements (cotisations)
+              Cotisations encaissées
             </Text>
             <AmountText amount={todayStats.sabotayDepositsToday} size="small" sign="credit" tone="success" />
           </View>
           <View style={styles.summaryRow}>
             <Text variant="body" tone="muted" style={styles.flexShrink}>
-              Décaissements (mains remises)
+              Mains remises
             </Text>
             <AmountText amount={todayStats.withdrawalsToday} size="small" sign="debit" tone="danger" />
           </View>

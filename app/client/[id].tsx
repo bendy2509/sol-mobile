@@ -1052,8 +1052,8 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
       borderBottomWidth: 1,
       borderBottomColor: colors.divider,
     },
-    detailLabel: { flex: 1 },
-    detailValue: { flex: 1.4, textAlign: 'right' },
+    detailLabel: { flex: 1.3 },
+    detailValue: { flex: 1, textAlign: 'right' },
 
     actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
     ledger: { overflow: 'hidden' },

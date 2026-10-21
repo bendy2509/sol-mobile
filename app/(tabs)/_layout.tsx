@@ -5,11 +5,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/AuthContext';
 import { Icon, UiIconName } from '@/components/ui';
 import { useI18n } from '@/i18n';
-import { useTheme } from '@/theme';
+import { typography as fixedTypography, useTheme } from '@/theme';
 
 export default function TabLayout() {
   const { isAuthenticated, isLoading } = useAuth();
-  const { colors, spacing, layout, typography } = useTheme();
+  const { colors, spacing, layout } = useTheme();
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
 
@@ -43,7 +43,8 @@ export default function TabLayout() {
           paddingTop: spacing.sm,
           paddingBottom: Math.max(insets.bottom, spacing.sm),
         },
-        tabBarLabelStyle: typography.tab,
+        // Fixed size: five labels must fit at 360px whatever the text-size preference
+        tabBarLabelStyle: fixedTypography.tab,
         tabBarAllowFontScaling: false,
         headerShown: false,
       }}

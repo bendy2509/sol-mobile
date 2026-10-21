@@ -21,11 +21,14 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
     <View
       style={{
         flexDirection: 'row',
+        flexWrap: 'wrap',
         alignItems: 'center',
+        justifyContent: 'flex-end',
         gap: spacing.md,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1, minWidth: 0 }}>
+      {/* Wraps the button under the name when the name or the text size needs the room */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexGrow: 1, flexBasis: spacing.xxxl * 4, minWidth: 0 }}>
         <View
           style={{
             width: layout.touchTarget,
@@ -41,7 +44,7 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
           </Text>
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text variant="caption" tone="onHeroMuted" numberOfLines={1}>
+          <Text variant="caption" tone="onHeroMuted">
             {isMulti ? `Reçoit la main ${nextHand}/${beneficiary.handsCount}` : `Reçoit la main ${beneficiary.rankOrder || 1}`}
           </Text>
           <Text variant="subheading" tone="onHero" numberOfLines={2}>

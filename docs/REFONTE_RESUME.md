@@ -72,11 +72,26 @@ Branche `design/refonte-ui`, octobre 2026. Direction retenue : **A « Registre s
 - Réglages, Accueil, Sol, Fiche adhérent, Historique (feuille de détail), Clôture et Connexion, en sombre ;
 - Accueil et Encaisser en clair.
 
-**Captures « après »** : `docs/design-audit/v2/after/`, avec seulement l'Accueil et Encaisser en clair à 360 px, parce que la série a été interrompue.
+**Captures « après »** (dans `docs/design-audit/v2/after/`) :
+
+| Réglage | Écrans capturés |
+|---|---|
+| Clair, 360 px | Connexion, Accueil, Encaisser, Sol, Fiche adhérent et son menu ⋯, Historique, Réglages, Clôture, Gestion du cycle |
+| Sombre et texte Grande | Réglages, Accueil, feuille Encaisser |
+| Texte Petite | Historique |
+| Tablette 820 px | Accueil |
+
+Sur tablette, la feuille Encaisser a été contrôlée dans le DOM : elle fait 720 px de large et elle est centrée.
+
+**Corrigé après les captures :**
+- en texte Grande, les libellés d'onglets étaient tronqués (ils gardent maintenant une taille fixe) ;
+- le bouton « Remettre » écrasait le nom du bénéficiaire (il passe désormais sous le nom quand la place manque) ;
+- certains libellés de la fiche adhérent et de la clôture passaient sur deux lignes.
 
 ## Non vérifié
 
-- **Captures manquantes** : la tablette et les tailles Petite et Grande n'ont pas été capturées. Elles sont gérées par les tokens (largeur max 720, feuilles centrées, facteur de taille) mais ne sont pas contrôlées visuellement.
+- **Captures** : il n'y a pas de capture tablette des autres écrans, ni de Petite et Grande sur tous les écrans.
+- **Montants de démo sur le web** : l'Accueil affiche une cagnotte à 0 HTG alors que l'onglet Sol affiche 1 000 HTG. Ce sont les métriques de la base de démo web (`db/`, hors périmètre), pas l'interface.
 - **Natif** : biométrie, partage de fichiers, haptique et Android bas de gamme n'ont pas été testés sur un appareil.
 - **i18n** : les onglets, Réglages et les actions communes sont traduits. Les autres écrans restent en français (repli) et seront à extraire au fil de l'eau.
 - **Bug web hors périmètre** : l'adaptateur SQLite web (`db/sqlite.ts`) décale les colonnes du collecteur de démo, si bien que la zone affiche une date. Ce bug n'apparaît que sur le web, et `db/` est hors périmètre de la refonte : il n'est pas corrigé.
