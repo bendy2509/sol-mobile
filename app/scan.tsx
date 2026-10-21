@@ -1,21 +1,14 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  TextInput,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useMemo } from 'react';
+import { View, Pressable, StyleSheet, Alert, TextInput, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { useRouter } from 'expo-router';
 
 import { getClientByQrToken } from '@/db/clientRepository';
-import { Icon } from '@/components/Icon';
+import { Button, Card, Icon, Screen, Text } from '@/components/ui';
 import { triggerSuccessFeedback } from '@/lib/haptics';
 import { safeBack } from '@/lib/navigation';
-import { SOL_COLORS } from '@/constants/Colors';
+import { Theme, useTheme } from '@/theme';
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -24,6 +17,9 @@ export default function ScanScreen() {
   const [torch, setTorch] = useState(false);
   const [manualCode, setManualCode] = useState('');
   const [isManualOpen, setIsManualOpen] = useState(false);
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
 
   const handleBarcodeScanned = async ({ data }: BarcodeScanningResult) => {
     if (scanned) return;
@@ -75,36 +71,41 @@ export default function ScanScreen() {
 
   if (!permission) {
     return (
-      <SafeAreaView style={styles.centerContainer}>
-        <Text style={styles.permissionText}>Vérification des autorisations caméra...</Text>
-      </SafeAreaView>
+      <Screen edges={['top', 'left', 'right', 'bottom']} scroll={false}>
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.colors.primary} />
+          <Text variant="body" tone="muted" align="center">
+            Vérification des autorisations caméra…
+          </Text>
+        </View>
+      </Screen>
     );
   }
 
   if (!permission.granted) {
     return (
-      <SafeAreaView style={styles.centerContainer}>
-        <View style={styles.permissionIconCircle}>
-          <Icon name="scan" size={32} color="#FFFFFF" />
+      <Screen
+        edges={['top', 'left', 'right']}
+        scroll={false}
+        footer={
+          <View style={styles.footer}>
+            <Button size="lg" fullWidth icon="scan" label="Autoriser la caméra" onPress={requestPermission} />
+            <Button variant="ghost" fullWidth label="Annuler" onPress={() => safeBack(router)} />
+          </View>
+        }
+      >
+        <View style={styles.center}>
+          <View style={styles.disc}>
+            <Icon name="scan" size={32} color={theme.colors.primary} />
+          </View>
+          <Text variant="title" align="center" accessibilityRole="header">
+            Autorisation caméra requise
+          </Text>
+          <Text variant="body" tone="muted" align="center">
+            SOL a besoin de la caméra pour scanner rapidement les codes QR des adhérents sur le marché.
+          </Text>
         </View>
-        <Text style={styles.permissionTitle}>Autorisation Caméra Requise</Text>
-        <Text style={styles.permissionSub}>
-          SOL a besoin de la caméra pour scanner rapidement les codes QR des adhérents sur le marché.
-        </Text>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={requestPermission}
-          style={styles.grantBtn}
-        >
-          <Text style={styles.grantBtnText}>Autoriser la Caméra</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => safeBack(router)}
-          style={styles.cancelBtn}
-        >
-          <Text style={styles.cancelBtnText}>Annuler</Text>
-        </TouchableOpacity>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
@@ -120,25 +121,25 @@ export default function ScanScreen() {
       />
 
       {/* Target Framing Overlay */}
-      <View style={styles.overlay}>
-        <View style={styles.overlayTop}>
-          <View style={styles.scannerHeaderRow}>
-            <TouchableOpacity
-              onPress={() => safeBack(router)}
-              style={styles.scannerCloseBtn}
-              accessibilityLabel="Fermer le scanner"
-            >
-              <Icon name="close" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.instructionText}>
+      <View style={[styles.overlay, { paddingTop: insets.top + theme.spacing.md, paddingBottom: insets.bottom + theme.spacing.lg }]}>
+        <View style={styles.topRow}>
+          <Pressable
+            onPress={() => safeBack(router)}
+            accessibilityRole="button"
+            accessibilityLabel="Fermer le scanner"
+            style={({ pressed }) => [styles.roundBtn, pressed && styles.roundBtnPressed]}
+          >
+            <Icon name="close" size={22} color={theme.brand.white} />
+          </Pressable>
+          <View style={styles.instruction}>
+            <Text variant="label" style={styles.onCamera} align="center">
               Centrez le code QR de l'adhérent dans le cadre
             </Text>
-            <View style={{ width: 36 }} />
           </View>
         </View>
 
-        <View style={styles.overlayCenter}>
-          <View style={styles.scanBox}>
+        <View style={styles.center}>
+          <View style={styles.scanBox} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <View style={[styles.corner, styles.topLeft]} />
             <View style={[styles.corner, styles.topRight]} />
             <View style={[styles.corner, styles.bottomLeft]} />
@@ -147,252 +148,112 @@ export default function ScanScreen() {
         </View>
 
         {/* Controls Bottom */}
-        <View style={styles.overlayBottom}>
+        <View style={styles.bottom}>
           <View style={styles.controlsRow}>
-            <TouchableOpacity
-              activeOpacity={0.7}
+            <Pressable
               onPress={() => setTorch(!torch)}
-              style={[styles.controlBtn, torch && styles.controlBtnActive]}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: torch }}
+              accessibilityLabel="Lampe torche"
+              style={({ pressed }) => [styles.control, torch && styles.controlActive, pressed && styles.roundBtnPressed]}
             >
-              <Text style={styles.controlIcon}>{torch ? 'Lampe allumée' : 'Flash'}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
+              <Text variant="label" style={torch ? styles.onLight : styles.onCamera}>
+                {torch ? 'Lampe allumée' : 'Lampe'}
+              </Text>
+            </Pressable>
+            <Pressable
               onPress={() => setIsManualOpen(!isManualOpen)}
-              style={styles.controlBtn}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: isManualOpen }}
+              style={({ pressed }) => [styles.control, isManualOpen && styles.controlActive, pressed && styles.roundBtnPressed]}
             >
-              <Text style={styles.controlIcon}>Saisir Code</Text>
-            </TouchableOpacity>
+              <Icon name="edit" size={16} color={isManualOpen ? theme.colors.primary : theme.brand.white} />
+              <Text variant="label" style={isManualOpen ? styles.onLight : styles.onCamera}>
+                Saisir le code
+              </Text>
+            </Pressable>
           </View>
 
           {isManualOpen && (
-            <View style={styles.manualInputBox}>
+            <Card padding="sm" style={styles.manualCard}>
               <TextInput
                 style={styles.manualInput}
-                placeholder="Code QR (ex: SOL-CLT-MARIECARMEL)"
-                placeholderTextColor="#94A3B8"
+                placeholder="Code QR (ex : SOL-CLT-MARIECARMEL)"
+                placeholderTextColor={theme.colors.textPlaceholder}
                 value={manualCode}
                 onChangeText={setManualCode}
                 autoCapitalize="characters"
+                accessibilityLabel="Code QR de l'adhérent"
               />
-              <TouchableOpacity
-                onPress={handleManualLookup}
-                style={styles.manualSubmitBtn}
-              >
-                <Text style={styles.manualSubmitText}>Chercher</Text>
-              </TouchableOpacity>
-            </View>
+              <Button icon="search" label="Chercher" onPress={handleManualLookup} />
+            </Card>
           )}
 
-          {scanned && (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setScanned(false)}
-              style={styles.rescanBtn}
-            >
-              <Text style={styles.rescanBtnText}>Re-scanner</Text>
-            </TouchableOpacity>
-          )}
+          {scanned && <Button variant="secondary" size="lg" fullWidth icon="scan" label="Re-scanner" onPress={() => setScanned(false)} />}
         </View>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  centerContainer: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.secondary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  permissionIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  permissionTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  permissionSub: {
-    fontSize: 14,
-    color: '#94A3B8',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  permissionText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-  },
-  grantBtn: {
-    backgroundColor: SOL_COLORS.primary,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-    marginBottom: 12,
-  },
-  grantBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 16,
-  },
-  cancelBtn: {
-    padding: 10,
-  },
-  cancelBtnText: {
-    color: '#94A3B8',
-    fontSize: 14,
-  },
-  overlay: {
-    flex: 1,
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
-  overlayTop: {
-    paddingTop: 50,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  scannerHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  scannerCloseBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  instructionText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    textAlign: 'center',
-  },
-  overlayCenter: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  scanBox: {
-    width: 250,
-    height: 250,
-    position: 'relative',
-    backgroundColor: 'transparent',
-  },
-  corner: {
-    position: 'absolute',
-    width: 36,
-    height: 36,
-    borderColor: '#34D399',
-  },
-  topLeft: {
-    top: 0,
-    left: 0,
-    borderTopWidth: 4,
-    borderLeftWidth: 4,
-  },
-  topRight: {
-    top: 0,
-    right: 0,
-    borderTopWidth: 4,
-    borderRightWidth: 4,
-  },
-  bottomLeft: {
-    bottom: 0,
-    left: 0,
-    borderBottomWidth: 4,
-    borderLeftWidth: 4,
-  },
-  bottomRight: {
-    bottom: 0,
-    right: 0,
-    borderBottomWidth: 4,
-    borderRightWidth: 4,
-  },
-  overlayBottom: {
-    paddingBottom: 40,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-  },
-  controlsRow: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 14,
-  },
-  controlBtn: {
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  controlBtnActive: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primaryDark,
-  },
-  controlIcon: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  manualInputBox: {
-    flexDirection: 'row',
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 4,
-    marginBottom: 12,
-  },
-  manualInput: {
-    flex: 1,
-    paddingHorizontal: 12,
-    fontSize: 14,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  manualSubmitBtn: {
-    backgroundColor: SOL_COLORS.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  manualSubmitText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  rescanBtn: {
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 20,
-  },
-  rescanBtnText: {
-    color: SOL_COLORS.textPrimary,
-    fontWeight: '800',
-    fontSize: 15,
-  },
-});
+const CORNER = 36;
+
+const createStyles = ({ colors, spacing, radius, layout, typography, brand }: Theme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: brand.black },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+    footer: { gap: spacing.xs },
+    disc: {
+      width: layout.touchTarget + spacing.xl,
+      height: layout.touchTarget + spacing.xl,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primarySoft,
+      marginBottom: spacing.sm,
+    },
+
+    // Camera overlay: always light-on-dark, whatever the app theme.
+    overlay: { flex: 1, justifyContent: 'space-between', paddingHorizontal: layout.gutter },
+    onCamera: { color: brand.white },
+    onLight: { color: colors.primary },
+    topRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    roundBtn: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.overlay,
+    },
+    roundBtnPressed: { opacity: 0.8 },
+    instruction: {
+      flex: 1,
+      minWidth: 0,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.pill,
+      backgroundColor: colors.overlay,
+    },
+    scanBox: { width: 250, height: 250 },
+    corner: { position: 'absolute', width: CORNER, height: CORNER, borderColor: brand.white },
+    topLeft: { top: 0, left: 0, borderTopWidth: 4, borderLeftWidth: 4, borderTopLeftRadius: radius.md },
+    topRight: { top: 0, right: 0, borderTopWidth: 4, borderRightWidth: 4, borderTopRightRadius: radius.md },
+    bottomLeft: { bottom: 0, left: 0, borderBottomWidth: 4, borderLeftWidth: 4, borderBottomLeftRadius: radius.md },
+    bottomRight: { bottom: 0, right: 0, borderBottomWidth: 4, borderRightWidth: 4, borderBottomRightRadius: radius.md },
+
+    bottom: { alignItems: 'center', gap: spacing.md },
+    controlsRow: { flexDirection: 'row', gap: spacing.md },
+    control: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      minHeight: layout.touchTarget,
+      paddingHorizontal: spacing.lg,
+      borderRadius: radius.pill,
+      backgroundColor: colors.overlay,
+    },
+    controlActive: { backgroundColor: brand.white },
+    manualCard: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    manualInput: { ...typography.body, flex: 1, minWidth: 0, minHeight: layout.touchTarget, paddingHorizontal: spacing.sm, color: colors.text },
+  });

@@ -16,6 +16,8 @@ export const brand = {
   haitiBlue: '#00209F',
   haitiRed: '#D21034',
   white: '#FFFFFF',
+  /** Camera backdrop (QR scanner), whatever the scheme. */
+  black: '#000000',
 } as const;
 
 export interface ThemeColors {
