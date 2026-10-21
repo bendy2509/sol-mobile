@@ -47,7 +47,7 @@ const ICONS = {
   trash: [{ d: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3' }],
   edit: [{ d: 'M4 20h4L19 9l-4-4L4 16Z' }],
   calendar: [{ x: 3, y: 5, w: 18, h: 16, rx: 2 }, { d: 'M3 10h18M8 3v4M16 3v4' }],
-  logout: [{ d: 'M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3' }],
+  logout: [{ d: 'M9 20H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h4M16 17l5-5-5-5M21 12H9' }],
 } satisfies Record<string, Shape[]>;
 
 export type UiIconName = keyof typeof ICONS;
