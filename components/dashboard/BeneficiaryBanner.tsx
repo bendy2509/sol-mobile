@@ -2,7 +2,6 @@ import React from 'react';
 import { View } from 'react-native';
 import { Member } from '@/types';
 import { Button, Text } from '@/components/ui';
-import { useResponsive } from '@/hooks/useResponsive';
 import { getInitials } from '@/lib/formatters';
 import { useTheme } from '@/theme';
 
@@ -12,22 +11,21 @@ interface BeneficiaryBannerProps {
   onPayout: (member: Member) => void;
 }
 
-/** Current beneficiary of the pot, set directly on the hero band (no inset card). */
+/** Current beneficiary of the pot, under the hero amount. One action: Remettre. */
 export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiary, onPayout }) => {
   const { colors, spacing, radius, layout } = useTheme();
-  const { isSmallScreen } = useResponsive();
   const isMulti = !!beneficiary.handsCount && beneficiary.handsCount > 1;
   const nextHand = (beneficiary.receivedHandsCount || 0) + 1;
 
   return (
     <View
       style={{
-        flexDirection: isSmallScreen ? 'column' : 'row',
-        alignItems: isSmallScreen ? 'stretch' : 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
         gap: spacing.md,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: isSmallScreen ? undefined : 1, minWidth: 0 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flex: 1, minWidth: 0 }}>
         <View
           style={{
             width: layout.touchTarget,
@@ -35,10 +33,10 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
             borderRadius: radius.pill,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: colors.heroTrack,
+            backgroundColor: colors.primarySoft,
           }}
         >
-          <Text variant="label" tone="onHero">
+          <Text variant="label" style={{ color: colors.onPrimarySoft }}>
             {getInitials(beneficiary.fullName)}
           </Text>
         </View>
@@ -52,8 +50,8 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
         </View>
       </View>
       <Button
-        variant="inverse"
-        label={isMulti ? `Remettre (${nextHand}/${beneficiary.handsCount})` : 'Remettre'}
+        variant="primary"
+        label="Remettre"
         icon="payout"
         onPress={() => onPayout(beneficiary)}
         accessibilityLabel={`Remettre la main à ${beneficiary.fullName}`}

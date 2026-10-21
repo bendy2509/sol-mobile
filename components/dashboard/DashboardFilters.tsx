@@ -34,9 +34,9 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
     { key: 'ALL' as FilterStatus, label: 'Tous', count: metrics.totalMembersCount || membersCount },
     { key: 'PAID_TODAY' as FilterStatus, label: 'À jour', count: metrics.paidTodayCount },
     { key: 'UNPAID_TODAY' as FilterStatus, label: 'À encaisser', count: metrics.unpaidTodayCount },
-    { key: 'OVERDUE' as FilterStatus, label: 'En retard', count: metrics.overdueMembersCount, danger: true },
+    { key: 'OVERDUE' as FilterStatus, label: 'En retard', count: metrics.overdueMembersCount },
     { key: 'HAND_RECEIVED' as FilterStatus, label: 'Main reçue', count: metrics.handsTouchedCount },
-  ] as { key: FilterStatus; label: string; count: number; danger?: boolean }[];
+  ] as { key: FilterStatus; label: string; count: number }[];
 
   return (
     <View style={{ gap: spacing.md }}>
@@ -59,8 +59,8 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
           gap: spacing.sm,
           minHeight: layout.touchTarget,
           paddingHorizontal: spacing.md,
-          borderRadius: radius.pill,
-          backgroundColor: colors.surface,
+          borderRadius: radius.md,
+          backgroundColor: colors.surfaceAlt,
         }}
       >
         <Icon name="search" size={18} color={colors.textMuted} />
@@ -91,7 +91,6 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
             key={chip.key}
             label={`${chip.label} (${chip.count})`}
             selected={filter === chip.key}
-            tone={chip.danger ? 'danger' : 'primary'}
             onPress={() => onFilterChange(chip.key)}
           />
         ))}

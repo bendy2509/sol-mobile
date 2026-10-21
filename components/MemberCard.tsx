@@ -69,10 +69,10 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({
     <View
       style={{
         backgroundColor: colors.surface,
-        borderTopLeftRadius: isFirst ? radius.lg : 0,
-        borderTopRightRadius: isFirst ? radius.lg : 0,
-        borderBottomLeftRadius: isLast ? radius.lg : 0,
-        borderBottomRightRadius: isLast ? radius.lg : 0,
+        borderTopLeftRadius: isFirst ? radius.md : 0,
+        borderTopRightRadius: isFirst ? radius.md : 0,
+        borderBottomLeftRadius: isLast ? radius.md : 0,
+        borderBottomRightRadius: isLast ? radius.md : 0,
         borderCurve: 'continuous',
         overflow: 'hidden',
       }}
@@ -88,7 +88,7 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({
             flexDirection: 'row',
             alignItems: 'center',
             gap: spacing.md,
-            minHeight: layout.actionHeight + spacing.lg,
+            minHeight: layout.rowHeight + spacing.sm,
             paddingVertical: spacing.md,
             paddingLeft: spacing.md,
             paddingRight: spacing.sm,

@@ -15,7 +15,7 @@ interface DashboardHeroProps {
 /** Segmented track (one segment per hand) is readable up to this many hands. */
 const MAX_SEGMENTS = 12;
 
-/** Blue cagnotte band: the pot is the hero of the dashboard, its meaning follows it. */
+/** Cagnotte card: the pot is the single hero of the dashboard, its meaning follows it. */
 export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProgressPct, children }) => {
   const { colors, spacing, radius } = useTheme();
   const potTotal = metrics.totalHandsExpected * metrics.unitAmount;
@@ -27,7 +27,7 @@ export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProg
       <View style={{ gap: spacing.xs }}>
         <AmountText amount={potTotal} size="hero" tone="onHero" />
         <Text variant="body" tone="onHeroMuted">
-          Cagnotte par tour · {metrics.totalHandsExpected} mains × {formatCurrency(metrics.unitAmount)}
+          Cagnotte du tour · {metrics.totalHandsExpected} mains × {formatCurrency(metrics.unitAmount)}
         </Text>
       </View>
 
@@ -68,7 +68,7 @@ export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProg
 
       {children ? (
         <View style={{ gap: spacing.lg }}>
-          <View style={{ height: 1, backgroundColor: colors.heroTrack }} />
+          <View style={{ height: 1, backgroundColor: colors.divider }} />
           {children}
         </View>
       ) : null}
