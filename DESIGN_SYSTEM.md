@@ -18,7 +18,13 @@ Le carnet officiel, version numérique : bleu national en signature, fonds clair
    - action principale en bas de l'écran, dans la zone du pouce (`<Screen footer>` + `<Button size="lg">`) ;
    - contraste AA minimum.
 6. **Hors ligne** : police embarquée (`assets/fonts/`, licence OFL), icônes SVG locales. Aucune ressource réseau au runtime.
-7. **Android bas de gamme** : pas de flou ni de verre, ombres légères (bordures d'abord), pas d'animation dans les listes. `ListItem` est mémoïsé.
+7. **Android bas de gamme** : pas de flou ni de verre, pas d'animation dans les listes. `ListItem` est mémoïsé.
+8. **Épuré, pas encadré** (passe « épure », octobre 2026) :
+   - les surfaces se séparent par l'élévation (clair) ou la luminosité (sombre), **jamais par un contour**. Pas de bordure sur `Card`, `Button secondary`, `Chip`, `MetricTile`, les touches du `PinPad` ni les badges. Seuls gardent un trait : les champs de saisie actifs (2px primaire), le tiret de l'état `locked`, les filets de séparation ;
+   - **les listes sont des feuilles de registre** : une seule surface, des lignes séparées par un filet (`divider`) aligné sur le texte, pas une carte par ligne ;
+   - **une action par ligne**, au plus. Une action déjà présente ailleurs à l'écran (bandeau, onglet) n'est pas répétée ;
+   - **le chiffre d'abord, son sens ensuite** : pas de petite étiquette au-dessus d'un montant héros, la légende vient dessous (« Cagnotte par tour · 4 mains × 250 HTG ») ;
+   - pas de carte dans une carte : dans le bandeau bleu, on sépare par un filet `heroTrack` et on utilise `Button variant="inverse"`.
 
 ## Couleurs (`theme/colors.ts`)
 
@@ -72,8 +78,8 @@ Les variantes de montant et `numpad` incluent `fontVariant: ['tabular-nums']`. L
   - `touchTarget 48` : taille minimale d'une cible tactile ;
   - `actionHeight 56` : hauteur du bouton principal ;
   - `maxContentWidth 720` : largeur du contenu centré sur tablette (dès `tabletMinWidth 768`).
-- **`radius`** : `sm 8` (petits éléments) · `md 12` (contrôles, cartes) · `lg 16` (bandeau hero) · `pill` (badges).
-- **`shadows`** : `card`, `raised`, `sheet`, en CSS `boxShadow` (iOS + Android New Arch). Ils sont vides en mode sombre, où les bordures font la séparation.
+- **`radius`** : `sm 10` (petits éléments) · `md 14` (contrôles, cartes) · `lg 20` (bandeau hero, feuilles de registre) · `pill` (badges, boutons ronds).
+- **`shadows`** : `card`, `raised`, `sheet`, en CSS `boxShadow` (iOS + Android New Arch), chacun en deux couches : une ombre de contact serrée et une ombre ambiante large et très légère. Ils sont vides en mode sombre, où la luminosité des surfaces fait la séparation.
 
 ## Composants (`components/ui/`)
 
@@ -83,7 +89,7 @@ Tout s'importe depuis `@/components/ui`.
 |---|---|---|
 | `Screen` | Coque d’écran | Fond thématisé, safe area, largeur max centrée sur tablette, `keyboardShouldPersistTaps`. `header` pleine largeur, `footer` = zone d’action fixe en bas (`footerSafeArea={false}` dans les onglets). `scroll={false}` quand la racine est une `FlatList`. |
 | `Text` | Tout texte | `variant` (échelle typo) + `tone` (`muted`, `danger`, `onHero`…). `maxFontSizeMultiplier` 1.6. |
-| `Button` | Actions | `primary` / `secondary` / `danger` / `ghost`, tailles `md` 48 et `lg` 56, `icon`, `loading`, `disabled`. **`locked` + `lockedLabel`** pour les actions verrouillées (bordure en tirets + cadenas, non pressable). `haptic` pour le retour tactile. |
+| `Button` | Actions | `primary` / `secondary` (fond `surfaceAlt`, sans contour) / `danger` / `ghost` / `inverse` (blanc sur le bandeau bleu), tailles `md` 48 et `lg` 56, `icon`, `loading`, `disabled`. **`locked` + `lockedLabel`** pour les actions verrouillées (bordure en tirets + cadenas, non pressable). `haptic` pour le retour tactile. |
 | `Card` | Surface | Tons `default`, `sunken`, `hero`, `success`, `warning`, `danger`, `locked`, `supervisor`. `onPress` optionnel. |
 | `AmountText` | Montants HTG | Tailles `hero` / `large` / `medium` / `small`. `sign="credit"` → `+`, `sign="debit"` → `−`. Zéro neutre. Sélectionnable. |
 | `StatusBadge` | Statuts | `PAID_TODAY`, `PAID_IN_ADVANCE`, `UNPAID_TODAY`, `OVERDUE`, `UPCOMING_PAYOUT`, `HAND_RECEIVED`, **`LOCKED`**. `detail` (« 1 tour », « 2/3 mains »). `appearance="inline"` pour les listes denses. |
@@ -102,7 +108,7 @@ Tout s'importe depuis `@/components/ui`.
 
 - `ThemeProvider` (dans `app/_layout.tsx`) suit le système par défaut. `useThemePreference()` permet de forcer `light` ou `dark`.
 - **Le mode sombre ne s'active sur l'appareil** qu'avec `userInterfaceStyle: "automatic"` dans `app.json`. C'est déjà prévu : `expo-system-ui` est installé pour Android.
-- Je laisse `app.json` sur `"light"` tant que les écrans ne sont pas migrés : sinon les écrans encore codés en dur afficheraient des bandeaux sombres au milieu de fonds blancs. On basculera à la fin de la Phase 3.
+- `app.json` est en `"automatic"` depuis la fin de la Phase 3 : l'application suit le réglage du téléphone.
 
 ## Migration d'un écran (Phase 3)
 

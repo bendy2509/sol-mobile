@@ -33,8 +33,8 @@ export function Chip({ label, selected = false, onPress, tone = 'primary' }: Chi
         borderRadius: radius.pill,
         borderWidth: 1,
         justifyContent: 'center',
-        borderColor: selected ? activeBg : colors.borderStrong,
-        backgroundColor: selected ? activeBg : pressed ? colors.surfacePressed : colors.surface,
+        borderColor: selected ? activeBg : 'transparent',
+        backgroundColor: selected ? activeBg : pressed ? colors.surfacePressed : colors.surfaceAlt,
       })}
     >
       <Text variant="label" style={{ color: selected ? colors.onPrimary : colors.text }}>

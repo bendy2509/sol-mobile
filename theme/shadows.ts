@@ -3,8 +3,8 @@ import { ColorSchemeName } from './colors';
 
 /**
  * SOL Mobile — Elevation levels, as CSS `boxShadow` (iOS + Android New Architecture).
- * Kept light on purpose: Direction A separates surfaces with borders first.
- * Dark mode relies on borders only (shadows are invisible on dark grounds).
+ * Surfaces are separated by elevation, not outlines: a tight contact shadow plus a wide, faint ambient one.
+ * Dark mode relies on surface lightness only (shadows are invisible on dark grounds).
  */
 export interface ThemeShadows {
   none: ViewStyle;
@@ -15,8 +15,8 @@ export interface ThemeShadows {
 
 const light: ThemeShadows = {
   none: {},
-  card: { boxShadow: '0px 1px 2px rgba(20, 27, 45, 0.06)' },
-  raised: { boxShadow: '0px 4px 12px rgba(20, 27, 45, 0.10)' },
+  card: { boxShadow: '0px 1px 2px rgba(20, 27, 45, 0.04), 0px 8px 24px rgba(20, 27, 45, 0.06)' },
+  raised: { boxShadow: '0px 2px 4px rgba(20, 27, 45, 0.06), 0px 12px 32px rgba(20, 27, 45, 0.10)' },
   sheet: { boxShadow: '0px -2px 16px rgba(20, 27, 45, 0.12)' },
 };
 

@@ -20,12 +20,12 @@ export function Card({ children, tone = 'default', padding = 'md', onPress, acce
   const { colors, radius, spacing, shadows } = useTheme();
 
   const toneStyle: Record<CardTone, ViewStyle> = {
-    default: { backgroundColor: colors.surface, borderColor: colors.border, ...shadows.card },
+    default: { backgroundColor: colors.surface, borderColor: 'transparent', ...shadows.card },
     sunken: { backgroundColor: colors.surfaceAlt, borderColor: colors.surfaceAlt },
     hero: { backgroundColor: colors.hero, borderColor: colors.hero },
-    success: { backgroundColor: colors.successSoft, borderColor: colors.successLine },
-    warning: { backgroundColor: colors.warningSoft, borderColor: colors.warningLine },
-    danger: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerLine },
+    success: { backgroundColor: colors.successSoft, borderColor: colors.successSoft },
+    warning: { backgroundColor: colors.warningSoft, borderColor: colors.warningSoft },
+    danger: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerSoft },
     locked: { backgroundColor: colors.lockedSoft, borderColor: colors.lockedLine, borderStyle: 'dashed' },
     supervisor: { backgroundColor: colors.supervisorSoft, borderColor: colors.supervisor },
   };

@@ -26,7 +26,7 @@ const ROWS = [
  * Haptic feedback stays in the screen handlers (they already trigger it).
  */
 export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compact = false }: PinPadProps) {
-  const { colors, spacing, radius, layout } = useTheme();
+  const { colors, spacing, radius, layout, shadows } = useTheme();
   const keyHeight = compact ? layout.touchTarget + spacing.xs : layout.actionHeight + spacing.sm;
 
   return (
@@ -49,9 +49,8 @@ export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compac
                   borderCurve: 'continuous',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  borderWidth: 1,
-                  borderColor: colors.border,
                   backgroundColor: pressed ? colors.surfacePressed : isAction ? colors.surfaceAlt : colors.surface,
+                  ...(isAction || pressed ? null : shadows.card),
                 })}
               >
                 {k === 'DEL' ? (

@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
         )}
 
         <View style={styles.leftSection}>
-          <Text variant={isSmallScreen ? 'heading' : 'title'} numberOfLines={2} accessibilityRole="header">
+          <Text variant={isSmallScreen ? 'subheading' : 'heading'} numberOfLines={1} accessibilityRole="header">
             {title || 'SOL'}
           </Text>
           <Text variant="caption" tone="muted" numberOfLines={1} ellipsizeMode="tail">
@@ -157,29 +157,24 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
     iconButton: {
       width: layout.touchTarget,
       height: layout.touchTarget,
-      borderRadius: radius.md,
-      borderCurve: 'continuous',
+      borderRadius: radius.pill,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
     },
     iconButtonPressed: {
       backgroundColor: colors.surfacePressed,
     },
     profileButton: {
       backgroundColor: colors.primarySoft,
-      borderColor: colors.primarySoft,
     },
     flagRule: {
       flexDirection: 'row',
-      height: 3,
+      height: 2,
     },
     flagBlue: { flex: 1, backgroundColor: brand.haitiBlue },
     flagRed: { flex: 1, backgroundColor: brand.haitiRed },
     supervisorRule: {
-      height: 3,
+      height: 2,
       backgroundColor: colors.supervisor,
     },
   });

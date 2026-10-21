@@ -57,6 +57,8 @@ export function StatusBadge({ status, detail, label, appearance = 'chip', style 
           flexDirection: 'row',
           alignItems: 'center',
           alignSelf: 'flex-start',
+          flexShrink: 1,
+          minWidth: 0,
           gap: spacing.xs,
         },
         isChip && {
@@ -65,14 +67,14 @@ export function StatusBadge({ status, detail, label, appearance = 'chip', style 
           borderRadius: radius.pill,
           borderWidth: 1,
           backgroundColor: colors[cfg.bg],
-          borderColor: colors[cfg.line],
+          borderColor: status === 'LOCKED' ? colors[cfg.line] : colors[cfg.bg],
           borderStyle: status === 'LOCKED' ? 'dashed' : 'solid',
         },
         style,
       ]}
     >
       <Icon name={cfg.icon} size={14} color={fg} strokeWidth={2.5} />
-      <Text variant="label" style={{ color: fg }} numberOfLines={1}>
+      <Text variant="label" style={{ color: fg, flexShrink: 1 }} numberOfLines={1}>
         {text}
       </Text>
     </View>

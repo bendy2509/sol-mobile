@@ -416,7 +416,7 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
       paddingHorizontal: spacing.md,
       borderRadius: radius.md,
       borderWidth: 1,
-      borderColor: colors.border,
+      borderColor: colors.surfaceAlt,
       backgroundColor: colors.surfaceAlt,
     },
     pinRowActive: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.surface },

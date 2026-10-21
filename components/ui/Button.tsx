@@ -6,7 +6,8 @@ import { Theme, useTheme } from '@/theme';
 import { Icon, UiIconName } from './Icon';
 import { Text } from './Text';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
+/** inverse = white button on the blue hero band. */
+export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'inverse';
 export type ButtonSize = 'md' | 'lg';
 
 export interface ButtonProps {
@@ -38,9 +39,11 @@ function variantColors(theme: Theme, variant: ButtonVariant, pressed: boolean) {
     case 'primary':
       return { bg: pressed ? c.primaryPressed : c.primary, fg: c.onPrimary, border: 'transparent' };
     case 'secondary':
-      return { bg: pressed ? c.surfacePressed : c.surface, fg: c.text, border: c.borderStrong };
+      return { bg: pressed ? c.surfacePressed : c.surfaceAlt, fg: c.text, border: 'transparent' };
     case 'danger':
-      return { bg: pressed ? c.dangerLine : c.dangerSoft, fg: c.danger, border: c.dangerLine };
+      return { bg: pressed ? c.dangerLine : c.dangerSoft, fg: c.danger, border: 'transparent' };
+    case 'inverse':
+      return { bg: pressed ? c.onHeroMuted : c.onHero, fg: c.hero, border: 'transparent' };
     case 'ghost':
       return { bg: pressed ? c.surfacePressed : 'transparent', fg: c.link, border: 'transparent' };
   }
@@ -102,7 +105,7 @@ export function Button({
           return [base, { backgroundColor: colors.lockedSoft, borderColor: colors.lockedLine, borderStyle: 'dashed' }, style];
         }
         if (disabled) {
-          return [base, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }, style];
+          return [base, { backgroundColor: colors.surfaceAlt, borderColor: 'transparent' }, style];
         }
         return [base, style];
       }}
