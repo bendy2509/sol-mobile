@@ -1,17 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Switch,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, TextInput, Pressable, StyleSheet, Alert, KeyboardAvoidingView, Platform, Switch } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { createClient } from '@/db/clientRepository';
@@ -25,12 +13,13 @@ import { calculateCycleEndDate, getFrequencyLabel } from '@/lib/dateCalculations
 import { formatCurrency, getInitials } from '@/lib/formatters';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
-import { Icon } from '@/components/Icon';
+import { Header } from '@/components/Header';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { AmountText, Button, Card, Chip, Icon, Screen, SectionHeader, Text, TextField } from '@/components/ui';
 import { recordAuditLog } from '@/services/auditService';
 import { safeBack } from '@/lib/navigation';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 export default function NewClientScreen() {
   const router = useRouter();
@@ -38,6 +27,8 @@ export default function NewClientScreen() {
   const { triggerSync } = useSync();
   const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [existingMembersCount, setExistingMembersCount] = useState<number>(0);
@@ -197,736 +188,372 @@ export default function NewClientScreen() {
     }
   };
 
+  const renderStepper = (opts: {
+    title: string;
+    sub: string;
+    onMinus: () => void;
+    onPlus: () => void;
+    minusDisabled: boolean;
+    noun: string;
+  }) => (
+    <View style={styles.stepper}>
+      <Pressable
+        onPress={opts.onMinus}
+        disabled={opts.minusDisabled}
+        accessibilityRole="button"
+        accessibilityLabel={`Retirer ${opts.noun}`}
+        style={({ pressed }) => [styles.stepBtn, opts.minusDisabled && styles.stepBtnDisabled, pressed && styles.pressed]}
+      >
+        <Icon name="minus" size={22} color={opts.minusDisabled ? theme.colors.borderStrong : theme.colors.text} />
+      </Pressable>
+      <View style={styles.stepCenter} accessible accessibilityLabel={`${opts.title}, ${opts.sub}`}>
+        <Text variant="subheading" align="center">
+          {opts.title}
+        </Text>
+        <Text variant="caption" tone="muted" align="center">
+          {opts.sub}
+        </Text>
+      </View>
+      <Pressable
+        onPress={opts.onPlus}
+        accessibilityRole="button"
+        accessibilityLabel={`Ajouter ${opts.noun}`}
+        style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
+      >
+        <Icon name="plus" size={22} color={theme.colors.text} />
+      </Pressable>
+    </View>
+  );
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Top Header with Back Navigation */}
-      <View style={[styles.topHeader, isTablet && styles.topHeaderTablet]}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => safeBack(router)}
-          style={styles.backBtn}
-        >
-          <Icon name="arrow-left" size={18} color={SOL_COLORS.textPrimary} />
-        </TouchableOpacity>
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerMainTitle}>Nouvel Adhérent</Text>
-          <Text style={styles.headerSubTitle}>
-            {business?.name || 'Carnet Actif'} • {formatCurrency(unitAmount)} / main
-          </Text>
-        </View>
-        <View style={{ width: 40 }} />
-      </View>
-
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flexOne}>
+      <Screen
+        edges={['top', 'left', 'right', 'bottom']}
+        header={
+          <Header
+            title="Nouvel adhérent"
+            subtitle={`${business?.name || 'Carnet actif'} · ${formatCurrency(unitAmount)} / main`}
+            showBack={true}
+            showProfile={false}
+            showScanner={false}
+            fallbackBackRoute="/(tabs)"
+          />
+        }
+        contentStyle={styles.content}
+        footer={
+          <Button
+            size="lg"
+            fullWidth
+            icon="check"
+            loading={isSubmitting}
+            disabled={isSubmitting}
+            label={isSubmitting ? 'Enregistrement en cours…' : "Enregistrer l'adhérent"}
+            accessibilityHint="Demande votre code PIN gestionnaire"
+            onPress={handleValidateForm}
+          />
+        }
       >
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingHorizontal: horizontalPadding },
-            isTablet && styles.scrollContentTablet,
-          ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Live Preview Card */}
-          <View style={styles.previewHeroCard}>
-            <View style={styles.previewTopRow}>
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>
-                  {fullName.trim() ? getInitials(fullName) : 'SOL'}
-                </Text>
-              </View>
-              <View style={styles.previewInfo}>
-                <Text style={styles.previewName} numberOfLines={1} adjustsFontSizeToFit>
-                  {fullName.trim() || "Nom de l'Adhérent"}
-                </Text>
-                <Text style={styles.previewPhone}>
-                  {phoneDigits ? `+509 ${formatDisplayPhone(phoneDigits)}` : '+509 XX XX XX XX'}
-                </Text>
-              </View>
-              <View style={styles.rankBadge}>
-                <Icon name="crown" size={12} color={SOL_COLORS.info} style={{ marginRight: 3 }} />
-                <Text style={styles.rankBadgeText}>
-                  {handsCount > 1 ? `#${multiRanks}` : `Main #${assignedRank}`}
-                </Text>
-              </View>
+        {/* Live Preview Card */}
+        <Card tone="hero" style={styles.heroCard}>
+          <View style={styles.previewTop}>
+            <View style={styles.heroAvatar}>
+              <Text variant="subheading" tone="onHero">
+                {fullName.trim() ? getInitials(fullName) : 'SOL'}
+              </Text>
             </View>
-
-            {/* Financial Grid Info (Real-Time Feedback) */}
-            <View style={styles.financialStatsRow}>
-              <View style={styles.statItem}>
-                <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit>COTISATION (1 MAIN)</Text>
-                <Text style={styles.statValuePrimary} numberOfLines={1} adjustsFontSizeToFit>{formatCurrency(unitAmount)}</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statItem}>
-                <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit>TIRAGES PRÉVUS</Text>
-                <Text style={styles.statValueGreen} numberOfLines={1} adjustsFontSizeToFit>
-                  {handsCount} {handsCount > 1 ? 'tirages' : 'tirage'} de {formatCurrency(totalPotAmount)}
-                </Text>
-              </View>
+            <View style={styles.flexShrink}>
+              <Text variant="heading" tone="onHero" numberOfLines={1}>
+                {fullName.trim() || "Nom de l'adhérent"}
+              </Text>
+              <Text variant="caption" tone="onHeroMuted">
+                {phoneDigits ? `+509 ${formatDisplayPhone(phoneDigits)}` : '+509 XX XX XX XX'}
+              </Text>
             </View>
-
-            {/* Projection Temps Réel */}
-            <View style={styles.projectionBox}>
-              <Icon name="alert" size={14} color="#0D9488" style={{ marginTop: 2, marginRight: 8 }} />
-              <Text style={styles.projectionText}>
-                <Text style={{ fontWeight: '800' }}>Impact SOL :</Text> En prenant {handsCount} main{handsCount > 1 ? 's' : ''}, la cagnotte globale s'ajuste pour tout le monde à <Text style={{ fontWeight: '800' }}>{formatCurrency(totalPotAmount)}</Text> (basée sur le nouvel effectif de {totalCycleHands} mains). Cet adhérent paiera <Text style={{ fontWeight: '800' }}>{formatCurrency(memberTotalDue)} au total</Text> sur la durée du cycle.
+            <View style={styles.heroPill}>
+              <Text variant="label" tone="onHero" numberOfLines={1}>
+                {handsCount > 1 ? `#${multiRanks}` : `Main #${assignedRank}`}
               </Text>
             </View>
           </View>
 
-          {/* Form Card */}
-          <View style={styles.formCard}>
-            <Text style={styles.formSectionTitle}>INFORMATIONS PERSONNELLES</Text>
-
-            {/* Full Name Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>NOM COMPLET *</Text>
-              <View style={[styles.inputWrapper, activeInput === 'NAME' && styles.inputWrapperActive]}>
-                <Icon name="user" size={16} color={activeInput === 'NAME' ? SOL_COLORS.primary : SOL_COLORS.textMuted} style={{ marginRight: 10 }} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Ex: Marie Carmel Saint-Fleur"
-                  placeholderTextColor={SOL_COLORS.textMuted}
-                  value={fullName}
-                  onChangeText={setFullName}
-                  onFocus={() => setActiveInput('NAME')}
-                  onBlur={() => setActiveInput(null)}
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                />
-                {fullName.length > 0 && (
-                  <TouchableOpacity onPress={() => setFullName('')}>
-                    <Icon name="close" size={14} color={SOL_COLORS.textMuted} />
-                  </TouchableOpacity>
-                )}
-              </View>
+          {/* Financial Grid Info (Real-Time Feedback) */}
+          <View style={styles.heroStats}>
+            <View style={styles.heroStat}>
+              <Text variant="caption" tone="onHeroMuted">
+                Cotisation (1 main)
+              </Text>
+              <AmountText amount={unitAmount} size="medium" tone="onHero" />
             </View>
-
-            {/* Haitian Phone Number Input */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>NUMÉRO DE TÉLÉPHONE *</Text>
-              <View style={[styles.inputWrapper, activeInput === 'PHONE' && styles.inputWrapperActive]}>
-                <View style={styles.phoneCountryPill}>
-                  <Text style={styles.countryPillFlagText}>HT</Text>
-                  <Text style={styles.countryCode}>+509</Text>
-                </View>
-                <TextInput
-                  style={styles.textInputPhone}
-                  placeholder="37 12 34 56"
-                  placeholderTextColor={SOL_COLORS.textMuted}
-                  value={formatDisplayPhone(phoneDigits)}
-                  onChangeText={handlePhoneChange}
-                  onFocus={() => setActiveInput('PHONE')}
-                  onBlur={() => setActiveInput(null)}
-                  keyboardType="phone-pad"
-                  maxLength={11}
-                />
-                {phoneDigits.length > 0 && (
-                  <TouchableOpacity onPress={() => setPhoneDigits('')}>
-                    <Icon name="close" size={14} color={SOL_COLORS.textMuted} />
-                  </TouchableOpacity>
-                )}
-              </View>
+            <View style={styles.heroStatDivider} />
+            <View style={styles.heroStat}>
+              <Text variant="caption" tone="onHeroMuted">
+                Tirages prévus
+              </Text>
+              <Text variant="amount" tone="onHero" numberOfLines={1}>
+                {handsCount} × {formatCurrency(totalPotAmount)}
+              </Text>
             </View>
+          </View>
 
-            {/* Number of Subscribed Hands (Multi-Mains) */}
-            <View style={styles.inputGroup}>
-              <View style={styles.labelWithBadgeRow}>
-                <Text style={styles.inputLabel}>NOMBRE DE MAINS SOUSCRITES *</Text>
-                <Text style={styles.rankSubHint}>Compte pour autant d'enfants en plus</Text>
+          {/* Projection Temps Réel */}
+          <Text variant="caption" tone="onHeroMuted">
+            <Text variant="label" tone="onHero">
+              Impact SOL :{' '}
+            </Text>
+            en prenant {handsCount} main{handsCount > 1 ? 's' : ''}, la cagnotte s'ajuste pour tout le monde à{' '}
+            <Text variant="label" tone="onHero">
+              {formatCurrency(totalPotAmount)}
+            </Text>{' '}
+            ({totalCycleHands} mains). Cet adhérent paiera{' '}
+            <Text variant="label" tone="onHero">
+              {formatCurrency(memberTotalDue)} au total
+            </Text>{' '}
+            sur la durée du cycle.
+          </Text>
+        </Card>
+
+        {/* Identity */}
+        <Card style={styles.formCard}>
+          <TextField
+            label="Nom complet *"
+            placeholder="Ex : Marie Carmel Saint-Fleur"
+            value={fullName}
+            onChangeText={setFullName}
+            onFocus={() => setActiveInput('NAME')}
+            onBlur={() => setActiveInput(null)}
+            autoCapitalize="words"
+            autoCorrect={false}
+          />
+
+          {/* Haitian Phone Number Input */}
+          <View style={styles.group}>
+            <Text variant="label">Numéro de téléphone *</Text>
+            <View style={[styles.phoneBox, activeInput === 'PHONE' && styles.phoneBoxActive]}>
+              <View style={styles.countryChip}>
+                <Text variant="label">+509</Text>
               </View>
+              <TextInput
+                style={styles.phoneInput}
+                placeholder="37 12 34 56"
+                placeholderTextColor={theme.colors.textPlaceholder}
+                value={formatDisplayPhone(phoneDigits)}
+                onChangeText={handlePhoneChange}
+                onFocus={() => setActiveInput('PHONE')}
+                onBlur={() => setActiveInput(null)}
+                keyboardType="phone-pad"
+                maxLength={11}
+                accessibilityLabel="Numéro de téléphone, 8 chiffres"
+              />
+              {phoneDigits.length > 0 && (
+                <Pressable
+                  onPress={() => setPhoneDigits('')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Effacer le numéro"
+                  style={styles.clearBtn}
+                >
+                  <Icon name="close" size={18} color={theme.colors.textMuted} />
+                </Pressable>
+              )}
+            </View>
+          </View>
+        </Card>
 
-              {/* Quick Preset Buttons */}
-              <View style={styles.handsQuickRow}>
-                {[1, 2, 3, 4].map((num) => {
-                  const isSelected = handsCount === num;
-                  return (
-                    <TouchableOpacity
-                      key={num}
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        triggerLightImpact();
-                        handleHandsCountChange(num);
-                      }}
-                      style={[styles.handsQuickBtn, isSelected && styles.handsQuickBtnActive]}
-                    >
-                      <Text
-                        style={[styles.handsQuickBtnText, isSelected && styles.handsQuickBtnTextActive]}
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                      >
-                        {num === 1 ? (isSmallScreen ? '1 Main' : '1 Main (1 Part)') : `${num} Mains`}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              <View style={styles.stepperContainer}>
-                <TouchableOpacity
-                  activeOpacity={0.7}
+        {/* Number of Subscribed Hands (Multi-Mains) */}
+        <View style={styles.section}>
+          <SectionHeader title="Mains souscrites" />
+          <Card style={styles.formCard}>
+            <View style={styles.chipRow}>
+              {[1, 2, 3, 4].map((num) => (
+                <Chip
+                  key={num}
+                  label={num === 1 ? '1 main' : `${num} mains`}
+                  selected={handsCount === num}
                   onPress={() => {
                     triggerLightImpact();
-                    if (handsCount > 1) handleHandsCountChange(handsCount - 1);
+                    handleHandsCountChange(num);
                   }}
-                  disabled={handsCount <= 1}
-                  style={[styles.stepperBtn, handsCount <= 1 && styles.stepperBtnDisabled]}
-                >
-                  <Text style={styles.stepperBtnSymbol}>−</Text>
-                </TouchableOpacity>
+                />
+              ))}
+            </View>
 
-                <View style={styles.stepperCenter}>
-                  <Text style={styles.stepperRankText}>{handsCount} {handsCount > 1 ? 'Mains souscrites' : 'Main souscrite'}</Text>
-                  <Text style={styles.stepperSubText}>
-                    +{handsCount} {handsCount > 1 ? 'enfants/places ajoutés au cycle' : 'enfant/place ajouté au cycle'}
-                  </Text>
-                </View>
+            {renderStepper({
+              title: `${handsCount} ${handsCount > 1 ? 'mains souscrites' : 'main souscrite'}`,
+              sub: `+${handsCount} ${handsCount > 1 ? 'enfants / places au cycle' : 'enfant / place au cycle'}`,
+              noun: 'une main',
+              minusDisabled: handsCount <= 1,
+              onMinus: () => {
+                triggerLightImpact();
+                if (handsCount > 1) handleHandsCountChange(handsCount - 1);
+              },
+              onPlus: () => {
+                triggerLightImpact();
+                handleHandsCountChange(handsCount + 1);
+              },
+            })}
 
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    triggerLightImpact();
-                    handleHandsCountChange(handsCount + 1);
-                  }}
-                  style={styles.stepperBtn}
-                >
-                  <Text style={styles.stepperBtnSymbol}>+</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.multiHandsInfoBadge}>
-                <Icon name="crown" size={14} color="#0284C7" style={{ marginRight: 6 }} />
-                <Text style={styles.multiHandsInfoText}>
+            <Card tone="sunken" padding="sm">
+              <View style={styles.infoRow}>
+                <Icon name="info" size={18} color={theme.colors.textMuted} />
+                <Text variant="caption" tone="muted" style={styles.flexShrink}>
                   {handsCount > 1
                     ? `Cet enfant prend ${handsCount} mains (l'effectif du SOL passe de ${existingTotalCycleHands} à ${totalCycleHands} mains effectives). La cagnotte de chaque main tirée passe à ${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)}). Cet enfant recevra ${handsCount} tirages de ${formatCurrency(totalPotAmount)} (Total: ${formatCurrency(memberTotalDue)}).`
                     : `1 part standard. L'effectif du SOL est de ${existingMembersCount + 1} enfants et ${totalCycleHands} mains. Chaque main tirée est de ${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)}).`}
                 </Text>
               </View>
-            </View>
+            </Card>
+          </Card>
+        </View>
 
-            {/* Assigned Hand / Multi-Ranks */}
-            <View style={styles.inputGroup}>
-              <View style={styles.labelWithBadgeRow}>
-                <Text style={styles.inputLabel}>
-                  {handsCount > 1 ? 'RANGS DE TIRAGE DE SES MAINS' : 'POSITION / RANG DANS LE CYCLE'}
-                </Text>
-                <Text style={styles.rankSubHint}>
-                  {handsCount > 1 ? `Attribués: #${multiRanks}` : 'Ordre de réception'}
-                </Text>
-              </View>
-
-              {handsCount > 1 ? (
-                <View style={[styles.inputWrapper, activeInput === 'RANKS' && styles.inputWrapperActive]}>
-                  <Icon name="crown" size={16} color={activeInput === 'RANKS' ? SOL_COLORS.primary : SOL_COLORS.textMuted} style={{ marginRight: 10 }} />
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder={`Ex: ${multiRanks}`}
-                    placeholderTextColor={SOL_COLORS.textMuted}
-                    value={multiRanks}
-                    onChangeText={setMultiRanks}
-                    onFocus={() => setActiveInput('RANKS')}
-                    onBlur={() => setActiveInput(null)}
-                    keyboardType="numbers-and-punctuation"
-                  />
-                </View>
-              ) : (
-                <View style={styles.stepperContainer}>
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    onPress={() => {
-                      triggerLightImpact();
-                      if (assignedRank > 1) handleAssignedRankChange(assignedRank - 1);
-                    }}
-                    disabled={assignedRank <= 1}
-                    style={[styles.stepperBtn, assignedRank <= 1 && styles.stepperBtnDisabled]}
-                  >
-                    <Text style={styles.stepperBtnSymbol}>−</Text>
-                  </TouchableOpacity>
-
-                  <View style={styles.stepperCenter}>
-                    <Text style={styles.stepperRankText}>Main #{assignedRank}</Text>
-                    <Text style={styles.stepperSubText}>Position de tirage</Text>
-                  </View>
-
-                  <TouchableOpacity
-                    activeOpacity={0.7}
-                    onPress={() => {
-                      triggerLightImpact();
-                      handleAssignedRankChange(assignedRank + 1);
-                    }}
-                    style={styles.stepperBtn}
-                  >
-                    <Text style={styles.stepperBtnSymbol}>+</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-
-            {/* Quick First Payment Switch */}
-            <View style={styles.firstPaymentCard}>
-              <View style={{ flex: 1, paddingRight: 10 }}>
-                <Text style={styles.firstPaymentTitle}>
-                  Encaisser sa part ({handsCount} main{handsCount > 1 ? 's' : ''}) dès l'inscription
-                </Text>
-                <Text style={styles.firstPaymentSub}>
-                  Crédite immédiatement {formatCurrency(unitAmount * handsCount)} au solde de l'adhérent.
-                </Text>
-              </View>
-              <Switch
-                value={collectFirstHand}
-                onValueChange={(val) => {
-                  triggerLightImpact();
-                  setCollectFirstHand(val);
-                }}
-                trackColor={{ false: '#CBD5E1', true: SOL_COLORS.primaryLight }}
-                thumbColor={collectFirstHand ? SOL_COLORS.primary : '#F8FAFC'}
+        {/* Assigned Hand / Multi-Ranks */}
+        <View style={styles.section}>
+          <SectionHeader title={handsCount > 1 ? 'Rangs de tirage de ses mains' : 'Rang dans le cycle'} />
+          <Card style={styles.formCard}>
+            {handsCount > 1 ? (
+              <TextField
+                label="Rangs attribués"
+                placeholder={`Ex : ${multiRanks}`}
+                value={multiRanks}
+                onChangeText={setMultiRanks}
+                onFocus={() => setActiveInput('RANKS')}
+                onBlur={() => setActiveInput(null)}
+                keyboardType="numbers-and-punctuation"
+                helper="Séparez les rangs par des virgules (ex : 5, 6, 7)."
               />
-            </View>
+            ) : (
+              renderStepper({
+                title: `Main #${assignedRank}`,
+                sub: 'Ordre de réception de la cagnotte',
+                noun: 'un rang',
+                minusDisabled: assignedRank <= 1,
+                onMinus: () => {
+                  triggerLightImpact();
+                  if (assignedRank > 1) handleAssignedRankChange(assignedRank - 1);
+                },
+                onPlus: () => {
+                  triggerLightImpact();
+                  handleAssignedRankChange(assignedRank + 1);
+                },
+              })
+            )}
+          </Card>
+        </View>
 
-            {/* Submit Button */}
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={handleValidateForm}
-              disabled={isSubmitting}
-              style={styles.submitBtn}
-            >
-              <Icon name="check" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.submitBtnText}>
-                {isSubmitting ? 'Enregistrement en cours...' : 'Enregistrer l\'Adhérent'}
+        {/* Quick First Payment Switch */}
+        <Card>
+          <View style={styles.switchRow}>
+            <View style={styles.flexShrink}>
+              <Text variant="bodyStrong">
+                Encaisser sa part ({handsCount} main{handsCount > 1 ? 's' : ''}) dès l'inscription
               </Text>
-            </TouchableOpacity>
+              <Text variant="caption" tone="muted">
+                Crédite immédiatement {formatCurrency(unitAmount * handsCount)} au solde de l'adhérent.
+              </Text>
+            </View>
+            <Switch
+              value={collectFirstHand}
+              onValueChange={(val) => {
+                triggerLightImpact();
+                setCollectFirstHand(val);
+              }}
+              trackColor={{ false: theme.colors.borderStrong, true: theme.colors.primary }}
+              thumbColor={theme.colors.surface}
+              accessibilityLabel="Encaisser sa part dès l'inscription"
+            />
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </Card>
 
-      {/* 4-Digit PIN Security Modal */}
-      <PinVerificationModal
-        visible={isPinModalOpen}
-        title="Validation de l'Inscription"
-        subtitle={`Saisissez votre code PIN gestionnaire pour confirmer l'ajout de ${fullName.trim() || 'un adhérent'} (Main #${assignedRank}).`}
-        onSuccess={executeSaveClient}
-        onCancel={() => setIsPinModalOpen(false)}
-        onLockout={() => {
-          recordAuditLog({
-            action: 'LOGIN_FAILURE',
-            entityType: 'SYSTEM',
-            entityId: 'unknown',
-            reason: `3 tentatives PIN échouées lors de la création du profil "${fullName.trim()}".`,
-            userId: activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001',
-            userRole: 'MANAGER',
-          });
-        }}
-      />
-    </SafeAreaView>
+        {/* 4-Digit PIN Security Modal */}
+        <PinVerificationModal
+          visible={isPinModalOpen}
+          title="Validation de l'Inscription"
+          subtitle={`Saisissez votre code PIN gestionnaire pour confirmer l'ajout de ${fullName.trim() || 'un adhérent'} (Main #${assignedRank}).`}
+          onSuccess={executeSaveClient}
+          onCancel={() => setIsPinModalOpen(false)}
+          onLockout={() => {
+            recordAuditLog({
+              action: 'LOGIN_FAILURE',
+              entityType: 'SYSTEM',
+              entityId: 'unknown',
+              reason: `3 tentatives PIN échouées lors de la création du profil "${fullName.trim()}".`,
+              userId: activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001',
+              userRole: 'MANAGER',
+            });
+          }}
+        />
+      </Screen>
+    </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.background,
-  },
-  topHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  topHeaderTablet: {
-    maxWidth: 720,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  headerTitleContainer: {
-    alignItems: 'center',
-  },
-  headerMainTitle: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  headerSubTitle: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: SOL_COLORS.textSecondary,
-    marginTop: 1,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  scrollContentTablet: {
-    maxWidth: 720,
-    width: '100%',
-    alignSelf: 'center',
-  },
-  previewHeroCard: {
-    backgroundColor: SOL_COLORS.secondary,
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 14,
-    ...SHADOWS.md,
-  },
-  previewTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatarCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    borderWidth: 2,
-    borderColor: '#2DD4BF',
-  },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  previewInfo: {
-    flex: 1,
-  },
-  previewName: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: -0.2,
-  },
-  previewPhone: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  rankBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  rankBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: SOL_COLORS.info,
-  },
-  financialStatsRow: {
-    flexDirection: 'row',
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
-    padding: 10,
-    marginTop: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  multiHandsPreviewPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#312E81',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#4338CA',
-  },
-  multiHandsPreviewPillText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#92400E',
-    flex: 1,
-    lineHeight: 14,
-  },
-  projectionBox: {
-    flexDirection: 'row',
-    backgroundColor: '#F0FDFA',
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#CCFBF1',
-    marginTop: 10,
-    alignItems: 'flex-start',
-  },
-  projectionText: {
-    flex: 1,
-    fontSize: 11,
-    lineHeight: 16,
-    color: '#0F766E',
-    fontWeight: '500',
-  },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statDivider: {
-    width: 1,
-    height: 24,
-    backgroundColor: '#334155',
-  },
-  statLabel: {
-    fontSize: 8,
-    fontWeight: '900',
-    color: '#94A3B8',
-    letterSpacing: 0.3,
-  },
-  statValueGreen: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#34D399',
-    marginTop: 2,
-  },
-  statValuePrimary: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#60A5FA',
-    marginTop: 2,
-  },
-  statValueMuted: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#CBD5E1',
-    marginTop: 2,
-  },
-  formCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  formSectionTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: SOL_COLORS.textMuted,
-    letterSpacing: 0.5,
-    marginBottom: 14,
-  },
-  inputGroup: {
-    marginBottom: 14,
-  },
-  labelWithBadgeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  inputLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: SOL_COLORS.textSecondary,
-    letterSpacing: 0.4,
-    marginBottom: 6,
-  },
-  rankSubHint: {
-    fontSize: 10,
-    color: SOL_COLORS.textMuted,
-    fontWeight: '600',
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    height: 48,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  inputWrapperActive: {
-    borderColor: SOL_COLORS.primary,
-    backgroundColor: '#FFFFFF',
-  },
-  textInput: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  phoneCountryPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingRight: 10,
-    marginRight: 10,
-    borderRightWidth: 1,
-    borderRightColor: SOL_COLORS.border,
-  },
-  countryPillFlagText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#1D4ED8',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 4,
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  countryCode: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  textInputPhone: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-    letterSpacing: 0.5,
-  },
-  stepperContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 14,
-    padding: 6,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  stepperBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    ...SHADOWS.sm,
-  },
-  stepperBtnDisabled: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
-  },
-  stepperBtnSymbol: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-    lineHeight: 22,
-  },
-  stepperCenter: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  stepperRankText: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  stepperSubText: {
-    fontSize: 10,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  firstPaymentCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-  },
-  firstPaymentTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  firstPaymentSub: {
-    fontSize: 11,
-    color: SOL_COLORS.textSecondary,
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  handsQuickRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 8,
-  },
-  handsQuickBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  handsQuickBtnActive: {
-    backgroundColor: '#EFF6FF',
-    borderColor: SOL_COLORS.primary,
-  },
-  handsQuickBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: SOL_COLORS.textSecondary,
-  },
-  handsQuickBtnTextActive: {
-    color: SOL_COLORS.primary,
-    fontWeight: '900',
-  },
-  multiHandsInfoBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F9FF',
-    padding: 8,
-    borderRadius: 10,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-  },
-  multiHandsInfoText: {
-    fontSize: 11,
-    color: '#0284C7',
-    fontWeight: '600',
-    flex: 1,
-    lineHeight: 15,
-  },
-  submitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    height: 52,
-    borderRadius: 14,
-    ...SHADOWS.md,
-  },
-  submitBtnText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
+  StyleSheet.create({
+    flexOne: { flex: 1 },
+    flexShrink: { flex: 1, minWidth: 0 },
+    pressed: { backgroundColor: colors.surfacePressed },
+    content: { gap: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.xl },
+    section: { gap: spacing.md },
+    group: { gap: spacing.xs },
+
+    heroCard: { gap: spacing.md },
+    previewTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    heroAvatar: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.onHeroMuted,
+    },
+    heroPill: {
+      maxWidth: '35%',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.onHeroMuted,
+    },
+    heroStats: { flexDirection: 'row', alignItems: 'stretch', gap: spacing.md },
+    heroStat: { flex: 1, minWidth: 0, gap: spacing.xs },
+    heroStatDivider: { width: 1, backgroundColor: colors.onHeroMuted, opacity: 0.4 },
+
+    formCard: { gap: spacing.lg },
+    phoneBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      minHeight: layout.touchTarget,
+      paddingLeft: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      backgroundColor: colors.surface,
+    },
+    phoneBoxActive: { borderWidth: 2, borderColor: colors.primary },
+    countryChip: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.sm,
+      backgroundColor: colors.surfaceAlt,
+    },
+    phoneInput: { ...typography.amountSmall, flex: 1, minWidth: 0, color: colors.text, paddingVertical: spacing.sm },
+    clearBtn: { width: layout.touchTarget, height: layout.touchTarget, alignItems: 'center', justifyContent: 'center' },
+
+    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    stepper: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    stepBtn: {
+      width: layout.actionHeight,
+      height: layout.actionHeight,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    stepBtnDisabled: { borderColor: colors.border, backgroundColor: colors.surfaceAlt },
+    stepCenter: { flex: 1, minWidth: 0, gap: spacing.xs },
+    infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+
+    switchRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  });
