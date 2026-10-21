@@ -52,7 +52,9 @@ export function MetricTile({ label, value, children, hint, icon, tone = 'default
   );
 
   const box: ViewStyle = {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
     minWidth: 0,
     gap: spacing.xs,
     paddingVertical: spacing.md,
