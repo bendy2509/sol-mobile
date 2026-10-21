@@ -1,22 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  Modal,
-  Switch,
-  ActivityIndicator,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Header } from '@/components/Header';
-import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { AmountText, Button, Card, Chip, Dialog, EmptyState, Icon, MetricTile, Screen, SectionHeader, Text, TextField, UiIconName } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig, renewSolCycle, getClosedCycles } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
@@ -24,12 +12,14 @@ import { generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfSe
 import { BusinessConfig, ClosedCycle, Member, PaymentFrequency } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerErrorFeedback, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
-import { SOL_COLORS, SHADOWS } from '@/constants/Colors';
 import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
 
 type CycleMode = 'RENEW_SAME_MEMBERS' | 'START_FRESH' | null;
 
 export default function CycleManagementScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { activeCollector, userRole } = useAuth();
   const { contentMaxWidth, horizontalPadding, width, isSmallScreen } = useResponsive();
@@ -217,486 +207,313 @@ export default function CycleManagementScreen() {
     { label: 'Mensuel', value: 'MONTHLY' },
   ];
 
+  const screenHeader = (
+    <Header
+      title="Gestion du cycle"
+      subtitle="Clôture et réouverture"
+      showBack={true}
+      showProfile={false}
+      showScanner={false}
+      fallbackBackRoute="/(tabs)/sol"
+    />
+  );
+
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.container}>
-        <Header
-          title="Gestion du Cycle"
-          subtitle="Clôture & Réouverture"
-          showBack={true}
-          showProfile={false}
-          showScanner={false}
-          fallbackBackRoute="/(tabs)/sol"
-        />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={SOL_COLORS.primary} />
-          <Text style={styles.loadingText}>Chargement du carnet actif...</Text>
+      <Screen scroll={false} edges={['top', 'left', 'right', 'bottom']} header={screenHeader}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text variant="bodyStrong">Chargement du carnet actif…</Text>
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   if (!business) {
     return (
-      <SafeAreaView style={styles.container}>
-        <Header
-          title="Gestion du Cycle"
-          subtitle="Clôture & Réouverture"
-          showBack={true}
-          showProfile={false}
-          showScanner={false}
-          fallbackBackRoute="/(tabs)/sol"
-        />
-        <View style={styles.loadingContainer}>
-          <Icon name="alert" size={40} color={SOL_COLORS.danger} />
-          <Text style={styles.noBusinessTitle}>Aucun carnet actif</Text>
-          <Text style={styles.noBusinessSub}>
-            Vous devez d'abord créer un SOL ou Sabotay pour accéder à cette fonctionnalité.
-          </Text>
+      <Screen scroll={false} edges={['top', 'left', 'right', 'bottom']} header={screenHeader}>
+        <View style={styles.centered}>
+          <EmptyState
+            icon="alert"
+            title="Aucun carnet actif"
+            message="Créez d'abord un SOL ou un Sabotay pour accéder à la gestion du cycle."
+          />
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
+  const modeOptions: {
+    mode: Exclude<CycleMode, null>;
+    title: string;
+    description: string;
+    icon: UiIconName;
+    danger: boolean;
+    details: { ok: boolean; text: string }[];
+  }[] = [
+    {
+      mode: 'RENEW_SAME_MEMBERS',
+      title: 'Conserver les adhérents',
+      description: `Les ${members.length} membres passent dans le nouveau cycle avec leurs comptes remis à zéro.`,
+      icon: 'cycle',
+      danger: false,
+      details: [
+        { ok: true, text: 'Nom, téléphone et nombre de mains conservés' },
+        { ok: true, text: 'Soldes, cotisations et mains remises remis à 0' },
+        { ok: true, text: 'Rangs de décaissement conservés (modifiables ensuite)' },
+        { ok: false, text: 'Vous pourrez supprimer ensuite les adhérents qui ne participent plus' },
+      ],
+    },
+    {
+      mode: 'START_FRESH',
+      title: 'Démarrer à zéro',
+      description: 'La liste des adhérents est entièrement vidée. Nouveau départ.',
+      icon: 'trash',
+      danger: true,
+      details: [
+        { ok: false, text: `Les ${members.length} adhérents seront retirés du nouveau cycle` },
+        { ok: true, text: "L'historique des transactions reste intact pour l'audit" },
+        { ok: true, text: 'La liste sera vide, prête pour de nouveaux inscrits' },
+      ],
+    },
+  ];
+  const isFresh = selectedMode === 'START_FRESH';
+
   return (
-    <SafeAreaView style={styles.container}>
-      <Header
-        title="Gestion du Cycle"
-        subtitle="Clôture & Réouverture"
-        showBack={true}
-        showProfile={false}
-        showScanner={false}
-        fallbackBackRoute="/(tabs)/sol"
-      />
-
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContent,
-          { maxWidth: contentMaxWidth, alignSelf: 'center', width: '100%', paddingHorizontal: horizontalPadding },
-        ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Current Cycle Summary */}
-        <View style={styles.currentCycleCard}>
-          <View style={styles.cardHeaderRow}>
-            <View style={[styles.cardIconBox, { backgroundColor: SOL_COLORS.primaryLighter }]}>
-              <Icon name="sol" size={16} color={SOL_COLORS.primary} />
-            </View>
-            <Text style={styles.cardTitle}>CYCLE ACTUEL</Text>
-          </View>
-
-          <Text style={styles.cycleName}>{business.name}</Text>
-
-          <View style={styles.cycleStatsRow}>
-            <View style={styles.cycleStat}>
-              <Text style={styles.cycleStatValue}>{members.length}</Text>
-              <Text style={styles.cycleStatLabel}>Adhérents</Text>
-            </View>
-            <View style={styles.cycleStatDivider} />
-            <View style={styles.cycleStat}>
-              <Text style={styles.cycleStatValue}>{formatCurrency(business.contributionAmount)}</Text>
-              <Text style={styles.cycleStatLabel}>/ Main</Text>
-            </View>
-            <View style={styles.cycleStatDivider} />
-            <View style={styles.cycleStat}>
-              <Text style={styles.cycleStatValue}>{formatDateShort(business.endDate)}</Text>
-              <Text style={styles.cycleStatLabel}>Fin prévue</Text>
-            </View>
-          </View>
+    <Screen edges={['top', 'left', 'right', 'bottom']} header={screenHeader}>
+      {/* Current cycle */}
+      <Card style={styles.cardGap}>
+        <Text variant="caption" tone="muted">
+          Cycle actuel
+        </Text>
+        <Text variant="heading">{business.name}</Text>
+        <View style={styles.metricsRow}>
+          <MetricTile label="Adhérents" icon="users" value={String(members.length)} />
+          <MetricTile label="Par main" icon="cash" value={formatCurrency(business.contributionAmount)} />
+          <MetricTile label="Fin prévue" icon="calendar" value={business.endDate ? formatDateShort(business.endDate) : '—'} />
         </View>
+      </Card>
 
-        {/* Warning Banner */}
-        <View style={styles.warningBanner}>
-          <Icon name="alert" size={16} color="#92400E" style={{ marginTop: 1, marginRight: 10 }} />
-          <Text style={styles.warningText}>
-            <Text style={{ fontWeight: '900' }}>Action irréversible.</Text> La clôture archivera définitivement ce cycle. L'historique des transactions sera conservé à des fins d'audit.
-          </Text>
-        </View>
-
-        {/* Mode Selection */}
-        <Text style={styles.sectionLabel}>CHOISISSEZ L'OPTION DE RÉOUVERTURE</Text>
-
-        {/* Option 1: Keep Members */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => handleSelectMode('RENEW_SAME_MEMBERS')}
-          style={[
-            styles.modeCard,
-            selectedMode === 'RENEW_SAME_MEMBERS' && styles.modeCardSelected,
-          ]}
-        >
-          <View style={styles.modeCardHeader}>
-            <View
-              style={[
-                styles.modeIconBox,
-                selectedMode === 'RENEW_SAME_MEMBERS'
-                  ? { backgroundColor: SOL_COLORS.primaryLighter }
-                  : { backgroundColor: '#F1F5F9' },
-              ]}
-            >
-              <Icon
-                name="users"
-                size={20}
-                color={
-                  selectedMode === 'RENEW_SAME_MEMBERS' ? SOL_COLORS.primary : SOL_COLORS.textSecondary
-                }
-              />
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text
-                style={[
-                  styles.modeTitle,
-                  selectedMode === 'RENEW_SAME_MEMBERS' && { color: SOL_COLORS.primary },
-                ]}
-              >
-                Conserver les Adhérents
-              </Text>
-              <Text style={styles.modeSubtitle}>
-                Les {members.length} membres sont copiés dans le nouveau cycle avec leurs comptes remis à zéro.
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.radioCircle,
-                selectedMode === 'RENEW_SAME_MEMBERS' && styles.radioCircleSelected,
-              ]}
-            >
-              {selectedMode === 'RENEW_SAME_MEMBERS' && <View style={styles.radioInner} />}
-            </View>
-          </View>
-
-          {selectedMode === 'RENEW_SAME_MEMBERS' && (
-            <View style={styles.modeDetailBox}>
-              <View style={styles.modeDetailRow}>
-                <Icon name="check" size={12} color={SOL_COLORS.success} style={{ marginRight: 6 }} />
-                <Text style={styles.modeDetailText}>
-                  Nom, téléphone et nombre de mains conservés
-                </Text>
-              </View>
-              <View style={styles.modeDetailRow}>
-                <Icon name="check" size={12} color={SOL_COLORS.success} style={{ marginRight: 6 }} />
-                <Text style={styles.modeDetailText}>Soldes, cotisations et mains remises = 0</Text>
-              </View>
-              <View style={styles.modeDetailRow}>
-                <Icon name="check" size={12} color={SOL_COLORS.success} style={{ marginRight: 6 }} />
-                <Text style={styles.modeDetailText}>
-                  Rangs de décaissement conservés (modifiables après)
-                </Text>
-              </View>
-              <View style={styles.modeDetailRow}>
-                <Icon name="alert" size={12} color={SOL_COLORS.accent} style={{ marginRight: 6 }} />
-                <Text style={[styles.modeDetailText, { color: '#92400E' }]}>
-                  Vous pourrez ensuite supprimer les adhérents qui ne participent plus
-                </Text>
-              </View>
-            </View>
-          )}
-        </TouchableOpacity>
-
-        {/* Option 2: Start Fresh */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => handleSelectMode('START_FRESH')}
-          style={[
-            styles.modeCard,
-            selectedMode === 'START_FRESH' && styles.modeCardSelectedDanger,
-          ]}
-        >
-          <View style={styles.modeCardHeader}>
-            <View
-              style={[
-                styles.modeIconBox,
-                selectedMode === 'START_FRESH'
-                  ? { backgroundColor: SOL_COLORS.dangerLight }
-                  : { backgroundColor: '#F1F5F9' },
-              ]}
-            >
-              <Icon
-                name="users"
-                size={20}
-                color={selectedMode === 'START_FRESH' ? SOL_COLORS.danger : SOL_COLORS.textSecondary}
-              />
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text
-                style={[
-                  styles.modeTitle,
-                  selectedMode === 'START_FRESH' && { color: SOL_COLORS.dangerDark },
-                ]}
-              >
-                Démarrer à Zéro
-              </Text>
-              <Text style={styles.modeSubtitle}>
-                La liste des adhérents est complètement vidée. Nouveau départ total.
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.radioCircle,
-                selectedMode === 'START_FRESH' && styles.radioCircleSelectedDanger,
-              ]}
-            >
-              {selectedMode === 'START_FRESH' && <View style={styles.radioInnerDanger} />}
-            </View>
-          </View>
-
-          {selectedMode === 'START_FRESH' && (
-            <View style={[styles.modeDetailBox, { backgroundColor: '#FFF1F2', borderColor: '#FECDD3' }]}>
-              <View style={styles.modeDetailRow}>
-                <Icon name="alert" size={12} color={SOL_COLORS.danger} style={{ marginRight: 6 }} />
-                <Text style={[styles.modeDetailText, { color: SOL_COLORS.dangerDark }]}>
-                  Tous les {members.length} adhérents seront supprimés du nouveau cycle
-                </Text>
-              </View>
-              <View style={styles.modeDetailRow}>
-                <Icon name="check" size={12} color={SOL_COLORS.success} style={{ marginRight: 6 }} />
-                <Text style={styles.modeDetailText}>
-                  L'historique des transactions reste intact (à des fins d'audit)
-                </Text>
-              </View>
-              <View style={styles.modeDetailRow}>
-                <Icon name="check" size={12} color={SOL_COLORS.success} style={{ marginRight: 6 }} />
-                <Text style={styles.modeDetailText}>
-                  La liste sera vide, prête pour de nouveaux inscrits
-                </Text>
-              </View>
-            </View>
-          )}
-        </TouchableOpacity>
-
-        {/* New Cycle Settings (only when a mode is selected) */}
-        {selectedMode && (
-          <View style={styles.newCycleSettingsCard}>
-            <View style={styles.cardHeaderRow}>
-              <View style={[styles.cardIconBox, { backgroundColor: '#EFF6FF' }]}>
-                <Icon name="calendar" size={14} color={SOL_COLORS.info} />
-              </View>
-              <Text style={styles.cardTitle}>PARAMÈTRES DU NOUVEAU CYCLE</Text>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>NOM DU SOL / CARNET</Text>
-              <TextInput
-                style={styles.textInput}
-                value={newCycleName}
-                onChangeText={setNewCycleName}
-                placeholder={`Ex: ${business.name} — Cycle 2`}
-                placeholderTextColor={SOL_COLORS.textMuted}
-                maxLength={60}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>VALEUR D'UNE MAIN (HTG)</Text>
-              <TextInput
-                style={styles.textInput}
-                value={newContribution}
-                onChangeText={setNewContribution}
-                keyboardType="numeric"
-                placeholder="Ex: 250"
-                placeholderTextColor={SOL_COLORS.textMuted}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>FRÉQUENCE DE COTISATION</Text>
-              <View style={styles.frequencyRow}>
-                {frequencyOptions.map((opt) => (
-                  <TouchableOpacity
-                    key={opt.value}
-                    activeOpacity={0.7}
-                    onPress={() => setNewFrequency(opt.value)}
-                    style={[
-                      styles.freqBtn,
-                      newFrequency === opt.value && styles.freqBtnSelected,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.freqBtnText,
-                        newFrequency === opt.value && styles.freqBtnTextSelected,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </View>
-        )}
-
-        {/* Launch Button */}
-        {selectedMode && (
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleOpenConfirm}
-            disabled={isProcessing}
-            style={[
-              styles.launchBtn,
-              selectedMode === 'START_FRESH' && styles.launchBtnDanger,
+      {/* Reopening options */}
+      <SectionHeader title="Option de réouverture" />
+      {modeOptions.map((opt) => {
+        const selected = selectedMode === opt.mode;
+        const accent = opt.danger ? theme.colors.danger : theme.colors.primary;
+        return (
+          <Pressable
+            key={opt.mode}
+            onPress={() => handleSelectMode(opt.mode)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected }}
+            accessibilityLabel={`${opt.title}. ${opt.description}`}
+            style={({ pressed }) => [
+              styles.modeCard,
+              pressed && styles.pressed,
+              selected && { borderColor: accent, borderWidth: 2, backgroundColor: opt.danger ? theme.colors.dangerSoft : theme.colors.primarySoft },
             ]}
           >
-            {isProcessing ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <>
-                <Icon name="shield" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.launchBtnText}>
-                  {selectedMode === 'RENEW_SAME_MEMBERS'
-                    ? 'Rouvrir avec les mêmes membres (PIN requis)'
-                    : 'Démarrer à Zéro (PIN requis)'}
+            <View style={styles.modeHeader}>
+              <View style={[styles.modeIcon, { backgroundColor: opt.danger ? theme.colors.dangerSoft : theme.colors.primarySoft }]}>
+                <Icon name={opt.icon} size={22} color={accent} />
+              </View>
+              <View style={styles.flexShrink}>
+                <Text variant="subheading" style={selected ? { color: accent } : undefined}>
+                  {opt.title}
                 </Text>
-              </>
-            )}
-          </TouchableOpacity>
-        )}
+                <Text variant="caption" tone="muted">
+                  {opt.description}
+                </Text>
+              </View>
+              <View style={[styles.radio, selected && { borderColor: accent }]}>
+                {selected && <View style={[styles.radioDot, { backgroundColor: accent }]} />}
+              </View>
+            </View>
 
-        {/* Closed Cycles History Section */}
-        <View style={styles.historySection}>
-          <View style={styles.historyHeaderRow}>
-            <View style={[styles.cardIconBox, { backgroundColor: '#EDE9FE' }]}>
-              <Icon name="history" size={16} color="#7C3AED" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.historySectionTitle}>HISTORIQUE DES CYCLES CLÔTURÉS</Text>
-              <Text style={styles.historySectionSub}>
-                Archives complètes de vos cycles précédents avec bilans financiers téléchargeables en PDF à tout moment.
-              </Text>
-            </View>
-          </View>
-
-          {closedCycles.length === 0 ? (
-            <View style={styles.emptyHistoryCard}>
-              <Icon name="sol" size={32} color="#94A3B8" />
-              <Text style={styles.emptyHistoryTitle}>Aucun cycle archivé pour l'instant</Text>
-              <Text style={styles.emptyHistorySub}>
-                Dès que vous clôturez ou renouvelez un cycle, l'ensemble de ses données financières et la liste des participants seront archivés ici.
-              </Text>
-            </View>
-          ) : (
-            closedCycles.map((cycle) => {
-              const isDownloading = downloadingCycleId === cycle.id;
-              return (
-                <View key={cycle.id} style={styles.cycleHistoryCard}>
-                  <View style={styles.cycleHistoryCardHeader}>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                        <Text style={styles.cycleHistoryNumber}>Cycle #{cycle.cycleNumber}</Text>
-                        <View style={styles.cycleHistoryBadge}>
-                          <Text style={styles.cycleHistoryBadgeText}>ARCHIVÉ</Text>
-                        </View>
-                      </View>
-                      <Text style={styles.cycleHistoryName}>{cycle.businessName}</Text>
-                    </View>
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => handleDownloadClosedCyclePdf(cycle)}
-                      disabled={isDownloading}
-                      style={[styles.downloadPdfBtn, isDownloading && { opacity: 0.6 }]}
+            {selected && (
+              <View style={styles.modeDetails}>
+                {opt.details.map((d) => (
+                  <View key={d.text} style={styles.detailLine}>
+                    <Icon
+                      name={d.ok ? 'check' : 'alert'}
+                      size={16}
+                      color={d.ok ? theme.colors.success : opt.danger ? theme.colors.danger : theme.colors.warning}
+                    />
+                    <Text
+                      variant="caption"
+                      tone={d.ok ? 'default' : opt.danger ? 'danger' : 'warning'}
+                      style={styles.flexShrink}
                     >
-                      {isDownloading ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <Icon name="print" size={13} color="#FFFFFF" style={{ marginRight: 5 }} />
-                          <Text style={styles.downloadPdfBtnText}>Bilan PDF</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-
-                  <View style={styles.cycleHistoryDatesRow}>
-                    <Text style={styles.cycleHistoryDateLabel}>Période : </Text>
-                    <Text style={styles.cycleHistoryDateVal}>
-                      {formatDateShort(cycle.startDate)} → {formatDateShort(cycle.closedAt || cycle.endDate)}
+                      {d.text}
                     </Text>
                   </View>
+                ))}
+              </View>
+            )}
+          </Pressable>
+        );
+      })}
 
-                  <View style={styles.cycleHistoryStatsGrid}>
-                    <View style={styles.cycleHistoryStatItem}>
-                      <Text style={styles.cycleHistoryStatLabel}>Cotisation</Text>
-                      <Text style={styles.cycleHistoryStatVal}>{formatCurrency(cycle.unitAmount)}</Text>
-                    </View>
-                    <View style={styles.cycleHistoryStatItem}>
-                      <Text style={styles.cycleHistoryStatLabel}>Membres / Mains</Text>
-                      <Text style={styles.cycleHistoryStatVal}>{cycle.membersCount} / {cycle.totalHands}</Text>
-                    </View>
-                    <View style={styles.cycleHistoryStatItem}>
-                      <Text style={styles.cycleHistoryStatLabel}>Total Collecté</Text>
-                      <Text style={[styles.cycleHistoryStatVal, { color: '#059669' }]}>
-                        {formatCurrency(cycle.totalCollected)}
-                      </Text>
-                    </View>
-                    <View style={styles.cycleHistoryStatItem}>
-                      <Text style={styles.cycleHistoryStatLabel}>Total Décaissement</Text>
-                      <Text style={[styles.cycleHistoryStatVal, { color: '#2563EB' }]}>
-                        {formatCurrency(cycle.totalDistributed)}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </View>
-      </ScrollView>
-
-      {/* Confirmation Modal */}
-      <Modal
-        visible={isConfirmModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsConfirmModalOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxWidth: Math.min(440, width - 32) }]}>
-            <View style={[
-                styles.modalIconCircle,
-                selectedMode === 'START_FRESH'
-                  ? { backgroundColor: SOL_COLORS.dangerLight }
-                  : { backgroundColor: SOL_COLORS.accentLight },
-              ]}
-            >
-              <Icon
-                name="alert"
-                size={26}
-                color={selectedMode === 'START_FRESH' ? SOL_COLORS.danger : SOL_COLORS.accent}
-              />
-            </View>
-
-            <Text style={styles.modalTitle}>Confirmer la Clôture ?</Text>
-            <Text style={styles.modalSub}>
-              {selectedMode === 'RENEW_SAME_MEMBERS'
-                ? `Le cycle "${business.name}" va être archivé et ${members.length} adhérent(s) seront copiés dans le nouveau cycle "${newCycleName}" avec leurs soldes à zéro.`
-                : `Le cycle "${business.name}" va être archivé et TOUS les ${members.length} adhérent(s) seront supprimés. La liste sera vide.`}
-            </Text>
-            <Text style={styles.modalWarning}>Cette action est irréversible.</Text>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                onPress={() => setIsConfirmModalOpen(false)}
-                style={styles.modalCancelBtn}
-              >
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => {
-                  setIsConfirmModalOpen(false);
-                  setIsPinModalOpen(true);
-                }}
-                style={[
-                  styles.modalConfirmBtn,
-                  selectedMode === 'START_FRESH' && { backgroundColor: SOL_COLORS.danger },
-                ]}
-              >
-                <Text style={styles.modalConfirmBtnText}>Continuer (PIN)</Text>
-              </TouchableOpacity>
-            </View>
+      {/* New cycle settings */}
+      {selectedMode && (
+        <Card style={styles.cardGap}>
+          <Text variant="subheading" accessibilityRole="header">
+            Paramètres du nouveau cycle
+          </Text>
+          <TextField
+            label="Nom du sol / carnet"
+            value={newCycleName}
+            onChangeText={setNewCycleName}
+            placeholder={`Ex : ${business.name} — cycle 2`}
+            maxLength={60}
+          />
+          <TextField
+            label="Valeur d'une main (HTG)"
+            value={newContribution}
+            onChangeText={setNewContribution}
+            keyboardType="numeric"
+            placeholder="Ex : 250"
+          />
+          <Text variant="label">Fréquence de cotisation</Text>
+          <View style={styles.chipsWrap}>
+            {frequencyOptions.map((opt) => (
+              <Chip key={opt.value} label={opt.label} selected={newFrequency === opt.value} onPress={() => setNewFrequency(opt.value)} />
+            ))}
           </View>
-        </View>
-      </Modal>
+        </Card>
+      )}
+
+      {selectedMode && (
+        <>
+          <Card tone="warning">
+            <View style={styles.detailLine}>
+              <Icon name="alert" size={20} color={theme.colors.warning} />
+              <Text variant="body" tone="warning" style={styles.flexShrink}>
+                Action irréversible : le cycle actuel sera archivé. L'historique des transactions est conservé pour l'audit.
+              </Text>
+            </View>
+          </Card>
+          <Button
+            size="lg"
+            fullWidth
+            icon="lock"
+            variant={isFresh ? 'danger' : 'primary'}
+            loading={isProcessing}
+            label={isFresh ? 'Démarrer à zéro (PIN requis)' : 'Rouvrir avec les mêmes membres (PIN)'}
+            onPress={handleOpenConfirm}
+          />
+        </>
+      )}
+
+      {/* Closed cycles archive */}
+      <SectionHeader title="Cycles clôturés" count={closedCycles.length} />
+      <Text variant="caption" tone="muted">
+        Chaque cycle clôturé est archivé avec son bilan financier, téléchargeable en PDF à tout moment.
+      </Text>
+      {closedCycles.length === 0 ? (
+        <Card padding="none">
+          <EmptyState
+            icon="history"
+            title="Aucun cycle archivé"
+            message="Dès que vous clôturez ou renouvelez un cycle, ses données financières et la liste des participants sont archivées ici."
+          />
+        </Card>
+      ) : (
+        closedCycles.map((cycle) => {
+          const isDownloading = downloadingCycleId === cycle.id;
+          return (
+            <Card key={cycle.id} style={styles.cardGap}>
+              <View style={styles.rowBetween}>
+                <View style={styles.flexShrink}>
+                  <Text variant="subheading">Cycle #{cycle.cycleNumber}</Text>
+                  <Text variant="caption" tone="muted">
+                    {cycle.businessName}
+                  </Text>
+                </View>
+                <View style={styles.archivedChip}>
+                  <Icon name="lock" size={14} color={theme.colors.locked} />
+                  <Text variant="label" tone="locked">
+                    Archivé
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.periodRow}>
+                <Icon name="calendar" size={14} color={theme.colors.textMuted} />
+                <Text variant="caption" tone="muted">
+                  {formatDateShort(cycle.startDate)} → {formatDateShort(cycle.closedAt || cycle.endDate)}
+                </Text>
+              </View>
+              <View style={styles.statsGrid}>
+                <View style={styles.statCell}>
+                  <Text variant="caption" tone="muted">
+                    Cotisation
+                  </Text>
+                  <AmountText amount={cycle.unitAmount} size="small" />
+                </View>
+                <View style={styles.statCell}>
+                  <Text variant="caption" tone="muted">
+                    Membres / mains
+                  </Text>
+                  <Text variant="amountSmall">
+                    {cycle.membersCount} / {cycle.totalHands}
+                  </Text>
+                </View>
+                <View style={styles.statCell}>
+                  <Text variant="caption" tone="muted">
+                    Total collecté
+                  </Text>
+                  <AmountText amount={cycle.totalCollected} size="small" tone="success" />
+                </View>
+                <View style={styles.statCell}>
+                  <Text variant="caption" tone="muted">
+                    Total remis
+                  </Text>
+                  <AmountText amount={cycle.totalDistributed} size="small" tone="primary" />
+                </View>
+              </View>
+              <Button
+                label="Bilan PDF"
+                icon="printer"
+                variant="secondary"
+                fullWidth
+                loading={isDownloading}
+                onPress={() => handleDownloadClosedCyclePdf(cycle)}
+              />
+            </Card>
+          );
+        })
+      )}
+
+      {/* Confirmation */}
+      <Dialog
+        visible={isConfirmModalOpen}
+        onClose={() => setIsConfirmModalOpen(false)}
+        title="Confirmer la clôture ?"
+        icon="alert"
+        tone={isFresh ? 'danger' : 'primary'}
+        actions={
+          <>
+            <Button label="Annuler" variant="secondary" onPress={() => setIsConfirmModalOpen(false)} style={styles.flexGrow} />
+            <Button
+              label="Continuer (PIN)"
+              variant={isFresh ? 'danger' : 'primary'}
+              onPress={() => {
+                setIsConfirmModalOpen(false);
+                setIsPinModalOpen(true);
+              }}
+              style={styles.flexGrow}
+            />
+          </>
+        }
+      >
+        <Text variant="body">
+          {selectedMode === 'RENEW_SAME_MEMBERS'
+            ? `Le cycle « ${business.name} » va être archivé et ${members.length} adhérent(s) seront copiés dans le nouveau cycle « ${newCycleName} » avec leurs soldes à zéro.`
+            : `Le cycle « ${business.name} » va être archivé et les ${members.length} adhérent(s) seront retirés. La liste sera vide.`}
+        </Text>
+        <Text variant="bodyStrong" tone="danger">
+          Cette action est irréversible.
+        </Text>
+      </Dialog>
 
       {/* PIN Validation Modal */}
       <PinVerificationModal
@@ -706,522 +523,77 @@ export default function CycleManagementScreen() {
         onSuccess={handlePinSuccess}
         onCancel={() => setIsPinModalOpen(false)}
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.background,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 50,
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-    gap: 12,
-  },
-  loadingText: {
-    fontSize: 13,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  noBusinessTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    marginTop: 12,
-    textAlign: 'center',
-  },
-  noBusinessSub: {
-    fontSize: 13,
-    color: SOL_COLORS.textSecondary,
-    textAlign: 'center',
-    marginTop: 6,
-    lineHeight: 18,
-  },
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+  StyleSheet.create({
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
+    flexShrink: { flex: 1, minWidth: 0 },
+    flexGrow: { flexGrow: 1, flexBasis: 0 },
+    pressed: { backgroundColor: colors.surfacePressed },
+    cardGap: { gap: spacing.sm },
+    rowBetween: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
+    metricsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
 
-  // Current Cycle Card
-  currentCycleCard: {
-    backgroundColor: SOL_COLORS.surface,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: SOL_COLORS.borderStrong,
-    marginBottom: 14,
-    ...SHADOWS.sm,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 10,
-  },
-  cardIconBox: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardTitle: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: SOL_COLORS.textSecondary,
-    letterSpacing: 0.5,
-    flex: 1,
-  },
-  cycleName: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: SOL_COLORS.primary,
-    marginBottom: 12,
-  },
-  cycleStatsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  cycleStat: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  cycleStatValue: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  cycleStatLabel: {
-    fontSize: 10,
-    color: SOL_COLORS.textMuted,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  cycleStatDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: SOL_COLORS.border,
-  },
+    modeCard: {
+      gap: spacing.md,
+      padding: spacing.lg,
+      borderRadius: radius.md,
+      borderCurve: 'continuous',
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    modeHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    modeIcon: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    radio: {
+      width: spacing.xl,
+      height: spacing.xl,
+      borderRadius: radius.pill,
+      borderWidth: 2,
+      borderColor: colors.borderStrong,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    radioDot: { width: spacing.md, height: spacing.md, borderRadius: radius.pill },
+    modeDetails: {
+      gap: spacing.sm,
+      paddingTop: spacing.md,
+      borderTopWidth: 1,
+      borderTopColor: colors.divider,
+    },
+    detailLine: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
 
-  // Warning
-  warningBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#FFFBEB',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#FDE68A',
-    padding: 12,
-    marginBottom: 18,
-  },
-  warningText: {
-    fontSize: 12,
-    color: '#92400E',
-    fontWeight: '600',
-    flex: 1,
-    lineHeight: 17,
-  },
+    chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
 
-  // Section label
-  sectionLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: SOL_COLORS.textSecondary,
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
-
-  // Mode Cards
-  modeCard: {
-    backgroundColor: SOL_COLORS.surface,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: SOL_COLORS.border,
-    marginBottom: 12,
-    ...SHADOWS.sm,
-  },
-  modeCardSelected: {
-    borderColor: SOL_COLORS.primary,
-    backgroundColor: SOL_COLORS.primaryLighter,
-  },
-  modeCardSelectedDanger: {
-    borderColor: SOL_COLORS.danger,
-    backgroundColor: '#FFF1F2',
-  },
-  modeCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  modeIconBox: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modeTitle: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    marginBottom: 3,
-  },
-  modeSubtitle: {
-    fontSize: 11,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-    lineHeight: 15,
-  },
-  radioCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: SOL_COLORS.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-  radioCircleSelected: {
-    borderColor: SOL_COLORS.primary,
-  },
-  radioCircleSelectedDanger: {
-    borderColor: SOL_COLORS.danger,
-  },
-  radioInner: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    backgroundColor: SOL_COLORS.primary,
-  },
-  radioInnerDanger: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    backgroundColor: SOL_COLORS.danger,
-  },
-  modeDetailBox: {
-    backgroundColor: SOL_COLORS.primaryLighter,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: SOL_COLORS.primaryLight,
-    padding: 12,
-    marginTop: 12,
-    gap: 8,
-  },
-  modeDetailRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  modeDetailText: {
-    fontSize: 12,
-    color: SOL_COLORS.textSecondary,
-    fontWeight: '600',
-    flex: 1,
-    lineHeight: 16,
-  },
-
-  // New Cycle Settings Card
-  newCycleSettingsCard: {
-    backgroundColor: SOL_COLORS.surface,
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: SOL_COLORS.borderStrong,
-    marginBottom: 16,
-    ...SHADOWS.sm,
-  },
-  inputGroup: {
-    marginBottom: 14,
-  },
-  inputLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: SOL_COLORS.textSecondary,
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
-  textInput: {
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: SOL_COLORS.borderStrong,
-    height: 48,
-    paddingHorizontal: 14,
-    fontSize: 14,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  frequencyRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  freqBtn: {
-    minWidth: '47%',
-    flexGrow: 1,
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-    borderWidth: 1.5,
-    borderColor: SOL_COLORS.border,
-    paddingHorizontal: 8,
-  },
-  freqBtnSelected: {
-    backgroundColor: SOL_COLORS.primaryLighter,
-    borderColor: SOL_COLORS.primary,
-  },
-  freqBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: SOL_COLORS.textSecondary,
-  },
-  freqBtnTextSelected: {
-    color: SOL_COLORS.primaryDark,
-  },
-
-  // Launch Button
-  launchBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    height: 54,
-    borderRadius: 16,
-    marginBottom: 20,
-    ...SHADOWS.md,
-  },
-  launchBtnDanger: {
-    backgroundColor: SOL_COLORS.danger,
-  },
-  launchBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '900',
-    letterSpacing: 0.2,
-  },
-
-  // Confirmation Modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 380,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 24,
-    alignItems: 'center',
-    ...SHADOWS.lg,
-  },
-  modalIconCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  modalSub: {
-    fontSize: 13,
-    color: SOL_COLORS.textSecondary,
-    textAlign: 'center',
-    lineHeight: 19,
-    fontWeight: '600',
-  },
-  modalWarning: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: SOL_COLORS.danger,
-    marginTop: 10,
-    marginBottom: 18,
-    textAlign: 'center',
-  },
-  modalBtnRow: {
-    flexDirection: 'row',
-    gap: 10,
-    width: '100%',
-  },
-  modalCancelBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: SOL_COLORS.surfaceSubtle,
-  },
-  modalCancelBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: SOL_COLORS.textSecondary,
-  },
-  modalConfirmBtn: {
-    flex: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: SOL_COLORS.accent,
-  },
-  modalConfirmBtnText: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  // Closed Cycles History Styles
-  historySection: {
-    marginTop: 24,
-    marginBottom: 20,
-  },
-  historyHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 14,
-  },
-  historySectionTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#5B21B6',
-    letterSpacing: 0.5,
-  },
-  historySectionSub: {
-    fontSize: 12,
-    color: '#64748B',
-    lineHeight: 17,
-    marginTop: 2,
-  },
-  emptyHistoryCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    borderStyle: 'dashed',
-  },
-  emptyHistoryTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-    marginTop: 10,
-    textAlign: 'center',
-  },
-  emptyHistorySub: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 4,
-    textAlign: 'center',
-    lineHeight: 17,
-  },
-  cycleHistoryCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-    ...SHADOWS.sm,
-  },
-  cycleHistoryCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  cycleHistoryNumber: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#7C3AED',
-  },
-  cycleHistoryBadge: {
-    backgroundColor: '#F5F3FF',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#DDD6FE',
-  },
-  cycleHistoryBadgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#7C3AED',
-    letterSpacing: 0.5,
-  },
-  cycleHistoryName: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  downloadPdfBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1D4ED8',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
-  },
-  downloadPdfBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  cycleHistoryDatesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  cycleHistoryDateLabel: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  cycleHistoryDateVal: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  cycleHistoryStatsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-  },
-  cycleHistoryStatItem: {
-    flex: 1,
-    minWidth: 120,
-  },
-  cycleHistoryStatLabel: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  cycleHistoryStatVal: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    marginTop: 2,
-  },
-});
+    archivedChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      minHeight: spacing.xxl,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: colors.lockedLine,
+      backgroundColor: colors.lockedSoft,
+    },
+    periodRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+    statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    statCell: {
+      flexBasis: '47%',
+      flexGrow: 1,
+      gap: spacing.xs,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceAlt,
+    },
+  });
