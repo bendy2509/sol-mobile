@@ -147,7 +147,7 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
           <Stack.Screen
             name="client/[id]"
             options={{
-              title: 'Dossier Adhérent',
+              title: 'Adhérent',
               headerBackTitle: 'Retour',
             }}
           />

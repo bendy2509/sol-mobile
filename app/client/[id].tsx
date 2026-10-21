@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, Pressable, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getClientById, updateClientDetails, deleteClient, getAllClients } from '@/db/clientRepository';
 import { getTransactionsByClient, reverseTransaction } from '@/db/transactionRepository';
@@ -11,11 +11,12 @@ import { useAuth } from '@/context/AuthContext';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import {
+  ActionMenu,
   AmountText,
   Avatar,
+  BottomSheet,
   Button,
   Card,
-  Dialog,
   EmptyState,
   Icon,
   ListItem,
@@ -609,15 +610,14 @@ Reçu archivé avec succès sur SOL Mobile.`;
 
   const isMulti = memberHandsCount > 1;
   const detailRows: { label: string; value: string; tone?: 'success' | 'primary' }[] = [
-    { label: 'Effectif du sol', value: `${allClients.length} enfant${allClients.length > 1 ? 's' : ''} · ${totalCycleHands} main${totalCycleHands > 1 ? 's' : ''}` },
     { label: 'Montant par main', value: formatCurrency(unitAmount) },
-    { label: "Cagnotte d'un tirage", value: `${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)})`, tone: 'success' },
+    { label: "Cagnotte d'un tirage", value: formatCurrency(totalPotAmount) },
     { label: 'Total à cotiser sur le cycle', value: `${formatCurrency(limits.maxPotAmount)} (${limits.maxAllowedHands} cotisations)` },
     {
       label: 'Total à recevoir',
       value: `${formatCurrency(totalPotAmount * memberHandsCount)} (${memberHandsCount} tirage${memberHandsCount > 1 ? 's' : ''})`,
-      tone: 'success',
     },
+    { label: 'Tirages perçus', value: `${currentReceivedHands} / ${memberHandsCount}` },
   ];
 
   return (
@@ -637,6 +637,21 @@ Reçu archivé avec succès sur SOL Mobile.`;
         ) : undefined
       }
     >
+      <Stack.Screen
+        options={{
+          headerRight: () =>
+            isReadOnly ? null : (
+              <ActionMenu
+                title={client.fullName}
+                items={[
+                  { label: "Modifier l'adhérent", icon: 'edit', onPress: handleOpenEditModal },
+                  { label: 'Fiche et reçu PDF', icon: 'printer', onPress: handlePrintOrShare },
+                  { label: "Supprimer l'adhérent", icon: 'trash', destructive: true, onPress: handleDeleteClient },
+                ]}
+              />
+            ),
+        }}
+      />
       {/* Identity, on the page itself (no card) */}
       <View style={styles.cardGap}>
         <View style={styles.identityRow}>
@@ -652,7 +667,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
         </View>
 
         <Text variant="caption" tone="muted">
-          {isMulti ? `${memberHandsCount} mains · rangs ${client.payoutRanks || client.payoutRank}` : `Main #${client.payoutRank || 1}`} ·{' '}
+          {isMulti ? `${memberHandsCount} mains · rangs ${client.payoutRanks || client.payoutRank}` : `Rang ${client.payoutRank || 1}`} ·{' '}
           {client.type === 'SABOTAY' ? 'Sabotay' : client.type === 'SOL' ? 'Sol' : client.type}
         </Text>
         {isFullyReceived ? (
@@ -719,7 +734,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
           <Button
             icon="payout"
             fullWidth
-            variant={isOutOfOrder ? 'secondary' : 'primary'}
+            variant="secondary"
             label={isMulti ? `Remettre la main (${currentReceivedHands + 1}/${memberHandsCount})` : 'Remettre la main'}
             onPress={handleInitiatePayout}
           />
@@ -729,47 +744,19 @@ Reçu archivé avec succès sur SOL Mobile.`;
       {/* Cycle details */}
       <Card style={styles.cardGap}>
         <Text variant="subheading" accessibilityRole="header">
-          {isMulti ? `Récapitulatif · ${memberHandsCount} mains souscrites` : 'Détails du cycle'}
+          {isMulti ? `Cycle · ${memberHandsCount} mains souscrites` : 'Cycle'}
         </Text>
         {detailRows.map((row) => (
           <View key={row.label} style={styles.detailRow}>
             <Text variant="caption" tone="muted" style={styles.detailLabel}>
               {row.label}
             </Text>
-            <Text variant="label" tone={row.tone === 'success' ? 'success' : 'default'} style={styles.detailValue}>
+            <Text variant="label" style={styles.detailValue}>
               {row.value}
             </Text>
           </View>
         ))}
-        <View style={styles.progressBlock}>
-          <View style={styles.rowBetween}>
-            <Text variant="caption" tone="muted">
-              Tirages perçus
-            </Text>
-            <Text variant="label" tone={isFullyReceived ? 'success' : 'primary'}>
-              {currentReceivedHands} / {memberHandsCount} ({memberPayoutProgressPct} %)
-            </Text>
-          </View>
-          <ProgressBar value={memberPayoutProgressPct / 100} tone="success" accessibilityLabel="Tirages perçus" />
-        </View>
-        <View style={styles.progressBlock}>
-          <View style={styles.rowBetween}>
-            <Text variant="caption" tone="muted">
-              Mains données dans le sol
-            </Text>
-            <Text variant="label">
-              {effectiveTotalHandsTouched} / {totalCycleHands} ({cycleProgressPct} %)
-            </Text>
-          </View>
-          <ProgressBar value={cycleProgressPct / 100} accessibilityLabel="Mains données dans le sol" />
-        </View>
       </Card>
-
-      {/* Secondary actions */}
-      <View style={styles.actionsRow}>
-        <Button label="Modifier" icon="edit" variant="secondary" onPress={handleOpenEditModal} style={styles.flexGrow} />
-        <Button label="Fiche / reçu" icon="printer" variant="secondary" onPress={handlePrintOrShare} style={styles.flexGrow} />
-      </View>
 
       {/* Passbook */}
       <SectionHeader title="Historique des opérations" count={transactions.length} />
@@ -812,21 +799,19 @@ Reçu archivé avec succès sur SOL Mobile.`;
         </Card>
       )}
 
-      {!isReadOnly && (
-        <Button label="Supprimer l'adhérent" icon="trash" variant="ghost" fullWidth onPress={handleDeleteClient} style={styles.deleteBtn} />
-      )}
-
       {/* Transaction detail */}
-      <Dialog visible={isDetailModalOpen && !!selectedTx} onClose={() => setIsDetailModalOpen(false)} title="Détail de l'opération">
+      <BottomSheet
+        visible={isDetailModalOpen && !!selectedTx}
+        onClose={() => setIsDetailModalOpen(false)}
+        title={selectedTx ? getTxTypeLabel(selectedTx) : "Détail de l'opération"}
+        subtitle={selectedTx ? formatDate(selectedTx.createdAtLocal) : undefined}
+      >
         {selectedTx && (
           <>
-            <AmountText amount={selectedTx.amount} size="large" />
+            <AmountText amount={selectedTx.amount} size="hero" />
             {[
               { label: 'Référence', value: `#${selectedTx.id.slice(0, 8)}` },
-              { label: 'Adhérent', value: client.fullName },
-              { label: 'Type', value: getTxTypeLabel(selectedTx) },
               { label: 'Mains couvertes', value: `${selectedTx.handsCovered || 1} main(s)` },
-              { label: 'Date et heure', value: formatDate(selectedTx.createdAtLocal) },
             ].map((row) => (
               <View key={row.label} style={styles.detailRow}>
                 <Text variant="caption" tone="muted" style={styles.detailLabel}>
@@ -857,7 +842,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
             {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
             {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
-              <Button label="Annuler cette opération" icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
+              <Button label="Annuler cette opération" icon="alert" variant="ghost" fullWidth onPress={handleInitiateCancel} />
             )}
 
 
@@ -873,20 +858,19 @@ Reçu archivé avec succès sur SOL Mobile.`;
             )}
           </>
         )}
-      </Dialog>
+      </BottomSheet>
 
       {/* Edit member */}
-      <Dialog
+      <BottomSheet
         visible={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
         title="Modifier l'adhérent"
         subtitle="Mise à jour des informations de l'adhérent."
-        icon="edit"
-        actions={
-          <>
+        footer={
+          <View style={styles.actionsRow}>
             <Button label="Annuler" variant="secondary" onPress={() => setIsEditModalOpen(false)} style={styles.flexGrow} />
             <Button label="Enregistrer" onPress={handleSaveEdit} style={styles.flexGrow} />
-          </>
+          </View>
         }
       >
         <TextField label="Nom complet" value={editFullName} onChangeText={setEditFullName} placeholder="Ex : Marie Carmelle Jean" />
@@ -951,20 +935,19 @@ Reçu archivé avec succès sur SOL Mobile.`;
           placeholder="Ex : 1 ou 1, 4, 7"
           helper="Séparez les rangs par des virgules."
         />
-      </Dialog>
+      </BottomSheet>
 
       {/* Payout ("bay men") */}
-      <Dialog
+      <BottomSheet
         visible={isPayoutModalOpen}
         onClose={() => setIsPayoutModalOpen(false)}
         title="Remise de la main"
         subtitle="Validation par code PIN gestionnaire."
-        icon="payout"
-        actions={
-          <>
+        footer={
+          <View style={styles.actionsRow}>
             <Button label="Annuler" variant="secondary" onPress={() => setIsPayoutModalOpen(false)} style={styles.flexGrow} />
             <Button label="Valider avec PIN" icon="lock" onPress={handleConfirmPayout} style={styles.flexGrow} />
-          </>
+          </View>
         }
       >
         {isOutOfOrder && (
@@ -1000,21 +983,19 @@ Reçu archivé avec succès sur SOL Mobile.`;
           onChangeText={setPayoutNote}
           placeholder="Ex : remise normale du cycle 1"
         />
-      </Dialog>
+      </BottomSheet>
 
       {/* Reversal */}
-      <Dialog
+      <BottomSheet
         visible={isReversalModalOpen}
         onClose={() => setIsReversalModalOpen(false)}
         title="Annuler une opération"
         subtitle="Le solde, les mains payées et la couverture de l'adhérent seront recalculés."
-        icon="alert"
-        tone="danger"
-        actions={
-          <>
+        footer={
+          <View style={styles.actionsRow}>
             <Button label="Retour" variant="secondary" onPress={() => setIsReversalModalOpen(false)} style={styles.flexGrow} />
             <Button label="Confirmer l'annulation" variant="danger" onPress={handleConfirmReversal} style={styles.flexGrow} />
-          </>
+          </View>
         }
       >
         <TextField
@@ -1023,7 +1004,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
           onChangeText={setReversalReason}
           placeholder="Ex : erreur de saisie du montant"
         />
-      </Dialog>
+      </BottomSheet>
 
       {/* Universal Sensitive Action PIN Modal */}
       <PinVerificationModal
@@ -1083,7 +1064,6 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    deleteBtn: { marginTop: spacing.lg },
     noteBox: {
       gap: spacing.xs,
       padding: spacing.md,
