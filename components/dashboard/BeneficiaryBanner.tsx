@@ -41,10 +41,10 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
           </Text>
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text variant="caption" tone="onHeroMuted">
+          <Text variant="caption" tone="onHeroMuted" numberOfLines={1}>
             {isMulti ? `Reçoit la main ${nextHand}/${beneficiary.handsCount}` : `Reçoit la main ${beneficiary.rankOrder || 1}`}
           </Text>
-          <Text variant="subheading" tone="onHero" numberOfLines={1}>
+          <Text variant="subheading" tone="onHero" numberOfLines={2}>
             {beneficiary.fullName}
           </Text>
         </View>
@@ -52,7 +52,6 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
       <Button
         variant="primary"
         label="Remettre"
-        icon="payout"
         onPress={() => onPayout(beneficiary)}
         accessibilityLabel={`Remettre la main à ${beneficiary.fullName}`}
       />
