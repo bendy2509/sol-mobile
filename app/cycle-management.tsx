@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 
 import { Header } from '@/components/Header';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { AmountText, Button, Card, Chip, Dialog, EmptyState, Icon, MetricTile, Screen, SectionHeader, Text, TextField, UiIconName } from '@/components/ui';
+import { AmountText, BottomSheet, Button, Card, Chip, EmptyState, Icon, Screen, SectionHeader, StatStrip, Text, TextField, UiIconName } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig, renewSolCycle, getClosedCycles } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
@@ -182,7 +182,7 @@ export default function CycleManagementScreen() {
           : 'La liste des adhérents a été vidée. Vous pouvez maintenant inscrire de nouveaux membres.';
 
       Alert.alert(
-        '🎉 Nouveau Cycle Démarré !',
+        'Nouveau cycle démarré',
         `Le cycle "${newCycleName}" est maintenant actif.\n\n${modeLabel}`,
         [
           {
@@ -210,7 +210,7 @@ export default function CycleManagementScreen() {
   const screenHeader = (
     <Header
       title="Gestion du cycle"
-      subtitle="Clôture et réouverture"
+      subtitle="Clôture et nouveau cycle"
       showBack={true}
       showScanner={false}
       fallbackBackRoute="/(tabs)/sol"
@@ -281,17 +281,19 @@ export default function CycleManagementScreen() {
   return (
     <Screen edges={['top', 'left', 'right', 'bottom']} header={screenHeader}>
       {/* Current cycle */}
-      <Card style={styles.cardGap}>
+      <View style={styles.cardGap}>
         <Text variant="caption" tone="muted">
           Cycle actuel
         </Text>
         <Text variant="heading">{business.name}</Text>
-        <View style={styles.metricsRow}>
-          <MetricTile label="Adhérents" icon="users" value={String(members.length)} />
-          <MetricTile label="Par main" icon="cash" value={formatCurrency(business.contributionAmount)} />
-          <MetricTile label="Fin prévue" icon="calendar" value={business.endDate ? formatDateShort(business.endDate) : '—'} />
-        </View>
-      </Card>
+      </View>
+      <StatStrip
+        cells={[
+          { label: 'Adhérents', value: String(members.length) },
+          { label: 'Par main', value: formatCurrency(business.contributionAmount) },
+          { label: 'Fin prévue', value: business.endDate ? formatDateShort(business.endDate) : '—' },
+        ]}
+      />
 
       {/* Reopening options */}
       <SectionHeader title="Option de réouverture" />
@@ -483,25 +485,22 @@ export default function CycleManagementScreen() {
       )}
 
       {/* Confirmation */}
-      <Dialog
+      <BottomSheet
         visible={isConfirmModalOpen}
         onClose={() => setIsConfirmModalOpen(false)}
-        title="Confirmer la clôture ?"
-        icon="alert"
-        tone={isFresh ? 'danger' : 'primary'}
-        actions={
-          <>
-            <Button label="Annuler" variant="secondary" onPress={() => setIsConfirmModalOpen(false)} style={styles.flexGrow} />
-            <Button
-              label="Continuer (PIN)"
-              variant={isFresh ? 'danger' : 'primary'}
-              onPress={() => {
-                setIsConfirmModalOpen(false);
-                setIsPinModalOpen(true);
-              }}
-              style={styles.flexGrow}
-            />
-          </>
+        title="Clôturer le cycle ?"
+        footer={
+          <Button
+            size="lg"
+            fullWidth
+            icon="lock"
+            label="Continuer avec le PIN"
+            variant={isFresh ? 'danger' : 'primary'}
+            onPress={() => {
+              setIsConfirmModalOpen(false);
+              setIsPinModalOpen(true);
+            }}
+          />
         }
       >
         <Text variant="body">
@@ -512,13 +511,13 @@ export default function CycleManagementScreen() {
         <Text variant="bodyStrong" tone="danger">
           Cette action est irréversible.
         </Text>
-      </Dialog>
+      </BottomSheet>
 
       {/* PIN Validation Modal */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Validation de la Clôture"
-        subtitle={`Saisissez votre code PIN gestionnaire pour confirmer la clôture du cycle "${business?.name}" et l'ouverture du nouveau cycle "${newCycleName}".`}
+        title="Confirmer la clôture du cycle"
+        subtitle={`« ${business?.name} » sera archivé, « ${newCycleName} » sera ouvert.`}
         onSuccess={handlePinSuccess}
         onCancel={() => setIsPinModalOpen(false)}
       />
@@ -534,7 +533,6 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
     pressed: { backgroundColor: colors.surfacePressed },
     cardGap: { gap: spacing.sm },
     rowBetween: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing.md },
-    metricsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
 
     modeCard: {
       gap: spacing.md,

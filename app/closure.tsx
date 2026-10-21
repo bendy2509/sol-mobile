@@ -124,7 +124,7 @@ export default function CashClosureScreen() {
         [
           { text: 'OK', style: 'default' },
           {
-            text: '📄 Bordereau PDF',
+            text: 'Bordereau PDF',
             onPress: () => handleShareClosurePdf(createdClosure),
           },
         ]
@@ -145,7 +145,7 @@ export default function CashClosureScreen() {
         header={
           <Header
             title="Clôture de caisse"
-            subtitle="Arrêté du jour et contrôle des espèces"
+            subtitle="Arrêté du jour"
             showBack={true}
             showScanner={false}
             fallbackBackRoute="/(tabs)"
@@ -157,18 +157,19 @@ export default function CashClosureScreen() {
             size="lg"
             fullWidth
             icon="lock"
-            label={isSubmitting ? 'Enregistrement…' : 'Valider la clôture (PIN)'}
+            label={isSubmitting ? 'Enregistrement…' : 'Valider la clôture'}
             loading={isSubmitting}
             onPress={handleOpenPinValidation}
           />
         }
       >
         {/* Theoretical summary */}
-        <Card style={styles.cardGap}>
-          <Text variant="subheading" accessibilityRole="header">
-            Situation théorique du jour
+        <Card tone="hero" padding="lg" style={styles.cardGap}>
+          <Text variant="caption" tone="muted">
+            Solde théorique en caisse aujourd'hui
           </Text>
-          <View style={styles.summaryRow}>
+          <AmountText amount={theoreticalBalance} size="hero" />
+          <View style={[styles.summaryRow, styles.totalRow]}>
             <Text variant="body" tone="muted" style={styles.flexShrink}>
               Encaissements (cotisations)
             </Text>
@@ -179,12 +180,6 @@ export default function CashClosureScreen() {
               Décaissements (mains remises)
             </Text>
             <AmountText amount={todayStats.withdrawalsToday} size="small" sign="debit" tone="danger" />
-          </View>
-          <View style={[styles.summaryRow, styles.totalRow]}>
-            <Text variant="bodyStrong" style={styles.flexShrink}>
-              Solde théorique en caisse
-            </Text>
-            <AmountText amount={theoreticalBalance} size="large" tone="primary" />
           </View>
         </Card>
 
