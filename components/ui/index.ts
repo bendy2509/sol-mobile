@@ -18,6 +18,8 @@ export { ListItem } from './ListItem';
 export type { ListItemProps } from './ListItem';
 export { MetricTile } from './MetricTile';
 export type { MetricTileProps, MetricTone } from './MetricTile';
+export { StatStrip } from './StatStrip';
+export type { StatCell, StatStripProps } from './StatStrip';
 export { PinDots } from './PinDots';
 export type { PinDotsProps } from './PinDots';
 export { PinPad } from './PinPad';

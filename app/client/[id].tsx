@@ -27,6 +27,7 @@ import {
   Text,
   TextField,
   UiIconName,
+  StatStrip,
 } from '@/components/ui';
 import { BusinessConfig, Client, Transaction } from '@/types';
 import { formatCurrency, formatDate, formatDateShort } from '@/lib/formatters';
@@ -638,8 +639,8 @@ Reçu archivé avec succès sur SOL Mobile.`;
         ) : undefined
       }
     >
-      {/* Identity & contributions */}
-      <Card style={styles.cardGap}>
+      {/* Identity, on the page itself (no card) */}
+      <View style={styles.cardGap}>
         <View style={styles.identityRow}>
           <Avatar name={client.fullName} size="lg" />
           <View style={styles.flexShrink}>
@@ -652,47 +653,27 @@ Reçu archivé avec succès sur SOL Mobile.`;
           </View>
         </View>
 
-        <View style={styles.chipsRow}>
-          <View style={styles.infoChip}>
-            <Icon name="payout" size={14} color={theme.colors.textMuted} />
-            <Text variant="label" tone="muted">
-              {isMulti ? `${memberHandsCount} mains · rangs ${client.payoutRanks || client.payoutRank}` : `Main #${client.payoutRank || 1}`}
-            </Text>
-          </View>
-          <View style={styles.infoChip}>
-            <Text variant="label" tone="muted">
-              {client.type === 'SABOTAY' ? 'Sabotay' : client.type === 'SOL' ? 'Sol' : client.type}
-            </Text>
-          </View>
-          {isFullyReceived ? (
-            <StatusBadge status="HAND_RECEIVED" label={isMulti ? `Toutes les mains reçues (${memberHandsCount}/${memberHandsCount})` : 'Main reçue'} />
-          ) : isMulti && currentReceivedHands > 0 ? (
-            <StatusBadge status="HAND_RECEIVED" label={`${currentReceivedHands}/${memberHandsCount} mains reçues`} />
-          ) : (
-            <View style={styles.infoChip}>
-              <Icon name="clock" size={14} color={theme.colors.textMuted} />
-              <Text variant="label" tone="muted">
-                Main à venir
-              </Text>
-            </View>
-          )}
-        </View>
+        <Text variant="caption" tone="muted">
+          {isMulti ? `${memberHandsCount} mains · rangs ${client.payoutRanks || client.payoutRank}` : `Main #${client.payoutRank || 1}`} ·{' '}
+          {client.type === 'SABOTAY' ? 'Sabotay' : client.type === 'SOL' ? 'Sol' : client.type}
+        </Text>
+        {isFullyReceived ? (
+          <StatusBadge status="HAND_RECEIVED" appearance="inline" label={isMulti ? `Toutes les mains reçues (${memberHandsCount}/${memberHandsCount})` : 'Main reçue'} />
+        ) : isMulti && currentReceivedHands > 0 ? (
+          <StatusBadge status="HAND_RECEIVED" appearance="inline" label={`${currentReceivedHands}/${memberHandsCount} mains reçues`} />
+        ) : null}
+      </View>
 
-        <View style={styles.metricsRow}>
-          <MetricTile label="Total cotisé" icon="cash">
-            <AmountText amount={client.totalPaidAmount || client.currentBalance} size="medium" />
-          </MetricTile>
-          <MetricTile label="Reste à verser" tone={remainingHands === 0 ? 'success' : 'warning'} hint={remainingHands === 0 ? 'Toutes mains réglées' : `${remainingHands} main(s)`}>
-            {remainingHands === 0 ? (
-              <Text variant="amount" tone="success">
-                Complété
-              </Text>
-            ) : (
-              <AmountText amount={remainingAmount} size="medium" tone="warning" />
-            )}
-          </MetricTile>
-        </View>
+      <StatStrip
+        cells={[
+          { label: 'Total cotisé', children: <AmountText amount={client.totalPaidAmount || client.currentBalance} size="medium" /> },
+          remainingHands === 0
+            ? { label: 'Reste à verser', value: 'Complété', tone: 'success', hint: 'Toutes mains réglées' }
+            : { label: 'Reste à verser', tone: 'warning', hint: `${remainingHands} main(s)`, children: <AmountText amount={remainingAmount} size="medium" tone="warning" /> },
+        ]}
+      />
 
+      <Card style={styles.cardGap}>
         <View style={styles.progressBlock}>
           <View style={styles.rowBetween}>
             <Text variant="label">
@@ -834,7 +815,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
       )}
 
       {!isReadOnly && (
-        <Button label="Supprimer l'adhérent" icon="trash" variant="danger" fullWidth onPress={handleDeleteClient} style={styles.deleteBtn} />
+        <Button label="Supprimer l'adhérent" icon="trash" variant="ghost" fullWidth onPress={handleDeleteClient} style={styles.deleteBtn} />
       )}
 
       {/* Transaction detail */}
