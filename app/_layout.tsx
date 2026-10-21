@@ -168,6 +168,12 @@ function RootNavigator({ ready }: { ready: boolean }) {
             }}
           />
           <Stack.Screen
+            name="backup-diagnostics"
+            options={{
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
             name="client/new"
             options={{
               headerShown: false,
