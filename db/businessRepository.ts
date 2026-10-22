@@ -5,7 +5,7 @@ import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusine
 import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalculations';
 import { recordAuditLog } from '@/services/auditService';
 import { calculateCycleTotalHands } from '@/services/financialService';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { supabase, isCloudSyncActive } from '@/lib/supabase';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -258,7 +258,7 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
         [ec.id, ec.qr_code_token || null, ec.phone_number || null, collectorId, now]
       );
 
-      if (isSupabaseConfigured) {
+      if (isCloudSyncActive) {
         try {
           await supabase.from('transactions').delete().eq('client_id', ec.id);
           try {

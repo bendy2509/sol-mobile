@@ -5,7 +5,7 @@ import { getActiveCollectorId, getDatabase, isClientPhoneTaken } from './sqlite'
 import { getActiveBusinessConfig } from './businessRepository';
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
 import { calculateCycleEndDate } from '@/lib/dateCalculations';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { supabase, isCloudSyncActive } from '@/lib/supabase';
 
 export async function getAllClients(options?: {
   search?: string;
@@ -597,7 +597,7 @@ export async function deleteClient(clientId: string): Promise<void> {
   }
 
   // 6. Delete from Supabase if online (by ID and by unique qr_code_token)
-  if (isSupabaseConfigured) {
+  if (isCloudSyncActive) {
     try {
       await supabase.from('transactions').delete().eq('client_id', clientId);
       try {

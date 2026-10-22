@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSync } from '@/context/SyncContext';
+import { isCloudSyncActive } from '@/lib/supabase';
 import { Icon, Text, UiIconName } from '@/components/ui';
 import { triggerLightImpact } from '@/lib/haptics';
 import { useTheme } from '@/theme';
@@ -21,6 +22,9 @@ export const SyncBadge: React.FC<SyncBadgeProps> = ({ onSyncComplete, compact = 
   const router = useRouter();
   const { syncState, triggerSync } = useSync();
   const { colors, spacing, radius, layout } = useTheme();
+
+  // The app is autonomous while cloud sync is off: no sync status to show
+  if (!isCloudSyncActive) return null;
 
   const handlePress = async () => {
     triggerLightImpact();

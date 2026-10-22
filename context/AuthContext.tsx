@@ -16,7 +16,6 @@ import { triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { hashPin, verifyPinHash, isBcryptHash } from '@/lib/crypto';
 import { recordAuditLog } from '@/services/auditService';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { validateNewPin } from '@/services/securityPolicy';
 import {
   authenticateWithBiometrics,
@@ -249,87 +248,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: t('Numéro de téléphone ou code PIN incorrect.') };
       }
 
-      // 1. FAST-PATH: Local SQLite check first (Instant < 5ms)
-      let collector = await getCollectorByPhone(cleanPhone);
-      let isLocalMatch = collector ? verifyPinHash(cleanPin, collector.pinHash) : false;
+      // The manager's account lives on this phone only. A new phone is set up from an
+      // encrypted backup (no remote lookup: it exposed PIN hashes to the public key).
+      const collector = await getCollectorByPhone(cleanPhone);
+      const isLocalMatch = collector ? verifyPinHash(cleanPin, collector.pinHash) : false;
 
-      // 2. SLOW-PATH FALLBACK: If not found locally or PIN changed on Supabase, query Supabase with 1.5s timeout
-      if (!isLocalMatch && isSupabaseConfigured) {
-        try {
-          const normPhone = normalizePhoneNumber(cleanPhone);
-          const fetchPromise = supabase
-            .from('collectors')
-            .select('*')
-            .or(`phone_number.eq.${normPhone},phone_number.eq.${cleanPhone}`)
-            .maybeSingle();
-
-          const timeoutPromise = new Promise<{ data: null }>((resolve) =>
-            setTimeout(() => resolve({ data: null }), 1500)
-          );
-
-          const { data: supaCol } = await Promise.race([fetchPromise, timeoutPromise]);
-
-          if (supaCol && verifyPinHash(cleanPin, supaCol.pin_hash || (supaCol as any).pin)) {
-            const db = await getDatabase();
-            await db.runAsync(
-              `INSERT INTO collectors (id, full_name, phone_number, pin_hash, status, zone, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                 full_name = excluded.full_name,
-                 phone_number = excluded.phone_number,
-                 pin_hash = excluded.pin_hash,
-                 status = excluded.status,
-                 zone = excluded.zone`,
-              [
-                supaCol.id,
-                supaCol.full_name || 'Responsable',
-                supaCol.phone_number,
-                hashPin(cleanPin),
-                supaCol.status || 'ACTIVE',
-                supaCol.zone || null,
-                supaCol.created_at || new Date().toISOString(),
-              ]
-            );
-
-            // Fetch business if available in Supabase
-            const { data: supaBiz } = await supabase
-              .from('business_configs')
-              .select('*')
-              .eq('collector_id', supaCol.id)
-              .maybeSingle();
-
-            if (supaBiz) {
-              await db.runAsync(
-                `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, cycle_status, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(id) DO UPDATE SET
-                   name = excluded.name,
-                   contribution_amount = excluded.contribution_amount,
-                   total_slots = excluded.total_slots`,
-                [
-                  supaBiz.id,
-                  supaBiz.collector_id,
-                  supaBiz.name,
-                  supaBiz.type || 'SABOTAY',
-                  supaBiz.contribution_amount || 250,
-                  supaBiz.frequency || 'DAILY',
-                  supaBiz.total_slots || 10,
-                  supaBiz.start_date || new Date().toISOString(),
-                  supaBiz.end_date || new Date().toISOString(),
-                  supaBiz.status || 'ACTIVE',
-                  supaBiz.cycle_status || 'ACTIVE',
-                  supaBiz.created_at || new Date().toISOString(),
-                ]
-              );
-            }
-
-            collector = await getCollectorByPhone(cleanPhone);
-            isLocalMatch = collector ? verifyPinHash(cleanPin, collector.pinHash) : false;
-          }
-        } catch (supaErr) {
-          // Offline or network error
-        }
-      }
 
       if (!collector || !isLocalMatch) return failedPinResult();
 

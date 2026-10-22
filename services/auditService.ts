@@ -2,7 +2,7 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { AuditLog, AuditLogAction, UserRole } from '@/types';
 import { getDatabase } from '@/db/sqlite';
-import { supabase } from '@/lib/supabase';
+import { supabase, isCloudSyncActive } from '@/lib/supabase';
 
 export interface RecordAuditParams {
   userId: string;
@@ -60,8 +60,8 @@ export async function recordAuditLog(params: RecordAuditParams): Promise<AuditLo
       ]
     );
 
-    // Asynchronous non-blocking push to Supabase audit trail if connected
-    (async () => {
+    // Asynchronous non-blocking push to Supabase audit trail, only when cloud sync is on
+    if (isCloudSyncActive) (async () => {
       try {
         const { error } = await supabase.from('audit_logs').insert({
           id,
