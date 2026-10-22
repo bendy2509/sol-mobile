@@ -7,6 +7,17 @@
 
 La refonte n'a pas touché `db/`. Chaque phase ci-dessous se fait sur sa propre branche, avec sa propre PR. Les règles financières (`services/financialService.ts`) ne changent qu'en phase 4, sous la protection des 137 tests existants.
 
+## Avancement
+
+- **PR 1, livrée sur `fix/db-securite-demo` :**
+  - la démo n'est plus créée sur un téléphone de production, et la démo jamais utilisée est retirée des téléphones existants (phase 1a) ;
+  - le statut par défaut des gestionnaires passe à `ACTIVE` (phase 1c) ;
+  - les insertions de l'adaptateur web sont lues colonne par colonne, et les filtres de date sont respectés (phase 2, option A) ;
+  - la démo a des chiffres cohérents ;
+  - les dates sans heure s'affichent au bon jour.
+
+  Tests : `scripts/test_db_demo.ts`, 21/21.
+
 ## Résumé par priorité
 
 | # | Phase | Pourquoi | Effort | Risque |

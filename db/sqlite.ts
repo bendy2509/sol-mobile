@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { Collector, BusinessConfig, UserStatus } from '@/types';
 import { arePhoneNumbersEqual, extractRaw8Digits, normalizePhoneNumber } from '@/lib/phoneUtils';
 import { hashPin, verifyPinHash } from '@/lib/crypto';
+import { parseInsert } from './sqlInsertParser';
+import { DEMO_BUSINESS_NAME, DEMO_COLLECTOR_ID, DEMO_PHONE, DEMO_PIN, isUntouchedDemoAccount, shouldSeedDemo } from './demoAccount';
 
 // Web In-Memory / LocalStorage State Interface for Web Testing
 export interface UniversalSQLiteDatabase {
@@ -30,6 +32,12 @@ interface WebTableStore {
   closed_cycles: any[];
 }
 
+/**
+ * v2: column-aware INSERT parsing. Browsers that stored the demo with shifted columns
+ * (0 HTG per hand, a date as zone) start again from a fresh, coherent demo.
+ */
+const WEB_STORE_KEY = 'SOL_WEB_DB_STORE_V2';
+
 class WebSQLiteAdapter {
   private data: WebTableStore = {
     collectors: [],
@@ -47,7 +55,7 @@ class WebSQLiteAdapter {
 
   async init() {
     try {
-      const saved = await AsyncStorage.getItem('SOL_WEB_DB_STORE');
+      const saved = await AsyncStorage.getItem(WEB_STORE_KEY);
       if (saved) {
         this.data = JSON.parse(saved);
         if (Array.isArray(this.data.clients)) {
@@ -65,7 +73,7 @@ class WebSQLiteAdapter {
 
   private async persist() {
     try {
-      await AsyncStorage.setItem('SOL_WEB_DB_STORE', JSON.stringify(this.data));
+      await AsyncStorage.setItem(WEB_STORE_KEY, JSON.stringify(this.data));
     } catch {}
   }
 
@@ -82,17 +90,10 @@ class WebSQLiteAdapter {
       const tableName = tableMatch ? tableMatch[1].toLowerCase() : '';
 
       if (tableName === 'collectors') {
-        const columnsMatch = cleanSql.match(/INSERT (?:OR REPLACE )?INTO\s+collectors\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
-        const columnNames = columnsMatch
-          ? columnsMatch[1].split(',').map((c) => c.trim().toLowerCase())
-          : [];
+        const parsed = parseInsert(cleanSql, params);
         let item: any = { status: 'ACTIVE', role: 'MANAGER', sync_status: 'PENDING' };
-        if (columnNames.length > 0) {
-          let paramIdx = 0;
-          for (let i = 0; i < columnNames.length; i++) {
-            const col = columnNames[i];
-            item[col] = params[paramIdx++];
-          }
+        if (parsed) {
+          item = { ...item, ...parsed.values };
         } else {
           const [id, full_name, phone_number, pin_hash, status, zone, created_at] = params;
           item = { id, full_name, phone_number, pin_hash, status: status || 'ACTIVE', role: 'MANAGER', zone, created_at };
@@ -104,11 +105,18 @@ class WebSQLiteAdapter {
           this.data.collectors.push(item);
         }
       } else if (tableName === 'business_configs') {
-        const [id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, created_at] = params;
-        const existingIdx = this.data.business_configs.findIndex((b) => b.id === id);
+        const parsed = parseInsert(cleanSql, params);
+        const [p_id, p_collector, p_name, p_type, p_amount, p_frequency, p_slots, p_start, p_end, p_status, p_created] = params;
+        const v: any = parsed
+          ? parsed.values
+          : { id: p_id, collector_id: p_collector, name: p_name, type: p_type, contribution_amount: p_amount, frequency: p_frequency, total_slots: p_slots, start_date: p_start, end_date: p_end, status: p_status, created_at: p_created };
+        const existingIdx = this.data.business_configs.findIndex((b) => b.id === v.id);
         const item = {
-          id, collector_id, name, type, contribution_amount: Number(contribution_amount),
-          frequency, total_slots: Number(total_slots), start_date, end_date, status: status || 'ACTIVE', created_at
+          ...v,
+          contribution_amount: Number(v.contribution_amount),
+          total_slots: Number(v.total_slots),
+          status: v.status || 'ACTIVE',
+          cycle_status: v.cycle_status || 'ACTIVE',
         };
         if (existingIdx >= 0) {
           this.data.business_configs[existingIdx] = item;
@@ -116,13 +124,7 @@ class WebSQLiteAdapter {
           this.data.business_configs.push(item);
         }
       } else if (tableName === 'clients') {
-        const columnsMatch = cleanSql.match(/INSERT (?:OR REPLACE )?INTO\s+clients\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
-        const columnNames = columnsMatch
-          ? columnsMatch[1].split(',').map((c) => c.trim().toLowerCase())
-          : [];
-        const rawValues = columnsMatch
-          ? columnsMatch[2].split(',').map((v) => v.trim())
-          : [];
+        const parsed = parseInsert(cleanSql, params);
 
         let clientObj: any = {
           sync_status: 'PENDING',
@@ -136,26 +138,8 @@ class WebSQLiteAdapter {
           current_balance: 0,
         };
 
-        if (columnNames.length > 0 && rawValues.length === columnNames.length) {
-          let pIdx = 0;
-          columnNames.forEach((col, idx) => {
-            const vExpr = rawValues[idx];
-            if (vExpr === '?') {
-              clientObj[col] = params[pIdx++];
-            } else if (vExpr.startsWith("'") && vExpr.endsWith("'")) {
-              clientObj[col] = vExpr.slice(1, -1);
-            } else if (vExpr.toUpperCase() === 'NULL') {
-              clientObj[col] = null;
-            } else if (!isNaN(Number(vExpr))) {
-              clientObj[col] = Number(vExpr);
-            } else {
-              clientObj[col] = vExpr;
-            }
-          });
-        } else if (columnNames.length > 0 && columnNames.length === params.length) {
-          columnNames.forEach((col, idx) => {
-            clientObj[col] = params[idx];
-          });
+        if (parsed) {
+          clientObj = { ...clientObj, ...parsed.values };
         } else {
           const [
             id, business_id, collector_id, full_name, phone_number, type,
@@ -185,18 +169,32 @@ class WebSQLiteAdapter {
           this.data.clients.push(clientObj);
         }
       } else if (tableName === 'transactions') {
-        const [id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local] = params;
+        const parsed = parseInsert(cleanSql, params);
+        const [p_id, p_client, p_collector, p_group, p_business, p_amount, p_hands, p_type, p_method, p_note, p_created] = params;
+        const v: any = parsed
+          ? parsed.values
+          : { id: p_id, client_id: p_client, collector_id: p_collector, sol_group_id: p_group, business_id: p_business, amount: p_amount, hands_covered: p_hands, type: p_type, payment_method: p_method, note: p_note, created_at_local: p_created };
         this.data.transactions.unshift({
-          id, client_id, member_id: client_id, collector_id, sol_group_id, business_id,
-          amount: Number(amount), hands_covered: Number(hands_covered || 1), type, payment_method: payment_method || 'CASH',
-          note: note || null, created_at_local, sync_status: 'PENDING'
+          ...v,
+          member_id: v.client_id,
+          amount: Number(v.amount),
+          hands_covered: Number(v.hands_covered || 1),
+          payment_method: v.payment_method || 'CASH',
+          note: v.note || null,
+          sync_status: v.sync_status || 'PENDING',
+          is_reversed: Number(v.is_reversed || 0),
         });
       } else if (tableName === 'cash_closures') {
-        const [id, collector_id, closure_date, total_cash_declared, total_system_calculated, discrepancy_reason, created_at] = params;
+        const parsed = parseInsert(cleanSql, params);
+        const [p_id, p_collector, p_date, p_declared, p_system, p_reason, p_created] = params;
+        const v: any = parsed
+          ? parsed.values
+          : { id: p_id, collector_id: p_collector, closure_date: p_date, total_cash_declared: p_declared, total_system_calculated: p_system, discrepancy_reason: p_reason, created_at: p_created };
         this.data.cash_closures.push({
-          id, collector_id, closure_date, total_cash_declared: Number(total_cash_declared),
-          total_system_calculated: Number(total_system_calculated), discrepancy_reason,
-          status: 'SUBMITTED', created_at
+          ...v,
+          total_cash_declared: Number(v.total_cash_declared),
+          total_system_calculated: Number(v.total_system_calculated),
+          status: v.status || 'SUBMITTED',
         });
       } else if (tableName === 'audit_logs') {
         const [id, user_id, user_role, action, entity_type, entity_id, old_data, new_data, reason, created_at, sync_status] = params;
@@ -474,6 +472,16 @@ class WebSQLiteAdapter {
             filtered = filtered.filter((t) => t.client_id === clientParam || t.member_id === clientParam);
           }
         }
+        // Date bounds: the parameter is the one at this '?' position in the statement
+        const paramAt = (clause: string) => params[(cleanSql.slice(0, cleanSql.indexOf(clause)).match(/\?/g) || []).length];
+        if (cleanSql.includes('created_at_local >= ?')) {
+          const from = String(paramAt('created_at_local >= ?'));
+          filtered = filtered.filter((t) => String(t.created_at_local) >= from);
+        }
+        if (cleanSql.includes('created_at_local < ?')) {
+          const to = String(paramAt('created_at_local < ?'));
+          filtered = filtered.filter((t) => String(t.created_at_local) < to);
+        }
         if (cleanSql.includes(`'HAND_PAYOUT'`) || cleanSql.includes(`'SOL_PAYOUT'`)) {
           filtered = filtered.filter((t) => t.type === 'HAND_PAYOUT' || t.type === 'SOL_PAYOUT');
         } else if (cleanSql.includes(`'CONTRIBUTION'`) || cleanSql.includes(`'SABOTAY_DEPOSIT'`)) {
@@ -633,7 +641,11 @@ async function runMigrations(db: UniversalSQLiteDatabase): Promise<void> {
 
     // 3. Collectors migrations
     await safeAddColumn(db, 'collectors', 'zone', 'zone TEXT');
-    await safeAddColumn(db, 'collectors', 'status', "status TEXT DEFAULT 'PENDING_APPROVAL'");
+    await safeAddColumn(db, 'collectors', 'status', "status TEXT DEFAULT 'ACTIVE'");
+    // The approval workflow is gone: every manager account is active
+    try {
+      await db.runAsync(`UPDATE collectors SET status = 'ACTIVE' WHERE status IS NULL OR status <> 'ACTIVE'`);
+    } catch {}
     await safeAddColumn(db, 'collectors', 'role', "role TEXT DEFAULT 'MANAGER'");
     await safeAddColumn(db, 'collectors', 'sync_status', "sync_status TEXT DEFAULT 'PENDING'");
 
@@ -669,7 +681,7 @@ async function initDatabaseInternal(db: any): Promise<void> {
       full_name TEXT NOT NULL,
       phone_number TEXT UNIQUE NOT NULL,
       pin_hash TEXT NOT NULL,
-      status TEXT DEFAULT 'PENDING_APPROVAL',
+      status TEXT DEFAULT 'ACTIVE',
       role TEXT DEFAULT 'MANAGER',
       zone TEXT,
       sync_status TEXT DEFAULT 'PENDING',
@@ -827,6 +839,7 @@ async function initDatabaseInternal(db: any): Promise<void> {
 
   // 2. Ensure all table columns exist on upgraded/existing databases
   await runMigrations(db);
+  if (!shouldSeedDemo(Platform.OS, __DEV__)) await removeUntouchedDemoAccount(db);
 
   // 3. Create Indexes safely
   const indexStatements = [
@@ -893,13 +906,65 @@ export async function initDatabase(): Promise<void> {
   await getDatabase();
 }
 
+/**
+ * Earlier builds created the demo carnet on every new phone (manager +509 37 12 34 56,
+ * PIN 1234). Remove it from production phones when it was never used for real work.
+ */
+async function removeUntouchedDemoAccount(db: UniversalSQLiteDatabase): Promise<void> {
+  try {
+    const collector = await db.getFirstAsync<{ id: string; phone_number: string; pin_hash: string; created_at: string }>(
+      `SELECT id, phone_number, pin_hash, created_at FROM collectors WHERE id = ?`,
+      [DEMO_COLLECTOR_ID]
+    );
+    if (!collector) return;
+    const [businesses, clients, transactions, closures, cycles] = await Promise.all([
+      db.getAllAsync<{ name: string }>(`SELECT name FROM business_configs WHERE collector_id = ?`, [DEMO_COLLECTOR_ID]),
+      db.getAllAsync<{ id: string }>(`SELECT id FROM clients WHERE collector_id = ?`, [DEMO_COLLECTOR_ID]),
+      db.getAllAsync<{ note: string | null; created_at_local: string }>(
+        `SELECT note, created_at_local FROM transactions WHERE collector_id = ?`,
+        [DEMO_COLLECTOR_ID]
+      ),
+      db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM cash_closures WHERE collector_id = ?`, [DEMO_COLLECTOR_ID]),
+      db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM closed_cycles WHERE collector_id = ?`, [DEMO_COLLECTOR_ID]),
+    ]);
+    const unused = isUntouchedDemoAccount({
+      collector,
+      pinIsDefault: verifyPinHash(DEMO_PIN, collector.pin_hash),
+      businesses,
+      clientIds: clients.map((c) => c.id),
+      transactions,
+      otherRecordsCount: Number(closures?.n || 0) + Number(cycles?.n || 0),
+    });
+    if (!unused) return;
+
+    await db.withTransactionAsync(async () => {
+      await db.runAsync(`DELETE FROM transactions WHERE collector_id = ?`, [DEMO_COLLECTOR_ID]);
+      await db.runAsync(`DELETE FROM clients WHERE collector_id = ?`, [DEMO_COLLECTOR_ID]);
+      await db.runAsync(`DELETE FROM business_configs WHERE collector_id = ?`, [DEMO_COLLECTOR_ID]);
+      await db.runAsync(`DELETE FROM audit_logs WHERE user_id = ?`, [DEMO_COLLECTOR_ID]);
+      await db.runAsync(`DELETE FROM collectors WHERE id = ?`, [DEMO_COLLECTOR_ID]);
+    });
+    if ((await AsyncStorage.getItem('SOL_ACTIVE_COLLECTOR_ID')) === DEMO_COLLECTOR_ID) {
+      await AsyncStorage.multiRemove(['SOL_ACTIVE_COLLECTOR_ID', 'SOL_ACTIVE_BUSINESS_ID', 'SOL_IS_LOGGED_IN']);
+    }
+    if ((await AsyncStorage.getItem('SOL_LAST_PHONE')) === DEMO_PHONE) await AsyncStorage.removeItem('SOL_LAST_PHONE');
+  } catch (err) {
+    console.warn('Demo account cleanup notice:', err);
+  }
+}
+
 async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
+  // Demo data belongs to the web preview and development builds, never to a production phone
+  if (!shouldSeedDemo(Platform.OS, __DEV__)) return;
   const collector = await db.getFirstAsync<{ id: string }>('SELECT id FROM collectors LIMIT 1');
 
   if (!collector) {
-    const collectorId = 'c011ec70-0000-0000-0000-000000000001';
-    const now = new Date().toISOString();
-    const todayStr = now.split('T')[0];
+    const collectorId = DEMO_COLLECTOR_ID;
+    const day = 24 * 60 * 60 * 1000;
+    const isoDay = (offsetDays: number) => new Date(Date.now() + offsetDays * day).toISOString().split('T')[0];
+    // The demo carnet opened 2 days ago: its account, members and past operations carry that
+    // time, so today's dashboard starts empty and the statuses (late, ahead) make sense.
+    const now = new Date(Date.now() - 2 * day).toISOString();
 
     // 1. Seed Active Demo Collector with encrypted 4-digit PIN '1234'
     await db.runAsync(
@@ -908,95 +973,50 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
       [
         collectorId,
         'Jean-Baptiste Pierre',
-        '+50937123456',
-        hashPin('1234'), // Encrypted PIN
+        DEMO_PHONE,
+        hashPin(DEMO_PIN), // Encrypted PIN
         'Marché Salomon (Port-au-Prince)',
         now,
       ]
     );
 
-    // 2. Seed Default Business ("Sol Mache Klnik 2026", 10 enfants @ 250 HTG = 2,500 HTG)
+    // 2. Seed the demo carnet: a daily sol of 4 members × 1 hand × 250 HTG (pot 1 000 HTG),
+    //    started 2 days ago, so 3 hands are due today and the figures stay consistent.
     const businessId = uuidv4();
-    const startDate = todayStr;
-    const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const unit = 250;
+    const startDate = isoDay(-2);
+    const endDate = isoDay(1);
 
     await db.runAsync(
-      `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, created_at)
-       VALUES (?, ?, ?, 'SABOTAY', 250, 'DAILY', 10, ?, ?, 'ACTIVE', ?)`,
-      [
-        businessId,
-        collectorId,
-        'Sol Mache Klnik 2026',
-        startDate,
-        endDate,
-        now,
-      ]
+      `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, cycle_status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [businessId, collectorId, DEMO_BUSINESS_NAME, 'SOL', unit, 'DAILY', 4, startDate, endDate, 'ACTIVE', 'ACTIVE', now]
     );
 
     await setActiveBusinessId(businessId);
 
     // 3. Seed Sample Children (Membres)
+    // paidHands ≤ 4 (the whole cycle); paid until = start + paidHands − 1 days
+    const member = (id: string, name: string, phone: string, rank: number, paidHands: number, token: string, hasHand = 0) => ({
+      id,
+      name,
+      phone,
+      type: 'SOL',
+      daily: unit,
+      balance: paidHands * unit,
+      rank,
+      hasHand,
+      handDate: hasHand ? isoDay(-2) : null,
+      totalPaid: paidHands * unit,
+      paidHands,
+      paidUntil: isoDay(-2 + paidHands - 1),
+      token,
+    });
     const sampleClients = [
-      {
-        id: '11111111-0000-0000-0000-000000000001',
-        name: 'Marie-Carmel Joseph',
-        phone: '+50938112233',
-        type: 'SABOTAY',
-        daily: 250,
-        balance: 2250,
-        rank: 1,
-        hasHand: 1,
-        handDate: todayStr,
-        totalPaid: 2500,
-        paidHands: 10,
-        paidUntil: todayStr,
-        token: 'SOL-MCJ01',
-      },
-      {
-        id: '22222222-0000-0000-0000-000000000002',
-        name: 'Jean-Robert Estimé',
-        phone: '+50937445566',
-        type: 'SOL',
-        daily: 250,
-        balance: 1750,
-        rank: 2,
-        hasHand: 0,
-        handDate: null,
-        totalPaid: 1750,
-        paidHands: 7,
-        paidUntil: todayStr,
-        token: 'SOL-JRE02',
-      },
-      {
-        id: '33333333-0000-0000-0000-000000000003',
-        name: 'Dieula Saint-Juste',
-        phone: '+50946778899',
-        type: 'SABOTAY',
-        daily: 250,
-        balance: 750,
-        rank: 3,
-        hasHand: 0,
-        handDate: null,
-        totalPaid: 750,
-        paidHands: 3,
-        paidUntil: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Retard de 2 mains
-        token: 'SOL-DSJ03',
-      },
-      {
-        id: '44444444-0000-0000-0000-000000000004',
-        name: 'Fritzner Dorce',
-        phone: '+50931223344',
-        type: 'SOL',
-        daily: 250,
-        balance: 2000,
-        rank: 4,
-        hasHand: 0,
-        handDate: null,
-        totalPaid: 2000,
-        paidHands: 8,
-        paidUntil: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 2 jours d'avance
-        token: 'SOL-FDO04',
-      },
+      member('11111111-0000-0000-0000-000000000001', 'Marie-Carmel Joseph', '+50938112233', 1, 4, 'SOL-MCJ01', 1), // en avance, main reçue
+      member('22222222-0000-0000-0000-000000000002', 'Jean-Robert Estimé', '+50937445566', 2, 3, 'SOL-JRE02'), // à jour, reçoit la main
+      member('33333333-0000-0000-0000-000000000003', 'Dieula Saint-Juste', '+50946778899', 3, 1, 'SOL-DSJ03'), // 2 mains de retard
+      member('44444444-0000-0000-0000-000000000004', 'Fritzner Dorce', '+50931223344', 4, 2, 'SOL-FDO04'), // à encaisser aujourd'hui
     ];
 
     for (const c of sampleClients) {
@@ -1028,19 +1048,18 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
       );
 
 
-      const txId = uuidv4();
       await db.runAsync(
         `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status)
-         VALUES (?, ?, ?, NULL, ?, ?, 1, 'CONTRIBUTION', 'CASH', 'Cotisation régulière', ?, 'SYNCED')`,
-        [
-          txId,
-          c.id,
-          collectorId,
-          businessId,
-          c.daily,
-          now,
-        ]
+         VALUES (?, ?, ?, NULL, ?, ?, ?, 'SOL_CONTRIBUTION', 'CASH', 'Cotisation régulière', ?, 'SYNCED')`,
+        [uuidv4(), c.id, collectorId, businessId, c.totalPaid, c.paidHands, now]
       );
+      if (c.hasHand) {
+        await db.runAsync(
+          `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status)
+           VALUES (?, ?, ?, NULL, ?, ?, 1, 'SOL_PAYOUT', 'CASH', 'Remise de la main (démo)', ?, 'SYNCED')`,
+          [uuidv4(), c.id, collectorId, businessId, unit * sampleClients.length, now]
+        );
+      }
     }
   }
 }
