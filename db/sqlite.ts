@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Collector, BusinessConfig, UserStatus } from '@/types';
 import { arePhoneNumbersEqual, extractRaw8Digits, normalizePhoneNumber } from '@/lib/phoneUtils';
 import { hashPin, verifyPinHash } from '@/lib/crypto';
+import { runVersionedMigrations } from './migrations';
 import { parseInsert } from './sqlInsertParser';
 import { DEMO_BUSINESS_NAME, DEMO_COLLECTOR_ID, DEMO_PHONE, DEMO_PIN, isUntouchedDemoAccount, shouldSeedDemo } from './demoAccount';
 
@@ -578,88 +579,6 @@ export async function setActiveBusinessId(businessId: string): Promise<void> {
   } catch {}
 }
 
-async function safeAddColumn(db: UniversalSQLiteDatabase, table: string, colName: string, colDef: string): Promise<void> {
-  try {
-    const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
-    const colNames = (columns || []).map((c: any) => c.name);
-    if (!colNames.includes(colName)) {
-      await db.execAsync(`ALTER TABLE ${table} ADD COLUMN ${colDef};`);
-    }
-  } catch (e) {
-    console.warn(`Migration notice for ${table}.${colName}:`, e);
-  }
-}
-
-async function runMigrations(db: UniversalSQLiteDatabase): Promise<void> {
-  if (Platform.OS === 'web') return;
-  try {
-    // 1. Clients migrations
-    await safeAddColumn(db, 'clients', 'business_id', 'business_id TEXT');
-    await safeAddColumn(db, 'clients', 'payout_rank', 'payout_rank INTEGER');
-    await safeAddColumn(db, 'clients', 'has_received_payout', 'has_received_payout INTEGER DEFAULT 0');
-    await safeAddColumn(db, 'clients', 'has_received_hand', 'has_received_hand INTEGER DEFAULT 0');
-    await safeAddColumn(db, 'clients', 'hand_received_date', 'hand_received_date TEXT');
-    await safeAddColumn(db, 'clients', 'total_paid_amount', 'total_paid_amount REAL DEFAULT 0');
-    await safeAddColumn(db, 'clients', 'paid_hands_count', 'paid_hands_count INTEGER DEFAULT 0');
-    await safeAddColumn(db, 'clients', 'paid_until_date', 'paid_until_date TEXT');
-    await safeAddColumn(db, 'clients', 'hands_count', 'hands_count INTEGER DEFAULT 1');
-    await safeAddColumn(db, 'clients', 'received_hands_count', 'received_hands_count INTEGER DEFAULT 0');
-    await safeAddColumn(db, 'clients', 'payout_ranks', 'payout_ranks TEXT');
-
-    try {
-      await db.runAsync(`UPDATE clients SET hands_count = 1 WHERE hands_count IS NULL OR hands_count < 1;`);
-      await db.runAsync(`UPDATE clients SET received_hands_count = 0 WHERE received_hands_count IS NULL;`);
-
-      // Auto-repair any client whose payout_ranks has multiple ranks but hands_count was saved as 1
-      const allClientsWithRanks = await db.getAllAsync<{ id: string; payout_ranks: string; hands_count: number }>(
-        `SELECT id, payout_ranks, hands_count FROM clients WHERE payout_ranks IS NOT NULL`
-      );
-      for (const cl of allClientsWithRanks || []) {
-        if (cl.payout_ranks) {
-          const ranksCount = String(cl.payout_ranks).split(/[,;\s]+/).filter(Boolean).length;
-          if (ranksCount > 1 && (!cl.hands_count || cl.hands_count < ranksCount)) {
-            await db.runAsync(`UPDATE clients SET hands_count = ? WHERE id = ?`, [ranksCount, cl.id]);
-          }
-        }
-      }
-    } catch {}
-
-    // 2. Transactions migrations
-    await safeAddColumn(db, 'transactions', 'business_id', 'business_id TEXT');
-    await safeAddColumn(db, 'transactions', 'payment_method', "payment_method TEXT DEFAULT 'CASH'");
-    await safeAddColumn(db, 'transactions', 'hands_covered', 'hands_covered INTEGER DEFAULT 1');
-    await safeAddColumn(db, 'transactions', 'note', 'note TEXT');
-    await safeAddColumn(db, 'transactions', 'idempotency_key', 'idempotency_key TEXT');
-    await safeAddColumn(db, 'transactions', 'is_reversed', 'is_reversed INTEGER DEFAULT 0');
-    await safeAddColumn(db, 'transactions', 'reversal_id', 'reversal_id TEXT');
-    await safeAddColumn(db, 'transactions', 'reversed_at', 'reversed_at TEXT');
-
-    try {
-      await db.runAsync(`UPDATE transactions SET type = 'SOL_CONTRIBUTION' WHERE type = 'CONTRIBUTION';`);
-      await db.runAsync(`UPDATE transactions SET type = 'SOL_PAYOUT' WHERE type = 'HAND_PAYOUT';`);
-    } catch {}
-
-    // 3. Collectors migrations
-    await safeAddColumn(db, 'collectors', 'zone', 'zone TEXT');
-    await safeAddColumn(db, 'collectors', 'status', "status TEXT DEFAULT 'ACTIVE'");
-    // The approval workflow is gone: every manager account is active
-    try {
-      await db.runAsync(`UPDATE collectors SET status = 'ACTIVE' WHERE status IS NULL OR status <> 'ACTIVE'`);
-    } catch {}
-    await safeAddColumn(db, 'collectors', 'role', "role TEXT DEFAULT 'MANAGER'");
-    await safeAddColumn(db, 'collectors', 'sync_status', "sync_status TEXT DEFAULT 'PENDING'");
-
-    // 4. Business configs migrations
-    await safeAddColumn(db, 'business_configs', 'cycle_status', "cycle_status TEXT DEFAULT 'ACTIVE'");
-
-    // 5. Deleted clients migrations
-    await safeAddColumn(db, 'deleted_clients', 'qr_code_token', 'qr_code_token TEXT');
-    await safeAddColumn(db, 'deleted_clients', 'phone_number', 'phone_number TEXT');
-  } catch (migrationErr) {
-    console.warn('SQLite migration notice:', migrationErr);
-  }
-}
-
 async function initDatabaseInternal(db: any): Promise<void> {
   if (Platform.OS === 'web') {
     await webDb.init();
@@ -837,8 +756,10 @@ async function initDatabaseInternal(db: any): Promise<void> {
     );
   `);
 
-  // 2. Ensure all table columns exist on upgraded/existing databases
-  await runMigrations(db);
+  // 2. Versioned migrations (PRAGMA user_version): each runs once, inside a transaction;
+  //    a failure is reported in Diagnostic and retried at the next start.
+  const migrationReport = await runVersionedMigrations(db);
+  if (migrationReport.error) console.warn('SQLite migration failed:', migrationReport.error);
   if (!shouldSeedDemo(Platform.OS, __DEV__)) await removeUntouchedDemoAccount(db);
 
   // 3. Create Indexes safely
@@ -849,7 +770,6 @@ async function initDatabaseInternal(db: any): Promise<void> {
     'CREATE INDEX IF NOT EXISTS idx_tx_business ON transactions(business_id);',
     'CREATE INDEX IF NOT EXISTS idx_tx_client ON transactions(client_id);',
     'CREATE INDEX IF NOT EXISTS idx_tx_created ON transactions(created_at_local);',
-    'CREATE INDEX IF NOT EXISTS idx_tx_idempotency ON transactions(idempotency_key);',
     'CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);',
     'CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);',
     'CREATE INDEX IF NOT EXISTS idx_sync_status ON sync_logs(status);',

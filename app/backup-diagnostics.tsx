@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'expo-router';
-import { View, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
 import { Header } from '@/components/Header';
 import { Button, Card, Icon, MetricTile, Screen, SectionHeader, Text } from '@/components/ui';
 
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
+import { getLastMigrationReport, getSchemaVersion, LATEST_SCHEMA_VERSION } from '@/db/migrations';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
@@ -17,6 +18,10 @@ interface DiagnosticState {
   pendingSyncCount: number;
   dbSizeBytes: number;
   lastCheckTime: string;
+  /** null on the web preview (no real SQLite there). */
+  schemaVersion: number | null;
+  schemaWarnings: string[];
+  migrationError: string | null;
 }
 
 export default function BackupDiagnosticsScreen() {
@@ -54,7 +59,22 @@ export default function BackupDiagnosticsScreen() {
         [collectorId]
       );
 
+      // 3. Schéma versionné (migrations)
+      let schemaVersion: number | null = null;
+      let schemaWarnings: string[] = [];
+      if (Platform.OS !== 'web') {
+        schemaVersion = await getSchemaVersion(db);
+        const rows = await db.getAllAsync<{ version: number; warning: string | null }>(
+          'SELECT version, warning FROM schema_migrations WHERE warning IS NOT NULL ORDER BY version'
+        );
+        schemaWarnings = rows.map((r) => t('Version {0} : {1}', r.version, t(r.warning ?? '')));
+      }
+      const lastError = getLastMigrationReport()?.error;
+
       setDiagnostics({
+        schemaVersion,
+        schemaWarnings,
+        migrationError: lastError ? t('Migration {0} ({1}) en échec : {2}', lastError.version, lastError.name, lastError.message) : null,
         isHealthy,
         totalClients: clientsRow?.count || 0,
         totalTransactions: txRow?.count || 0,
@@ -128,6 +148,24 @@ export default function BackupDiagnosticsScreen() {
         </View>
       </Card>
 
+      {diagnostics && (diagnostics.migrationError || diagnostics.schemaWarnings.length > 0) ? (
+        <Card tone="warning">
+          <View style={styles.statusRow}>
+            <Icon name="alert" size={20} color={theme.colors.warning} />
+            <View style={styles.flexShrink}>
+              <Text variant="bodyStrong" tone="warning">
+                {t('Base de données à vérifier')}
+              </Text>
+              {[diagnostics.migrationError, ...diagnostics.schemaWarnings].filter(Boolean).map((line) => (
+                <Text key={line as string} variant="caption" tone="warning">
+                  {line}
+                </Text>
+              ))}
+            </View>
+          </View>
+        </Card>
+      ) : null}
+
       {/* Métriques Locales Inspectées */}
       <View style={styles.section}>
         <SectionHeader title={t('Persistance locale')} />
@@ -135,11 +173,23 @@ export default function BackupDiagnosticsScreen() {
           <MetricTile label={t('Adhérents enrôlés')} icon="users" value={String(diagnostics?.totalClients ?? '–')} hint={t('Stockés sur l\'appareil')} style={styles.tile} />
           <MetricTile label={t('Transactions')} icon="history" value={String(diagnostics?.totalTransactions ?? '–')} hint={t('Entrées immuables')} style={styles.tile} />
           <MetricTile
-            label={t('En attente de sync')}
-            icon="cycle"
-            value={String(diagnostics?.pendingSyncCount ?? '–')}
-            hint={t('Transactions locales')}
-            tone={pending > 0 ? 'warning' : 'default'}
+            label={t('Version du schéma')}
+            icon="settings"
+            value={
+              !diagnostics
+                ? '–'
+                : diagnostics.schemaVersion === null
+                  ? t('Démo web')
+                  : `${diagnostics.schemaVersion} / ${LATEST_SCHEMA_VERSION}`
+            }
+            hint={
+              diagnostics?.schemaVersion === null
+                ? t('Pas de migrations sur le web')
+                : diagnostics && diagnostics.schemaVersion !== null && diagnostics.schemaVersion >= LATEST_SCHEMA_VERSION
+                  ? t('À jour')
+                  : t('Mise à jour au prochain démarrage')
+            }
+            tone={diagnostics?.migrationError || diagnostics?.schemaWarnings.length ? 'warning' : 'default'}
             style={styles.tile}
           />
           <MetricTile label={t('Sécurité atomique')} icon="lock" value={t('Active')} hint="withTransactionAsync" tone="success" style={styles.tile} />
