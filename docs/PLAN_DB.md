@@ -18,6 +18,15 @@ La refonte n'a pas touché `db/`. Chaque phase ci-dessous se fait sur sa propre 
 
   Tests : `scripts/test_db_demo.ts`, 21/21.
 
+- **PR 3, livrée sur `feat/db-migrations` :**
+  - migrations versionnées avec `PRAGMA user_version` ; chaque migration s'applique dans une transaction, et un échec s'affiche dans Diagnostic puis est retenté au démarrage suivant ;
+  - index unique sur `idempotency_key`, et les doublons existants sont signalés, jamais effacés ;
+  - index taillés pour les requêtes des écrans ;
+  - garde-fous par triggers : type et montant valides, opération non modifiable une fois enregistrée, au moins une main par adhérent.
+
+  Tests : `scripts/test_migrations.ts`, 27/27, sur un vrai SQLite.
+  **Écart avec le plan :** les clés étrangères ne sont pas déclarées. Il faudrait reconstruire les tables, ce qui échouerait sur des lignes anciennes, et la restauration d'une sauvegarde insère les opérations avant la liste des adhérents supprimés. Les triggers couvrent les contrôles sans ce risque.
+
 ## Résumé par priorité
 
 | # | Phase | Pourquoi | Effort | Risque |

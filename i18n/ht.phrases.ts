@@ -804,4 +804,12 @@ export const htPhrases: Record<string, string> = {
   'Étape {0} sur 2': 'Etap {0} sou 2',
   'Évitez les suites (1234) et les chiffres répétés.': 'Evite swit chif (1234) ak menm chif la plizyè fwa.',
   'Êtes-vous sûr de vouloir supprimer définitivement le dossier de {0} ? Cette action est irréversible.': 'Èske ou sèten ou vle efase dosye {0} nèt ? Ou pa ka defèt aksyon sa a.',
+  'Version {0} : {1}': 'Vèsyon {0} : {1}',
+  'Migration {0} ({1}) en échec : {2}': 'Migrasyon {0} ({1}) pa mache : {2}',
+  'Base de données à vérifier': 'Baz done a bezwen verifye',
+  'Version du schéma': 'Vèsyon chema a',
+  'Démo web': 'Demo web',
+  'Pas de migrations sur le web': 'Pa gen migrasyon sou web la',
+  'Mise à jour au prochain démarrage': 'Mizajou nan pwochen demaraj la',
+  'Opérations en double détectées : index unique non créé, à vérifier.': 'Gen operasyon an double : endèks inik la pa kreye, fòk ou verifye.',
 };
