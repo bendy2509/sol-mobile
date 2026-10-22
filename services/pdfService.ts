@@ -125,15 +125,34 @@ function generateBarcodeSvg(value?: string | null, width = 260, height = 36): st
  * We bypass file creation entirely and call printAsync({ html }) directly, which
  * opens the native Android print dialog (allows Save as PDF / print).
  */
+let printInProgress = false;
+
+/**
+ * Opens the system print dialog once at a time. The native module refuses a second request
+ * while a dialog is open ("Another print request is already in progress"), which happened on
+ * a double tap: the extra request is now ignored instead of surfacing as an error.
+ */
+async function printHtmlOnce(html: string): Promise<void> {
+  if (printInProgress) return;
+  printInProgress = true;
+  try {
+    await Print.printAsync({ html });
+  } catch (err: any) {
+    if (!String(err?.message || '').includes('already in progress')) throw err;
+  } finally {
+    printInProgress = false;
+  }
+}
+
 async function renderHtmlDocument(html: string): Promise<string> {
   if (Platform.OS === 'web') {
-    await Print.printAsync({ html });
+    await printHtmlOnce(html);
     return 'web-printed';
   }
 
   // Android: open system print dialog directly — no file creation needed.
   if (Platform.OS === 'android') {
-    await Print.printAsync({ html });
+    await printHtmlOnce(html);
     return 'android-printed';
   }
 

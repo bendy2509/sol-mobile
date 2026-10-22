@@ -69,6 +69,8 @@ export default function CycleManagementScreen() {
   }, [activeCollector?.id]);
 
   const handleDownloadClosedCyclePdf = async (cycle: ClosedCycle) => {
+    // One report at a time: a second tap while the print dialog opens is ignored
+    if (downloadingCycleId) return;
     setDownloadingCycleId(cycle.id);
     try {
       let pdfData: any = null;
