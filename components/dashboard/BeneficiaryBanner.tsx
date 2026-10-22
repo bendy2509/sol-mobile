@@ -4,6 +4,7 @@ import { Member } from '@/types';
 import { Button, Text } from '@/components/ui';
 import { getInitials } from '@/lib/formatters';
 import { useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface BeneficiaryBannerProps {
   beneficiary: Member;
@@ -28,7 +29,7 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
       }}
     >
       {/* Wraps the button under the name when the name or the text size needs the room */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexGrow: 1, flexBasis: spacing.xxxl * 4, minWidth: 0 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexGrow: 1, flexBasis: spacing.xxxl * 3, minWidth: 0 }}>
         <View
           style={{
             width: layout.touchTarget,
@@ -45,7 +46,7 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text variant="caption" tone="onHeroMuted">
-            {isMulti ? `Reçoit la main ${nextHand}/${beneficiary.handsCount}` : `Reçoit la main ${beneficiary.rankOrder || 1}`}
+            {isMulti ? t('Reçoit la main {0}/{1}', nextHand, beneficiary.handsCount) : t('Reçoit la main {0}', beneficiary.rankOrder || 1)}
           </Text>
           <Text variant="subheading" tone="onHero" numberOfLines={2}>
             {beneficiary.fullName}
@@ -54,9 +55,9 @@ export const BeneficiaryBanner: React.FC<BeneficiaryBannerProps> = ({ beneficiar
       </View>
       <Button
         variant="primary"
-        label="Remettre"
+        label={t('Remettre')}
         onPress={() => onPayout(beneficiary)}
-        accessibilityLabel={`Remettre la main à ${beneficiary.fullName}`}
+        accessibilityLabel={t('Remettre la main à {0}', beneficiary.fullName)}
       />
     </View>
   );

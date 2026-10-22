@@ -2,6 +2,7 @@ import React from 'react';
 import { View } from 'react-native';
 
 import { useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export interface PinDotsProps {
   /** Number of digits entered. */
@@ -21,7 +22,7 @@ export function PinDots({ filled, length = 4, active = false, error = false, siz
   return (
     <View
       accessible
-      accessibilityLabel={`${filled} chiffre(s) saisi(s) sur ${length}`}
+      accessibilityLabel={t('{0} chiffre(s) saisi(s) sur {1}', filled, length)}
       style={{ flexDirection: 'row', justifyContent: 'center', gap: spacing.lg }}
     >
       {Array.from({ length }).map((_, i) => {

@@ -10,6 +10,7 @@ import { Button, Card, Icon, PinDots, PinPad, Text } from '@/components/ui';
 import { triggerLightImpact, triggerMediumImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function LoginScreen() {
   const theme = useTheme();
@@ -62,14 +63,14 @@ export default function LoginScreen() {
   const executeLogin = async (phoneToUse: string, currentPin: string) => {
     if (!phoneToUse || phoneToUse.length < 8) {
       triggerErrorFeedback();
-      setErrorMessage('Veuillez saisir votre numéro de téléphone (8 chiffres).');
+      setErrorMessage(t('Veuillez saisir votre numéro de téléphone (8 chiffres).'));
       setActiveField('PHONE');
       return;
     }
 
     if (currentPin.length !== 4) {
       triggerErrorFeedback();
-      setErrorMessage('Veuillez saisir les 4 chiffres de votre code PIN.');
+      setErrorMessage(t('Veuillez saisir les 4 chiffres de votre code PIN.'));
       setActiveField('PIN');
       return;
     }
@@ -85,7 +86,7 @@ export default function LoginScreen() {
       await goToCarnet();
     } else {
       triggerErrorFeedback();
-      setErrorMessage(res.error || 'Numéro de téléphone ou code PIN incorrect.');
+      setErrorMessage(res.error || t('Numéro de téléphone ou code PIN incorrect.'));
       setPin('');
       setActiveField('PIN');
     }
@@ -173,12 +174,8 @@ export default function LoginScreen() {
             <View style={styles.flagBlue} />
             <View style={styles.flagRed} />
           </View>
-          <Text variant="title" accessibilityRole="header">
-            SOL Mobile
-          </Text>
-          <Text variant="body" tone="muted" align="center">
-            Tontine et épargne sécurisées en Haïti
-          </Text>
+          <Text variant="title" accessibilityRole="header">{t('SOL Mobile')}</Text>
+          <Text variant="body" tone="muted" align="center">{t('Tontine et épargne sécurisées en Haïti')}</Text>
         </View>
 
         {/* Fields */}
@@ -190,14 +187,12 @@ export default function LoginScreen() {
             }}
             accessibilityRole="button"
             accessibilityState={{ selected: activeField === 'PHONE' }}
-            accessibilityLabel={`Numéro de téléphone : ${phoneDigits ? formatPhoneDisplay(phoneDigits) : 'vide'}`}
+            accessibilityLabel={t('Numéro de téléphone : {0}', phoneDigits ? formatPhoneDisplay(phoneDigits) : 'vide')}
             style={[styles.field, activeField === 'PHONE' && styles.fieldActive]}
           >
             <View style={styles.fieldLabelRow}>
               <Icon name="phone" size={16} color={activeField === 'PHONE' ? theme.colors.primary : theme.colors.textMuted} />
-              <Text variant="label" tone={activeField === 'PHONE' ? 'primary' : 'muted'}>
-                Numéro de téléphone
-              </Text>
+              <Text variant="label" tone={activeField === 'PHONE' ? 'primary' : 'muted'}>{t('Numéro de téléphone')}</Text>
             </View>
             <View style={styles.phoneRow}>
               <View style={styles.countryChip}>
@@ -217,14 +212,12 @@ export default function LoginScreen() {
             }}
             accessibilityRole="button"
             accessibilityState={{ selected: activeField === 'PIN' }}
-            accessibilityLabel="Code PIN personnel, 4 chiffres"
+            accessibilityLabel={t('Code PIN personnel, 4 chiffres')}
             style={[styles.field, activeField === 'PIN' && styles.fieldActive]}
           >
             <View style={styles.fieldLabelRow}>
               <Icon name="lock" size={16} color={activeField === 'PIN' ? theme.colors.primary : theme.colors.textMuted} />
-              <Text variant="label" tone={activeField === 'PIN' ? 'primary' : 'muted'}>
-                Code PIN personnel (4 chiffres)
-              </Text>
+              <Text variant="label" tone={activeField === 'PIN' ? 'primary' : 'muted'}>{t('Code PIN personnel (4 chiffres)')}</Text>
             </View>
             <View style={styles.pinRow}>
               <PinDots filled={pin.length} active={activeField === 'PIN'} error={!!errorMessage} size="md" />
@@ -232,9 +225,7 @@ export default function LoginScreen() {
             {isSubmitting && (
               <View style={styles.submittingRow}>
                 <ActivityIndicator size="small" color={theme.colors.primary} />
-                <Text variant="label" tone="primary">
-                  Vérification du code PIN…
-                </Text>
+                <Text variant="label" tone="primary">{t('Vérification du code PIN…')}</Text>
               </View>
             )}
           </Pressable>
@@ -260,13 +251,13 @@ export default function LoginScreen() {
             loading={isSubmitting}
             icon={activeField === 'PHONE' ? 'arrow-right' : 'lock'}
             iconPosition={activeField === 'PHONE' ? 'right' : 'left'}
-            label={activeField === 'PHONE' ? 'Continuer' : 'Se connecter'}
+            label={activeField === 'PHONE' ? t('Continuer') : t('Se connecter')}
             onPress={() => {
               if (activeField === 'PHONE') {
                 if (phoneDigits.length >= 8) {
                   setActiveField('PIN');
                 } else {
-                  setErrorMessage('Veuillez saisir un numéro de 8 chiffres.');
+                  setErrorMessage(t('Veuillez saisir un numéro de 8 chiffres.'));
                 }
               } else {
                 executeLogin(fullPhone, pin);
@@ -276,30 +267,27 @@ export default function LoginScreen() {
         </View>
 
         {biometricAvailable && !!biometricPhone && (
-          <Button variant="secondary" fullWidth icon="fingerprint" label="Déverrouiller avec la biométrie" onPress={handleBiometric} />
+          <Button variant="secondary" fullWidth icon="fingerprint" label={t('Déverrouiller avec la biométrie')} onPress={handleBiometric} />
         )}
 
         <View style={styles.helpLinks}>
           <Button
             variant="ghost"
-            label="Code PIN oublié ?"
+            label={t('Code PIN oublié ?')}
             onPress={() => router.push({ pathname: '/recover-pin', params: { phone: phoneDigits } } as any)}
           />
-          <Button variant="ghost" label="Restaurer une sauvegarde" onPress={() => router.push('/restore-backup' as any)} />
+          <Button variant="ghost" label={t('Restaurer une sauvegarde')} onPress={() => router.push('/restore-backup' as any)} />
         </View>
 
         {/* Register link */}
         <Pressable
           onPress={() => router.push('/register' as any)}
           accessibilityRole="link"
-          accessibilityLabel="Nouveau carnet ? Inscrire un gestionnaire"
+          accessibilityLabel={t('Nouveau carnet ? Inscrire un gestionnaire')}
           style={({ pressed }) => [styles.registerLink, pressed && styles.pressedLink]}
         >
-          <Text variant="body" tone="muted" align="center">
-            Nouveau carnet ?{' '}
-            <Text variant="bodyStrong" tone="primary">
-              Inscrire un gestionnaire
-            </Text>
+          <Text variant="body" tone="muted" align="center">{t('Nouveau carnet ?')}{' '}
+            <Text variant="bodyStrong" tone="primary">{t('Inscrire un gestionnaire')}</Text>
           </Text>
         </Pressable>
       </ScrollView>

@@ -6,6 +6,7 @@ import { useTheme } from '@/theme';
 import { BottomSheet } from './BottomSheet';
 import { Icon, UiIconName } from './Icon';
 import { Text } from './Text';
+import { t } from '@/i18n';
 
 export interface ActionMenuItem {
   label: string;
@@ -27,7 +28,7 @@ export interface ActionMenuProps {
 }
 
 /** ⋯ button that opens the screen's secondary actions in a bottom sheet. */
-export function ActionMenu({ title = 'Actions', items, accessibilityLabel = "Plus d'actions", color }: ActionMenuProps) {
+export function ActionMenu({ title = t('Actions'), items, accessibilityLabel = t('Plus d\'actions'), color }: ActionMenuProps) {
   const { colors, spacing, radius, layout } = useTheme();
   const [open, setOpen] = useState(false);
 

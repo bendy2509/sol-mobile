@@ -13,7 +13,7 @@ import { syncEngine } from '@/db/syncEngine';
 import { AuthProvider } from '@/context/AuthContext';
 import { SyncProvider } from '@/context/SyncContext';
 import { Text } from '@/components/ui';
-import { I18nProvider } from '@/i18n';
+import { I18nProvider, t, useI18n } from '@/i18n';
 import { ThemeProvider, fontAssets, useTheme, useThemePreference } from '@/theme';
 
 export { ErrorBoundary } from 'expo-router';
@@ -72,7 +72,8 @@ export default function RootLayout() {
 function RootNavigator({ ready: bootReady }: { ready: boolean }) {
   const { colors, spacing, isDark, typography } = useTheme();
   const { ready: preferencesReady } = useThemePreference();
-  const ready = bootReady && preferencesReady;
+  const { language, ready: languageReady } = useI18n();
+  const ready = bootReady && preferencesReady && languageReady;
 
   return (
     <>
@@ -80,10 +81,12 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
       {!ready ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: spacing.md, backgroundColor: colors.background }}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text variant="bodyStrong">Chargement de SOL…</Text>
+          <Text variant="bodyStrong">{t('Chargement de SOL…')}</Text>
         </View>
       ) : (
         <Stack
+          // Re-mounted when the language changes, so every t() is evaluated again
+          key={language}
           screenOptions={{
             headerStyle: {
               backgroundColor: colors.surface,
@@ -110,13 +113,13 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
           <Stack.Screen
             name="register"
             options={{
-              title: 'Inscription',
-              headerBackTitle: 'Connexion',
+              title: t('Inscription'),
+              headerBackTitle: t('Connexion'),
             }}
           />
-          <Stack.Screen name="recover-pin" options={{ title: 'Code PIN oublié', headerBackTitle: 'Connexion' }} />
-          <Stack.Screen name="restore-backup" options={{ title: 'Restaurer une sauvegarde', headerBackTitle: 'Retour' }} />
-          <Stack.Screen name="recovery-code" options={{ title: 'Code de récupération', headerBackVisible: false, gestureEnabled: false }} />
+          <Stack.Screen name="recover-pin" options={{ title: t('Code PIN oublié'), headerBackTitle: t('Connexion') }} />
+          <Stack.Screen name="restore-backup" options={{ title: t('Restaurer une sauvegarde'), headerBackTitle: t('Retour') }} />
+          <Stack.Screen name="recovery-code" options={{ title: t('Code de récupération'), headerBackVisible: false, gestureEnabled: false }} />
           <Stack.Screen name="security" options={{ headerShown: false }} />
           <Stack.Screen
             name="profile"
@@ -133,8 +136,8 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
           <Stack.Screen
             name="setup-business"
             options={{
-              title: "Configuration de l'Activité",
-              headerBackTitle: 'Retour',
+              title: t('Configuration de l\'Activité'),
+              headerBackTitle: t('Retour'),
             }}
           />
           <Stack.Screen
@@ -147,8 +150,8 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
           <Stack.Screen
             name="client/[id]"
             options={{
-              title: 'Adhérent',
-              headerBackTitle: 'Retour',
+              title: t('Adhérent'),
+              headerBackTitle: t('Retour'),
             }}
           />
           <Stack.Screen
@@ -179,7 +182,7 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
             name="modal"
             options={{
               presentation: 'modal',
-              title: 'Diagnostic & Synchronisation',
+              title: t('Diagnostic & Synchronisation'),
             }}
           />
         </Stack>

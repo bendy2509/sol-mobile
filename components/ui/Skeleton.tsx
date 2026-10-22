@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, DimensionValue, View } from 'react-native';
 
 import { useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export interface SkeletonProps {
   width?: DimensionValue;
@@ -38,7 +39,7 @@ export function Skeleton({ width = '100%', height = 16, radius = 'sm' }: Skeleto
 export function ListSkeleton({ rows = 5, hero = true }: { rows?: number; hero?: boolean }) {
   const { spacing, colors, radius, layout } = useTheme();
   return (
-    <View accessibilityLabel="Chargement" accessibilityRole="progressbar" style={{ gap: spacing.lg, paddingTop: spacing.lg }}>
+    <View accessibilityLabel={t('Chargement')} accessibilityRole="progressbar" style={{ gap: spacing.lg, paddingTop: spacing.lg }}>
       {hero ? (
         <View style={{ gap: spacing.sm, padding: spacing.lg, backgroundColor: colors.surface, borderRadius: radius.lg }}>
           <Skeleton width="40%" height={14} />

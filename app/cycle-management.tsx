@@ -14,6 +14,7 @@ import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerErrorFeedback, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 type CycleMode = 'RENEW_SAME_MEMBERS' | 'START_FRESH' | null;
 
@@ -108,7 +109,7 @@ export default function CycleManagementScreen() {
     } catch (err: any) {
       console.error('Download cycle PDF error:', err);
       triggerErrorFeedback();
-      Alert.alert('Erreur', 'Impossible de générer le rapport PDF du cycle.');
+      Alert.alert(t('Erreur'), t('Impossible de générer le rapport PDF du cycle.'));
     } finally {
       setDownloadingCycleId(null);
     }
@@ -119,8 +120,8 @@ export default function CycleManagementScreen() {
   const handleSelectMode = (mode: CycleMode) => {
     if (!isManager) {
       Alert.alert(
-        'Accès Restreint',
-        'Seul le responsable SOL peut effectuer une clôture de cycle.'
+        t('Accès Restreint'),
+        t('Seul le responsable SOL peut effectuer une clôture de cycle.')
       );
       return;
     }
@@ -130,16 +131,16 @@ export default function CycleManagementScreen() {
 
   const handleOpenConfirm = () => {
     if (!selectedMode) {
-      Alert.alert('Sélection requise', 'Veuillez choisir une option de réouverture avant de continuer.');
+      Alert.alert(t('Sélection requise'), t('Veuillez choisir une option de réouverture avant de continuer.'));
       return;
     }
     const contribution = parseFloat(newContribution);
     if (isNaN(contribution) || contribution <= 0) {
-      Alert.alert('Montant invalide', 'La valeur d\'une main doit être un nombre positif.');
+      Alert.alert(t('Montant invalide'), t('La valeur d\'une main doit être un nombre positif.'));
       return;
     }
     if (!newCycleName.trim()) {
-      Alert.alert('Nom requis', 'Veuillez saisir un nom pour le nouveau cycle.');
+      Alert.alert(t('Nom requis'), t('Veuillez saisir un nom pour le nouveau cycle.'));
       return;
     }
     triggerMediumImpact();
@@ -153,7 +154,7 @@ export default function CycleManagementScreen() {
 
     try {
       if (!business) {
-        throw new Error('Aucun carnet actif trouvé.');
+        throw new Error(t('Aucun carnet actif trouvé.'));
       }
 
       const contribution = parseFloat(newContribution) || business.contributionAmount;
@@ -170,47 +171,47 @@ export default function CycleManagementScreen() {
         totalSlots: business.totalSlots,
         reason:
           selectedMode === 'RENEW_SAME_MEMBERS'
-            ? `Renouvellement du cycle "${newCycleName}" — Adhérents conservés, comptes remis à zéro`
-            : `Nouveau cycle "${newCycleName}" — Démarrage à zéro (liste vidée)`,
+            ? t('Renouvellement du cycle "{0}" — Adhérents conservés, comptes remis à zéro', newCycleName)
+            : t('Nouveau cycle "{0}" — Démarrage à zéro (liste vidée)', newCycleName),
       });
 
       triggerSuccessFeedback();
 
       const modeLabel =
         selectedMode === 'RENEW_SAME_MEMBERS'
-          ? `${members.length} adhérent(s) ont été conservés avec leurs comptes remis à zéro.`
-          : 'La liste des adhérents a été vidée. Vous pouvez maintenant inscrire de nouveaux membres.';
+          ? t('{0} adhérent(s) ont été conservés avec leurs comptes remis à zéro.', members.length)
+          : t('La liste des adhérents a été vidée. Vous pouvez maintenant inscrire de nouveaux membres.');
 
       Alert.alert(
-        'Nouveau cycle démarré',
-        `Le cycle "${newCycleName}" est maintenant actif.\n\n${modeLabel}`,
+        t('Nouveau cycle démarré'),
+        t('Le cycle "{0}" est maintenant actif.\n\n{1}', newCycleName, modeLabel),
         [
           {
-            text: 'Voir le Tableau de Bord',
+            text: t('Voir le Tableau de Bord'),
             onPress: () => router.replace('/(tabs)' as any),
           },
         ]
       );
     } catch (err: any) {
       triggerErrorFeedback();
-      Alert.alert('Erreur', err?.message || 'Impossible de renouveler le cycle. Veuillez réessayer.');
+      Alert.alert(t('Erreur'), err?.message || t('Impossible de renouveler le cycle. Veuillez réessayer.'));
     } finally {
       setIsProcessing(false);
     }
   };
 
   const frequencyOptions: { label: string; value: PaymentFrequency }[] = [
-    { label: 'Quotidien', value: 'DAILY' },
-    { label: 'Mercredi & Samedi', value: 'WED_SAT' },
-    { label: '8 Jours', value: '8J' },
-    { label: '15 Jours', value: '15J' },
-    { label: 'Mensuel', value: 'MONTHLY' },
+    { label: t('Quotidien'), value: 'DAILY' },
+    { label: t('Mercredi & Samedi'), value: 'WED_SAT' },
+    { label: t('8 Jours'), value: '8J' },
+    { label: t('15 Jours'), value: '15J' },
+    { label: t('Mensuel'), value: 'MONTHLY' },
   ];
 
   const screenHeader = (
     <Header
-      title="Gestion du cycle"
-      subtitle="Clôture et nouveau cycle"
+      title={t('Gestion du cycle')}
+      subtitle={t('Clôture et nouveau cycle')}
       showBack={true}
       showScanner={false}
       fallbackBackRoute="/(tabs)/sol"
@@ -222,7 +223,7 @@ export default function CycleManagementScreen() {
       <Screen scroll={false} edges={['top', 'left', 'right', 'bottom']} header={screenHeader}>
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text variant="bodyStrong">Chargement du carnet actif…</Text>
+          <Text variant="bodyStrong">{t('Chargement du carnet actif…')}</Text>
         </View>
       </Screen>
     );
@@ -234,8 +235,8 @@ export default function CycleManagementScreen() {
         <View style={styles.centered}>
           <EmptyState
             icon="alert"
-            title="Aucun carnet actif"
-            message="Créez d'abord un SOL ou un Sabotay pour accéder à la gestion du cycle."
+            title={t('Aucun carnet actif')}
+            message={t('Créez d\'abord un SOL ou un Sabotay pour accéder à la gestion du cycle.')}
           />
         </View>
       </Screen>
@@ -252,27 +253,27 @@ export default function CycleManagementScreen() {
   }[] = [
     {
       mode: 'RENEW_SAME_MEMBERS',
-      title: 'Conserver les adhérents',
-      description: `Les ${members.length} membres passent dans le nouveau cycle avec leurs comptes remis à zéro.`,
+      title: t('Conserver les adhérents'),
+      description: t('Les {0} membres passent dans le nouveau cycle avec leurs comptes remis à zéro.', members.length),
       icon: 'cycle',
       danger: false,
       details: [
-        { ok: true, text: 'Nom, téléphone et nombre de mains conservés' },
-        { ok: true, text: 'Soldes, cotisations et mains remises remis à 0' },
-        { ok: true, text: 'Rangs de décaissement conservés (modifiables ensuite)' },
-        { ok: false, text: 'Vous pourrez supprimer ensuite les adhérents qui ne participent plus' },
+        { ok: true, text: t('Nom, téléphone et nombre de mains conservés') },
+        { ok: true, text: t('Soldes, cotisations et mains remises remis à 0') },
+        { ok: true, text: t('Rangs de décaissement conservés (modifiables ensuite)') },
+        { ok: false, text: t('Vous pourrez supprimer ensuite les adhérents qui ne participent plus') },
       ],
     },
     {
       mode: 'START_FRESH',
-      title: 'Démarrer à zéro',
-      description: 'La liste des adhérents est entièrement vidée. Nouveau départ.',
+      title: t('Démarrer à zéro'),
+      description: t('La liste des adhérents est entièrement vidée. Nouveau départ.'),
       icon: 'trash',
       danger: true,
       details: [
-        { ok: false, text: `Les ${members.length} adhérents seront retirés du nouveau cycle` },
-        { ok: true, text: "L'historique des transactions reste intact pour l'audit" },
-        { ok: true, text: 'La liste sera vide, prête pour de nouveaux inscrits' },
+        { ok: false, text: t('Les {0} adhérents seront retirés du nouveau cycle', members.length) },
+        { ok: true, text: t('L\'historique des transactions reste intact pour l\'audit') },
+        { ok: true, text: t('La liste sera vide, prête pour de nouveaux inscrits') },
       ],
     },
   ];
@@ -282,21 +283,19 @@ export default function CycleManagementScreen() {
     <Screen edges={['top', 'left', 'right', 'bottom']} header={screenHeader}>
       {/* Current cycle */}
       <View style={styles.cardGap}>
-        <Text variant="caption" tone="muted">
-          Cycle actuel
-        </Text>
+        <Text variant="caption" tone="muted">{t('Cycle actuel')}</Text>
         <Text variant="heading">{business.name}</Text>
       </View>
       <StatStrip
         cells={[
-          { label: 'Adhérents', value: String(members.length) },
-          { label: 'Par main', value: formatCurrency(business.contributionAmount) },
-          { label: 'Fin prévue', value: business.endDate ? formatDateShort(business.endDate) : '—' },
+          { label: t('Adhérents'), value: String(members.length) },
+          { label: t('Par main'), value: formatCurrency(business.contributionAmount) },
+          { label: t('Fin prévue'), value: business.endDate ? formatDateShort(business.endDate) : '—' },
         ]}
       />
 
       {/* Reopening options */}
-      <SectionHeader title="Option de réouverture" />
+      <SectionHeader title={t('Option de réouverture')} />
       {modeOptions.map((opt) => {
         const selected = selectedMode === opt.mode;
         const accent = opt.danger ? theme.colors.danger : theme.colors.primary;
@@ -357,24 +356,22 @@ export default function CycleManagementScreen() {
       {/* New cycle settings */}
       {selectedMode && (
         <Card style={styles.cardGap}>
-          <Text variant="subheading" accessibilityRole="header">
-            Paramètres du nouveau cycle
-          </Text>
+          <Text variant="subheading" accessibilityRole="header">{t('Paramètres du nouveau cycle')}</Text>
           <TextField
-            label="Nom du sol / carnet"
+            label={t('Nom du sol / carnet')}
             value={newCycleName}
             onChangeText={setNewCycleName}
-            placeholder={`Ex : ${business.name} — cycle 2`}
+            placeholder={t('Ex : {0} — cycle 2', business.name)}
             maxLength={60}
           />
           <TextField
-            label="Valeur d'une main (HTG)"
+            label={t('Valeur d\'une main (HTG)')}
             value={newContribution}
             onChangeText={setNewContribution}
             keyboardType="numeric"
-            placeholder="Ex : 250"
+            placeholder={t('Ex : 250')}
           />
-          <Text variant="label">Fréquence de cotisation</Text>
+          <Text variant="label">{t('Fréquence de cotisation')}</Text>
           <View style={styles.chipsWrap}>
             {frequencyOptions.map((opt) => (
               <Chip key={opt.value} label={opt.label} selected={newFrequency === opt.value} onPress={() => setNewFrequency(opt.value)} />
@@ -388,9 +385,7 @@ export default function CycleManagementScreen() {
           <Card tone="warning">
             <View style={styles.detailLine}>
               <Icon name="alert" size={20} color={theme.colors.warning} />
-              <Text variant="body" tone="warning" style={styles.flexShrink}>
-                Action irréversible : le cycle actuel sera archivé. L'historique des transactions est conservé pour l'audit.
-              </Text>
+              <Text variant="body" tone="warning" style={styles.flexShrink}>{t('Action irréversible : le cycle actuel sera archivé. L\'historique des transactions est conservé pour l\'audit.')}</Text>
             </View>
           </Card>
           <Button
@@ -399,23 +394,21 @@ export default function CycleManagementScreen() {
             icon="lock"
             variant={isFresh ? 'danger' : 'primary'}
             loading={isProcessing}
-            label={isFresh ? 'Démarrer à zéro (PIN requis)' : 'Rouvrir avec les mêmes membres (PIN)'}
+            label={isFresh ? t('Démarrer à zéro (PIN requis)') : t('Rouvrir avec les mêmes membres (PIN)')}
             onPress={handleOpenConfirm}
           />
         </>
       )}
 
       {/* Closed cycles archive */}
-      <SectionHeader title="Cycles clôturés" count={closedCycles.length} />
-      <Text variant="caption" tone="muted">
-        Chaque cycle clôturé est archivé avec son bilan financier, téléchargeable en PDF à tout moment.
-      </Text>
+      <SectionHeader title={t('Cycles clôturés')} count={closedCycles.length} />
+      <Text variant="caption" tone="muted">{t('Chaque cycle clôturé est archivé avec son bilan financier, téléchargeable en PDF à tout moment.')}</Text>
       {closedCycles.length === 0 ? (
         <Card padding="none">
           <EmptyState
             icon="history"
-            title="Aucun cycle archivé"
-            message="Dès que vous clôturez ou renouvelez un cycle, ses données financières et la liste des participants sont archivées ici."
+            title={t('Aucun cycle archivé')}
+            message={t('Dès que vous clôturez ou renouvelez un cycle, ses données financières et la liste des participants sont archivées ici.')}
           />
         </Card>
       ) : (
@@ -425,16 +418,14 @@ export default function CycleManagementScreen() {
             <Card key={cycle.id} style={styles.cardGap}>
               <View style={styles.rowBetween}>
                 <View style={styles.flexShrink}>
-                  <Text variant="subheading">Cycle #{cycle.cycleNumber}</Text>
+                  <Text variant="subheading">{t('Cycle #{0}', cycle.cycleNumber)}</Text>
                   <Text variant="caption" tone="muted">
                     {cycle.businessName}
                   </Text>
                 </View>
                 <View style={styles.archivedChip}>
                   <Icon name="lock" size={14} color={theme.colors.locked} />
-                  <Text variant="label" tone="locked">
-                    Archivé
-                  </Text>
+                  <Text variant="label" tone="locked">{t('Archivé')}</Text>
                 </View>
               </View>
               <View style={styles.periodRow}>
@@ -445,34 +436,26 @@ export default function CycleManagementScreen() {
               </View>
               <View style={styles.statsGrid}>
                 <View style={styles.statCell}>
-                  <Text variant="caption" tone="muted">
-                    Cotisation
-                  </Text>
+                  <Text variant="caption" tone="muted">{t('Cotisation')}</Text>
                   <AmountText amount={cycle.unitAmount} size="small" />
                 </View>
                 <View style={styles.statCell}>
-                  <Text variant="caption" tone="muted">
-                    Membres / mains
-                  </Text>
+                  <Text variant="caption" tone="muted">{t('Membres / mains')}</Text>
                   <Text variant="amountSmall">
                     {cycle.membersCount} / {cycle.totalHands}
                   </Text>
                 </View>
                 <View style={styles.statCell}>
-                  <Text variant="caption" tone="muted">
-                    Total collecté
-                  </Text>
+                  <Text variant="caption" tone="muted">{t('Total collecté')}</Text>
                   <AmountText amount={cycle.totalCollected} size="small" tone="success" />
                 </View>
                 <View style={styles.statCell}>
-                  <Text variant="caption" tone="muted">
-                    Total remis
-                  </Text>
+                  <Text variant="caption" tone="muted">{t('Total remis')}</Text>
                   <AmountText amount={cycle.totalDistributed} size="small" tone="primary" />
                 </View>
               </View>
               <Button
-                label="Bilan PDF"
+                label={t('Bilan PDF')}
                 icon="printer"
                 variant="secondary"
                 fullWidth
@@ -488,13 +471,13 @@ export default function CycleManagementScreen() {
       <BottomSheet
         visible={isConfirmModalOpen}
         onClose={() => setIsConfirmModalOpen(false)}
-        title="Clôturer le cycle ?"
+        title={t('Clôturer le cycle ?')}
         footer={
           <Button
             size="lg"
             fullWidth
             icon="lock"
-            label="Continuer avec le PIN"
+            label={t('Continuer avec le PIN')}
             variant={isFresh ? 'danger' : 'primary'}
             onPress={() => {
               setIsConfirmModalOpen(false);
@@ -505,19 +488,17 @@ export default function CycleManagementScreen() {
       >
         <Text variant="body">
           {selectedMode === 'RENEW_SAME_MEMBERS'
-            ? `Le cycle « ${business.name} » va être archivé et ${members.length} adhérent(s) seront copiés dans le nouveau cycle « ${newCycleName} » avec leurs soldes à zéro.`
-            : `Le cycle « ${business.name} » va être archivé et les ${members.length} adhérent(s) seront retirés. La liste sera vide.`}
+            ? t('Le cycle « {0} » va être archivé et {1} adhérent(s) seront copiés dans le nouveau cycle « {2} » avec leurs soldes à zéro.', business.name, members.length, newCycleName)
+            : t('Le cycle « {0} » va être archivé et les {1} adhérent(s) seront retirés. La liste sera vide.', business.name, members.length)}
         </Text>
-        <Text variant="bodyStrong" tone="danger">
-          Cette action est irréversible.
-        </Text>
+        <Text variant="bodyStrong" tone="danger">{t('Cette action est irréversible.')}</Text>
       </BottomSheet>
 
       {/* PIN Validation Modal */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Confirmer la clôture du cycle"
-        subtitle={`« ${business?.name} » sera archivé, « ${newCycleName} » sera ouvert.`}
+        title={t('Confirmer la clôture du cycle')}
+        subtitle={t('« {0} » sera archivé, « {1} » sera ouvert.', business?.name, newCycleName)}
         onSuccess={handlePinSuccess}
         onCancel={() => setIsPinModalOpen(false)}
       />

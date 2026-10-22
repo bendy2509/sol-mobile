@@ -12,6 +12,7 @@ import { BackupSummary, pickBackupFile, previewBackup, restoreEncryptedBackup } 
 import { formatDate } from '@/lib/formatters';
 import { triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 /**
  * Restore an encrypted .solbak file: pick it, unlock it with its password, check what it
@@ -42,7 +43,7 @@ export default function RestoreBackupScreen() {
       const picked = await pickBackupFile();
       if (picked) setEnvelope(picked);
     } catch (e: any) {
-      fail(e?.message || 'Fichier illisible.');
+      fail(e?.message || t('Fichier illisible.'));
     }
   };
 
@@ -55,7 +56,7 @@ export default function RestoreBackupScreen() {
       try {
         setSummary(previewBackup(envelope, password));
       } catch (e: any) {
-        fail(e?.message || 'Déchiffrement impossible.');
+        fail(e?.message || t('Déchiffrement impossible.'));
       } finally {
         setBusy(false);
       }
@@ -78,22 +79,22 @@ export default function RestoreBackupScreen() {
         router.replace('/login' as any);
       }
     } catch (e: any) {
-      fail(e?.message || 'Restauration impossible.');
+      fail(e?.message || t('Restauration impossible.'));
     } finally {
       setBusy(false);
     }
   };
 
   const footer = !envelope ? (
-    <Button size="lg" fullWidth icon="upload" label="Choisir le fichier .solbak" onPress={handlePick} />
+    <Button size="lg" fullWidth icon="upload" label={t('Choisir le fichier .solbak')} onPress={handlePick} />
   ) : !summary ? (
-    <Button size="lg" fullWidth icon="lock" label="Déverrouiller" loading={busy} disabled={password.length === 0} onPress={handleUnlock} />
+    <Button size="lg" fullWidth icon="lock" label={t('Déverrouiller')} loading={busy} disabled={password.length === 0} onPress={handleUnlock} />
   ) : (
     <Button
       size="lg"
       fullWidth
       icon="download"
-      label="Restaurer ces données"
+      label={t('Restaurer ces données')}
       loading={busy}
       onPress={() => (isAuthenticated ? setIsPinOpen(true) : doRestore())}
     />
@@ -102,10 +103,7 @@ export default function RestoreBackupScreen() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flexOne}>
       <Screen edges={['left', 'right']} contentStyle={styles.content} footer={footer}>
-        <Text variant="body" tone="muted">
-          Choisissez une sauvegarde chiffrée créée depuis SOL Mobile, puis saisissez son mot de passe. Les données du fichier
-          remplacent celles du même carnet sur ce téléphone.
-        </Text>
+        <Text variant="body" tone="muted">{t('Choisissez une sauvegarde chiffrée créée depuis SOL Mobile, puis saisissez son mot de passe. Les données du fichier remplacent celles du même carnet sur ce téléphone.')}</Text>
 
         {error && (
           <Card tone="danger" padding="sm">
@@ -123,16 +121,15 @@ export default function RestoreBackupScreen() {
             <View style={styles.row}>
               <Icon name="file" size={20} color={theme.colors.primary} />
               <View style={styles.flexShrink}>
-                <Text variant="bodyStrong">Sauvegarde chiffrée</Text>
-                <Text variant="caption" tone="muted">
-                  Créée le {formatDate(envelope.createdAt)}
+                <Text variant="bodyStrong">{t('Sauvegarde chiffrée')}</Text>
+                <Text variant="caption" tone="muted">{t('Créée le {0}', formatDate(envelope.createdAt))}
                 </Text>
               </View>
-              <Button variant="ghost" label="Changer" onPress={handlePick} />
+              <Button variant="ghost" label={t('Changer')} onPress={handlePick} />
             </View>
             {!summary && (
               <TextField
-                label="Mot de passe de la sauvegarde"
+                label={t('Mot de passe de la sauvegarde')}
                 secureTextEntry
                 autoCapitalize="none"
                 value={password}
@@ -147,18 +144,16 @@ export default function RestoreBackupScreen() {
           <Card tone="sunken" style={styles.card}>
             <Text variant="subheading">{summary.collectorName}</Text>
             <Text variant="body" tone="muted">
-              {summary.clients} adhérent(s) · {summary.transactions} opération(s)
-            </Text>
-            <Text variant="caption" tone="muted">
-              Exportée le {formatDate(summary.exportedAt)}
+              {t('{0} adhérent(s) · {1} opération(s)', summary.clients, summary.transactions)}</Text>
+            <Text variant="caption" tone="muted">{t('Exportée le {0}', formatDate(summary.exportedAt))}
             </Text>
           </Card>
         )}
 
         <PinVerificationModal
           visible={isPinOpen}
-          title="Confirmer la restauration"
-          subtitle="Saisissez votre code PIN pour remplacer les données de ce carnet par la sauvegarde."
+          title={t('Confirmer la restauration')}
+          subtitle={t('Saisissez votre code PIN pour remplacer les données de ce carnet par la sauvegarde.')}
           onSuccess={() => {
             setIsPinOpen(false);
             doRestore();

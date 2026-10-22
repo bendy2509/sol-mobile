@@ -19,6 +19,7 @@ import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from 
 import { isTransactionFromClosedCycle } from '@/services/financialService';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 const FILTERS: { value: TransactionType | 'ALL'; label: string }[] = [
   { value: 'ALL', label: 'Tout' },
@@ -151,7 +152,7 @@ export default function HistoryScreen() {
 
       await sharePdfFile(pdfUri, `Recu_SOL_${(selectedTx.clientName || 'Adherent').replace(/\s+/g, '_')}.pdf`);
     } catch (err: any) {
-      Alert.alert('Erreur', 'Impossible de générer le reçu PDF.');
+      Alert.alert(t('Erreur'), t('Impossible de générer le reçu PDF.'));
     }
   };
 
@@ -161,18 +162,12 @@ export default function HistoryScreen() {
     const phone = selectedTx.clientPhone || '';
     const digitsOnly = phone.replace(/[^0-9]/g, '');
 
-    const message = `Bonjour ${selectedTx.clientName || ''}, voici le reçu certifié de votre opération sur SOL :
-- Référence : #${selectedTx.id.slice(0, 8)}
-- Type : ${selectedTx.type}
-- Montant : ${formatCurrency(selectedTx.amount)} (${selectedTx.handsCovered || 1} main(s))
-- Date : ${formatDate(selectedTx.createdAtLocal)}
-
-Reçu certifié et archivé avec succès. Merci !`;
+    const message = t('Bonjour {0}, voici le reçu certifié de votre opération sur SOL :\n- Référence : #{1}\n- Type : {2}\n- Montant : {3} ({4} main(s))\n- Date : {5}\n\nReçu certifié et archivé avec succès. Merci !', selectedTx.clientName || '', selectedTx.id.slice(0, 8), selectedTx.type, formatCurrency(selectedTx.amount), selectedTx.handsCovered || 1, formatDate(selectedTx.createdAtLocal));
 
     const encoded = encodeURIComponent(message);
     const url = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
     Linking.openURL(url).catch(() => {
-      Alert.alert('WhatsApp', 'Impossible d\'ouvrir WhatsApp.');
+      Alert.alert(t('WhatsApp'), t('Impossible d\'ouvrir WhatsApp.'));
     });
   };
 
@@ -181,7 +176,7 @@ Reçu certifié et archivé avec succès. Merci !`;
   const handleInitiateCancel = () => {
     if (!selectedTx) return;
     if (selectedTx.type === 'REVERSAL') {
-      Alert.alert('Action Impossible', 'Une opération d’annulation ne peut pas être elle-même annulée.');
+      Alert.alert(t('Action Impossible'), t('Une opération d’annulation ne peut pas être elle-même annulée.'));
       return;
     }
     setCancelReason('');
@@ -191,7 +186,7 @@ Reçu certifié et archivé avec succès. Merci !`;
 
   const handleConfirmCancelReason = () => {
     if (!cancelReason.trim()) {
-      Alert.alert('Motif requis', "Veuillez saisir le motif obligatoire de l'annulation.");
+      Alert.alert(t('Motif requis'), t('Veuillez saisir le motif obligatoire de l\'annulation.'));
       return;
     }
     setIsCancelPromptOpen(false);
@@ -211,12 +206,12 @@ Reçu certifié et archivé avec succès. Merci !`;
       });
       triggerSuccessFeedback();
       Alert.alert(
-        'Opération Annulée avec Succès',
-        `La transaction #${selectedTx.id.slice(0, 8)} a été annulée. Une écriture d'annulation certifiée a été inscrite à l'audit et le solde de l'adhérent a été recalculé.`
+        t('Opération Annulée avec Succès'),
+        t('La transaction #{0} a été annulée. Une écriture d\'annulation certifiée a été inscrite à l\'audit et le solde de l\'adhérent a été recalculé.', selectedTx.id.slice(0, 8))
       );
       loadData();
     } catch (err: any) {
-      Alert.alert('Erreur', err?.message || "Échec de l'annulation.");
+      Alert.alert(t('Erreur'), err?.message || t('Échec de l\'annulation.'));
     } finally {
       setSelectedTx(null);
     }
@@ -225,17 +220,17 @@ Reçu certifié et archivé avec succès. Merci !`;
   const getTransactionTypeLabel = (type: TransactionType) => {
     switch (type) {
       case 'SABOTAY_DEPOSIT':
-        return 'Dépôt Sabotay';
+        return t('Dépôt Sabotay');
       case 'SOL_CONTRIBUTION':
-        return 'Cotisation Sol';
+        return t('Cotisation Sol');
       case 'SOL_PAYOUT':
-        return 'Décaissement Main';
+        return t('Décaissement Main');
       case 'WITHDRAWAL':
-        return 'Retrait Épargne';
+        return t('Retrait Épargne');
       case 'REVERSAL':
-        return 'Annulation / Rectification';
+        return t('Annulation / Rectification');
       case 'CORRECTION':
-        return 'Correction Solde';
+        return t('Correction Solde');
       default:
         return type;
     }
@@ -263,17 +258,13 @@ Reçu certifié et archivé avec succès. Merci !`;
                 <Icon name={icon} size={18} color={fg} />
               </View>
             }
-            title={item.clientName || 'Adhérent SOL'}
+            title={item.clientName || t('Adhérent SOL')}
             subtitle={[getTransactionTypeLabel(item.type) || 'Opération', formatDayMonth(item.createdAtLocal)].filter(Boolean).join(' · ')}
             meta={
               item.isReversed ? (
-                <Text variant="caption" tone="danger">
-                  Annulée
-                </Text>
+                <Text variant="caption" tone="danger">{t('Annulée')}</Text>
               ) : item.syncStatus === 'FAILED' ? (
-                <Text variant="caption" tone="danger">
-                  Échec de synchronisation
-                </Text>
+                <Text variant="caption" tone="danger">{t('Échec de synchronisation')}</Text>
               ) : undefined
             }
             trailing={
@@ -301,12 +292,8 @@ Reçu certifié et archivé avec succès. Merci !`;
           <View style={styles.toolbar}>
             <View style={styles.titleRow}>
               <View style={styles.flexShrink}>
-                <Text variant="title" accessibilityRole="header">
-                  Historique
-                </Text>
-                <Text variant="caption" tone="muted">
-                  Versements, remises et annulations
-                </Text>
+                <Text variant="title" accessibilityRole="header">{t('Historique')}</Text>
+                <Text variant="caption" tone="muted">{t('Versements, remises et annulations')}</Text>
               </View>
               <SyncBadge onSyncComplete={handleRefresh} compact />
             </View>
@@ -314,19 +301,19 @@ Reçu certifié et archivé avec succès. Merci !`;
               <Icon name="search" size={18} color={theme.colors.textMuted} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Adhérent, téléphone ou référence"
+                placeholder={t('Adhérent, téléphone ou référence')}
                 placeholderTextColor={theme.colors.textPlaceholder}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                accessibilityLabel="Rechercher une opération"
+                accessibilityLabel={t('Rechercher une opération')}
               />
               {searchQuery.length > 0 && (
-                <Pressable onPress={() => setSearchQuery('')} hitSlop={12} accessibilityRole="button" accessibilityLabel="Effacer la recherche">
+                <Pressable onPress={() => setSearchQuery('')} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('Effacer la recherche')}>
                   <Icon name="close" size={18} color={theme.colors.textMuted} />
                 </Pressable>
               )}
             </View>
-            <SegmentedControl options={FILTERS} value={filterType} onChange={handleFilter} accessibilityLabel="Type d'opération" />
+            <SegmentedControl options={FILTERS.map((f) => ({ ...f, label: t(f.label) }))} value={filterType} onChange={handleFilter} accessibilityLabel={t('Type d\'opération')} />
           </View>
         </>
       }
@@ -344,7 +331,7 @@ Reçu certifié et archivé avec succès. Merci !`;
         ListHeaderComponent={
           filteredTransactions.length > 0 ? (
             <Text variant="label" tone="muted" style={styles.countLabel}>
-              {filteredTransactions.length} opération{filteredTransactions.length > 1 ? 's' : ''}
+              {t('{0} opération{1}', filteredTransactions.length, filteredTransactions.length > 1 ? 's' : '')}
             </Text>
           ) : null
         }
@@ -355,8 +342,8 @@ Reçu certifié et archivé avec succès. Merci !`;
         ListEmptyComponent={
           <EmptyState
             icon={searchQuery ? 'search' : 'history'}
-            title={searchQuery ? 'Aucun résultat' : 'Aucune opération'}
-            message={searchQuery ? 'Vérifiez le nom, le téléphone ou la référence saisis.' : 'Les versements et remises apparaîtront ici.'}
+            title={searchQuery ? t('Aucun résultat') : t('Aucune opération')}
+            message={searchQuery ? t('Vérifiez le nom, le téléphone ou la référence saisis.') : t('Les versements et remises apparaîtront ici.')}
           />
         }
       />
@@ -365,15 +352,15 @@ Reçu certifié et archivé avec succès. Merci !`;
       <BottomSheet
         visible={isDetailModalOpen && !!selectedTx}
         onClose={() => setIsDetailModalOpen(false)}
-        title={selectedTx ? getTransactionTypeLabel(selectedTx.type) || 'Opération' : "Détail de l'opération"}
+        title={selectedTx ? getTransactionTypeLabel(selectedTx.type) || t('Opération') : t('Détail de l\'opération')}
         subtitle={selectedTx ? [selectedTx.clientName, formatDate(selectedTx.createdAtLocal)].filter(Boolean).join(' · ') : undefined}
       >
         {selectedTx && (
           <>
             <AmountText amount={selectedTx.amount} size="hero" />
             {[
-              { label: 'Référence', value: `#${selectedTx.id.slice(0, 8)}` },
-              { label: 'Mains couvertes', value: `${selectedTx.handsCovered || 1} main(s)` },
+              { label: t('Référence'), value: `#${selectedTx.id.slice(0, 8)}` },
+              { label: t('Mains couvertes'), value: t('{0} main(s)', selectedTx.handsCovered || 1) },
             ].map((row) => (
               <View key={row.label} style={styles.detailRow}>
                 <Text variant="caption" tone="muted" style={styles.detailLabel}>
@@ -387,9 +374,7 @@ Reçu certifié et archivé avec succès. Merci !`;
 
             {selectedTx.note && (
               <View style={styles.noteBox}>
-                <Text variant="caption" tone="muted">
-                  Note d'enregistrement
-                </Text>
+                <Text variant="caption" tone="muted">{t('Note d\'enregistrement')}</Text>
                 <Text variant="body" selectable>
                   {selectedTx.note}
                 </Text>
@@ -397,14 +382,14 @@ Reçu certifié et archivé avec succès. Merci !`;
             )}
 
             <View style={styles.actionsRow}>
-              <Button label="Reçu PDF" icon="printer" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
-              <Button label="WhatsApp" icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
+              <Button label={t('Reçu PDF')} icon="printer" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
+              <Button label={t('WhatsApp')} icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
             </View>
 
             {selectedTx.type !== 'REVERSAL' && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
             {selectedTx.type !== 'REVERSAL' && !isReadOnly && (
-              <Button label="Annuler cette opération" icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
+              <Button label={t('Annuler cette opération')} icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
             )}
 
 
@@ -412,9 +397,7 @@ Reçu certifié et archivé avec succès. Merci !`;
               <Card tone="sunken">
                 <View style={styles.noticeRow}>
                   <Icon name="shield" size={18} color={theme.colors.textMuted} />
-                  <Text variant="caption" tone="muted" style={styles.flexShrink}>
-                    Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.
-                  </Text>
+                  <Text variant="caption" tone="muted" style={styles.flexShrink}>{t('Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.')}</Text>
                 </View>
               </Card>
             )}
@@ -426,15 +409,15 @@ Reçu certifié et archivé avec succès. Merci !`;
       <BottomSheet
         visible={isCancelPromptOpen}
         onClose={() => setIsCancelPromptOpen(false)}
-        title="Annuler l'opération"
-        subtitle="Une écriture d'annulation est archivée pour l'audit. Motif et code PIN obligatoires."
-        footer={<Button size="lg" fullWidth label="Continuer avec le PIN" icon="lock" variant="danger" onPress={handleConfirmCancelReason} />}
+        title={t('Annuler l\'opération')}
+        subtitle={t('Une écriture d\'annulation est archivée pour l\'audit. Motif et code PIN obligatoires.')}
+        footer={<Button size="lg" fullWidth label={t('Continuer avec le PIN')} icon="lock" variant="danger" onPress={handleConfirmCancelReason} />}
       >
         <TextField
-          label="Motif obligatoire"
+          label={t('Motif obligatoire')}
           multiline
           numberOfLines={3}
-          placeholder="Ex : erreur de saisie du montant, doublon"
+          placeholder={t('Ex : erreur de saisie du montant, doublon')}
           value={cancelReason}
           onChangeText={setCancelReason}
         />
@@ -443,8 +426,8 @@ Reçu certifié et archivé avec succès. Merci !`;
       {/* 4-Digit PIN Modal */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Confirmer l'annulation"
-        subtitle="Votre code PIN valide l'écriture d'annulation."
+        title={t('Confirmer l\'annulation')}
+        subtitle={t('Votre code PIN valide l\'écriture d\'annulation.')}
         onSuccess={handlePinSuccessCancel}
         onCancel={() => setIsPinModalOpen(false)}
       />

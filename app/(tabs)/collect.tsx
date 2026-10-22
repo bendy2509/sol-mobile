@@ -39,6 +39,7 @@ import {
 } from '@/services/financialService';
 import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 /** Members still to collect come first, completed cycles last. */
 const STATUS_ORDER: Record<MemberPaymentStatus, number> = {
@@ -175,10 +176,10 @@ export default function CollectScreen() {
   };
 
   const presetRounds = [
-    { label: memberHandsCount > 1 ? '1 tour' : '1 main', hands: memberHandsCount },
-    { label: memberHandsCount > 1 ? '2 tours' : '2 mains', hands: memberHandsCount * 2 },
-    { label: memberHandsCount > 1 ? '3 tours' : '3 mains', hands: memberHandsCount * 3 },
-    ...(limits.remainingHands > memberHandsCount * 3 ? [{ label: 'Tout le solde', hands: limits.remainingHands }] : []),
+    { label: memberHandsCount > 1 ? t('1 tour') : t('1 main'), hands: memberHandsCount },
+    { label: memberHandsCount > 1 ? t('2 tours') : t('2 mains'), hands: memberHandsCount * 2 },
+    { label: memberHandsCount > 1 ? t('3 tours') : t('3 mains'), hands: memberHandsCount * 3 },
+    ...(limits.remainingHands > memberHandsCount * 3 ? [{ label: t('Tout le solde'), hands: limits.remainingHands }] : []),
   ].filter((p) => p.hands <= limits.remainingHands);
 
   const handleIncrement = () => {
@@ -205,26 +206,26 @@ export default function CollectScreen() {
   const handleOpenPinValidation = () => {
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès en lecture seule', "L'encaissement est réservé aux gestionnaires.");
+      Alert.alert(t('Accès en lecture seule'), t('L\'encaissement est réservé aux gestionnaires.'));
       return;
     }
     if (!selectedClient) return;
     if (limits.isCycleCompleted) {
       triggerErrorFeedback();
       Alert.alert(
-        'Plafond du cycle atteint',
-        `${selectedClient.fullName} a déjà complété toutes ses cotisations pour ce cycle (${currentPaidHands}/${limits.maxAllowedHands} mains, ${formatCurrency(limits.maxPotAmount)}).`
+        t('Plafond du cycle atteint'),
+        t('{0} a déjà complété toutes ses cotisations pour ce cycle ({1}/{2} mains, {3}).', selectedClient.fullName, currentPaidHands, limits.maxAllowedHands, formatCurrency(limits.maxPotAmount))
       );
       return;
     }
     if (handsCount <= 0 || totalAmount <= 0) {
       triggerErrorFeedback();
-      Alert.alert('Nombre de mains invalide', 'Sélectionnez au moins 1 main.');
+      Alert.alert(t('Nombre de mains invalide'), t('Sélectionnez au moins 1 main.'));
       return;
     }
     if (handsCount > limits.remainingHands) {
       triggerErrorFeedback();
-      Alert.alert('Dépassement du plafond', `Cet adhérent ne peut plus cotiser que ${limits.remainingHands} main(s) pour ce cycle.`);
+      Alert.alert(t('Dépassement du plafond'), t('Cet adhérent ne peut plus cotiser que {0} main(s) pour ce cycle.', limits.remainingHands));
       return;
     }
     triggerMediumImpact();
@@ -262,7 +263,7 @@ export default function CollectScreen() {
       triggerSync().catch(() => {});
     } catch (err: any) {
       triggerErrorFeedback();
-      Alert.alert('Erreur', err?.message || "Échec de l'enregistrement de l'encaissement.");
+      Alert.alert(t('Erreur'), err?.message || t('Échec de l\'enregistrement de l\'encaissement.'));
     } finally {
       setIsProcessing(false);
     }
@@ -292,7 +293,7 @@ export default function CollectScreen() {
 
       await sharePdfFile(pdfUri, `Recu_SOL_${selectedClient.fullName.replace(/\s+/g, '_')}.pdf`);
     } catch {
-      Alert.alert('Erreur PDF', 'Impossible de générer ou partager le document PDF.');
+      Alert.alert(t('Erreur PDF'), t('Impossible de générer ou partager le document PDF.'));
     }
   };
 
@@ -321,7 +322,7 @@ export default function CollectScreen() {
   }, [allClients, searchQuery, limitsFor, statusById]);
 
   const toCollect = rows.filter((r) => !r.l.isCycleCompleted && (r.status === 'OVERDUE' || r.status === 'UNPAID_TODAY')).length;
-  const handsLabel = `${handsCount} main${handsCount > 1 ? 's' : ''}`;
+  const handsLabel = t('{0} main{1}', handsCount, handsCount > 1 ? 's' : '');
 
   const renderRow = ({ item, index }: { item: (typeof rows)[number]; index: number }) => {
     const { client, l, status } = item;
@@ -330,13 +331,13 @@ export default function CollectScreen() {
       <ListItem
         divider={index < rows.length - 1}
         onPress={() => handleSelectClient(client)}
-        accessibilityLabel={`Encaisser ${client.fullName}`}
+        accessibilityLabel={t('Encaisser {0}', client.fullName)}
         leading={<Avatar rank={client.payoutRank || 1} />}
         title={client.fullName}
-        subtitle={`${l.paidHands}/${l.maxAllowedHands} mains${client.paidUntilDate ? ` · au ${formatDayMonth(client.paidUntilDate)}` : ''}`}
+        subtitle={t('{0}/{1} mains{2}', l.paidHands, l.maxAllowedHands, client.paidUntilDate ? ` · au ${formatDayMonth(client.paidUntilDate)}` : '')}
         trailing={
           l.isCycleCompleted ? (
-            <StatusBadge status="HAND_RECEIVED" label="Complet" appearance="inline" />
+            <StatusBadge status="HAND_RECEIVED" label={t('Complet')} appearance="inline" />
           ) : status ? (
             <StatusBadge status={status} appearance="inline" />
           ) : null
@@ -353,11 +354,9 @@ export default function CollectScreen() {
       <View style={styles.top}>
         <View style={styles.titleRow}>
           <View style={styles.flexShrink}>
-            <Text variant="title" accessibilityRole="header">
-              Encaisser
-            </Text>
+            <Text variant="title" accessibilityRole="header">{t('Encaisser')}</Text>
             <Text variant="caption" tone="muted" numberOfLines={1}>
-              {toCollect > 0 ? `${toCollect} à encaisser aujourd'hui` : business ? `${formatCurrency(business.contributionAmount)} par main` : ' '}
+              {toCollect > 0 ? t('{0} à encaisser aujourd\'hui', toCollect) : business ? t('{0} par main', formatCurrency(business.contributionAmount)) : ' '}
             </Text>
           </View>
           <SyncBadge compact />
@@ -367,22 +366,22 @@ export default function CollectScreen() {
           <Icon name="search" size={18} color={theme.colors.textMuted} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Nom, téléphone ou rang"
+            placeholder={t('Nom, téléphone ou rang')}
             placeholderTextColor={theme.colors.textPlaceholder}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoCorrect={false}
-            accessibilityLabel="Rechercher un adhérent"
+            accessibilityLabel={t('Rechercher un adhérent')}
           />
           {searchQuery.length > 0 ? (
-            <Pressable onPress={() => setSearchQuery('')} accessibilityRole="button" accessibilityLabel="Effacer la recherche" hitSlop={12}>
+            <Pressable onPress={() => setSearchQuery('')} accessibilityRole="button" accessibilityLabel={t('Effacer la recherche')} hitSlop={12}>
               <Icon name="close" size={18} color={theme.colors.textMuted} />
             </Pressable>
           ) : (
             <Pressable
               onPress={() => router.push('/scan' as any)}
               accessibilityRole="button"
-              accessibilityLabel="Scanner la carte QR d'un adhérent"
+              accessibilityLabel={t('Scanner la carte QR d\'un adhérent')}
               hitSlop={8}
               style={styles.scanBtn}
             >
@@ -412,12 +411,12 @@ export default function CollectScreen() {
             allClients.length === 0 ? (
               <EmptyState
                 icon="users"
-                title="Aucun adhérent"
-                message="Inscrivez les membres du sol pour commencer à encaisser."
-                action={{ label: 'Nouvel adhérent', icon: 'plus', onPress: () => router.push('/client/new' as any) }}
+                title={t('Aucun adhérent')}
+                message={t('Inscrivez les membres du sol pour commencer à encaisser.')}
+                action={{ label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }}
               />
             ) : (
-              <EmptyState icon="search" title="Aucun résultat" message="Vérifiez le nom, le numéro ou le rang saisi." />
+              <EmptyState icon="search" title={t('Aucun résultat')} message={t('Vérifiez le nom, le numéro ou le rang saisi.')} />
             )
           }
         />
@@ -431,16 +430,16 @@ export default function CollectScreen() {
         subtitle={
           success || !selectedClient
             ? undefined
-            : `${memberHandsCount > 1 ? `${memberHandsCount} mains · rangs ${selectedClient.payoutRanks || selectedClient.payoutRank}` : `Rang ${selectedClient.payoutRank || 1}`} · cotisé ${currentPaidHands}/${limits.maxAllowedHands}`
+            : t('{0} · cotisé {1}/{2}', memberHandsCount > 1 ? `${memberHandsCount} mains · rangs ${selectedClient.payoutRanks || selectedClient.payoutRank}` : `Rang ${selectedClient.payoutRank || 1}`, currentPaidHands, limits.maxAllowedHands)
         }
         footer={
           success ? (
             <View style={styles.footerRow}>
-              <Button label="Partager le reçu" icon="share" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
-              <Button label="Terminé" onPress={closeSheet} style={styles.flexGrow} />
+              <Button label={t('Partager le reçu')} icon="share" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
+              <Button label={t('Terminé')} onPress={closeSheet} style={styles.flexGrow} />
             </View>
           ) : limits.isCycleCompleted ? (
-            <Button size="lg" fullWidth variant="secondary" label="Fermer" onPress={closeSheet} />
+            <Button size="lg" fullWidth variant="secondary" label={t('Fermer')} onPress={closeSheet} />
           ) : (
             <Button
               size="lg"
@@ -449,7 +448,7 @@ export default function CollectScreen() {
               onPress={handleOpenPinValidation}
               loading={isProcessing}
               disabled={limits.isCycleCompleted || handsCount <= 0}
-              label={limits.isCycleCompleted ? 'Cycle complété' : `Encaisser ${formatCurrency(totalAmount)}`}
+              label={limits.isCycleCompleted ? t('Cycle complété') : t('Encaisser {0}', formatCurrency(totalAmount))}
             />
           )
         }
@@ -459,32 +458,26 @@ export default function CollectScreen() {
             <View style={styles.successIcon}>
               <Icon name="check" size={28} color={theme.colors.success} strokeWidth={3} />
             </View>
-            <Text variant="heading" align="center" accessibilityRole="header">
-              Encaissement enregistré
-            </Text>
+            <Text variant="heading" align="center" accessibilityRole="header">{t('Encaissement enregistré')}</Text>
             <AmountText amount={lastTx.amount} size="hero" align="center" />
             <Text variant="body" tone="muted" align="center">
-              {selectedClient.fullName} · {lastReceipt?.handsCount} main{(lastReceipt?.handsCount ?? 1) > 1 ? 's' : ''} · couvert jusqu'au{' '}
+              {selectedClient.fullName} · {lastReceipt?.handsCount}{' '}{t('main')}{(lastReceipt?.handsCount ?? 1) > 1 ? 's' : ''}{' '}{t('· couvert jusqu\'au')}{' '}
               {formatDateShort(lastReceipt?.end ?? previewDateStr)}
             </Text>
-            <Text variant="caption" tone="muted" align="center" selectable>
-              Réf. #{lastTx.id.slice(0, 8)}
+            <Text variant="caption" tone="muted" align="center" selectable>{t('Réf. #{0}', lastTx.id.slice(0, 8))}
             </Text>
           </View>
         ) : limits.isCycleCompleted ? (
           <View style={styles.noticeRow}>
             <Icon name="check" size={20} color={theme.colors.success} />
-            <Text variant="body" style={styles.flexShrink}>
-              Toutes les cotisations du cycle sont versées ({limits.maxAllowedHands} mains, {formatCurrency(limits.maxPotAmount)}). Aucun versement
-              supplémentaire n'est possible.
-            </Text>
+            <Text variant="body" style={styles.flexShrink}>{t('Toutes les cotisations du cycle sont versées ({0} mains, {1}). Aucun versement supplémentaire n\'est possible.', limits.maxAllowedHands, formatCurrency(limits.maxPotAmount))}</Text>
           </View>
         ) : (
           <>
             <View style={styles.amountBlock}>
               <AmountText amount={totalAmount} size="hero" align="center" />
               <Text variant="caption" tone="muted" align="center">
-                {handsLabel} × {formatCurrency(unitAmount)} · couvert jusqu'au {formatDateShort(previewDateStr)}
+                {handsLabel} × {formatCurrency(unitAmount)}{' '}{t('· couvert jusqu\'au')}{' '}{formatDateShort(previewDateStr)}
               </Text>
             </View>
 
@@ -493,24 +486,23 @@ export default function CollectScreen() {
                 onPress={handleDecrement}
                 disabled={handsCount <= 1}
                 accessibilityRole="button"
-                accessibilityLabel="Retirer une main"
+                accessibilityLabel={t('Retirer une main')}
                 style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed, handsCount <= 1 && styles.stepperBtnDisabled]}
               >
                 <Icon name="minus" size={22} color={handsCount <= 1 ? theme.colors.textPlaceholder : theme.colors.text} />
               </Pressable>
-              <View style={styles.stepperDisplay} accessible accessibilityLabel={`${handsLabel} sur ${limits.remainingHands} restantes`}>
+              <View style={styles.stepperDisplay} accessible accessibilityLabel={t('{0} sur {1} restantes', handsLabel, limits.remainingHands)}>
                 <Text variant="amountLarge" align="center">
                   {handsCount}
                 </Text>
-                <Text variant="caption" tone="muted" align="center">
-                  sur {limits.remainingHands} restante{limits.remainingHands > 1 ? 's' : ''}
+                <Text variant="caption" tone="muted" align="center">{t('sur {0} restante{1}', limits.remainingHands, limits.remainingHands > 1 ? 's' : '')}
                 </Text>
               </View>
               <Pressable
                 onPress={handleIncrement}
                 disabled={handsCount >= limits.remainingHands}
                 accessibilityRole="button"
-                accessibilityLabel="Ajouter une main"
+                accessibilityLabel={t('Ajouter une main')}
                 style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed, handsCount >= limits.remainingHands && styles.stepperBtnDisabled]}
               >
                 <Icon name="plus" size={22} color={handsCount >= limits.remainingHands ? theme.colors.textPlaceholder : theme.colors.text} />
@@ -544,7 +536,7 @@ export default function CollectScreen() {
 
             <ProgressBar
               value={limits.maxAllowedHands > 0 ? (currentPaidHands + handsCount) / limits.maxAllowedHands : 0}
-              accessibilityLabel="Progression des cotisations du cycle après cet encaissement"
+              accessibilityLabel={t('Progression des cotisations du cycle après cet encaissement')}
             />
           </>
         )}
@@ -552,8 +544,8 @@ export default function CollectScreen() {
 
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Confirmer l'encaissement"
-        subtitle={`${formatCurrency(totalAmount)} · ${handsLabel} pour ${selectedClient?.fullName ?? ''}`}
+        title={t('Confirmer l\'encaissement')}
+        subtitle={t('{0} · {1} pour {2}', formatCurrency(totalAmount), handsLabel, selectedClient?.fullName ?? '')}
         onSuccess={handlePinSuccessSubmit}
         onCancel={() => {
           setIsPinModalOpen(false);

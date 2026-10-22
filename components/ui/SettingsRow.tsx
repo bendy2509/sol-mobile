@@ -5,6 +5,7 @@ import { triggerSelectionHaptic } from '@/lib/haptics';
 import { useTheme } from '@/theme';
 import { Icon, UiIconName } from './Icon';
 import { Text } from './Text';
+import { t } from '@/i18n';
 
 export interface SettingsRowProps {
   label: string;
@@ -88,7 +89,7 @@ export function SettingsRow({ label, description, icon, value, toggle, onPress, 
       accessibilityRole="button"
       accessibilityLabel={value ? `${label}, ${value}` : label}
       accessibilityState={selected !== undefined ? { selected } : undefined}
-      accessibilityHint={requiresPin ? 'Demande votre code PIN' : undefined}
+      accessibilityHint={requiresPin ? t('Demande votre code PIN') : undefined}
       style={({ pressed }) => [style, pressed && { backgroundColor: colors.surfacePressed }]}
     >
       {content}

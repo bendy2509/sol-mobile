@@ -43,13 +43,14 @@ import {
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 /** Display label of a ledger entry (presentation only). */
 function getTxTypeLabel(tx: Transaction): string {
-  if (tx.type === 'REVERSAL' || tx.isReversed) return 'Annulation';
-  if (tx.type === 'SABOTAY_DEPOSIT') return 'Dépôt Sabotay';
-  if (tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION') return 'Cotisation Sol';
-  return 'Remise de la main (bay men)';
+  if (tx.type === 'REVERSAL' || tx.isReversed) return t('Annulation');
+  if (tx.type === 'SABOTAY_DEPOSIT') return t('Dépôt Sabotay');
+  if (tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION') return t('Cotisation Sol');
+  return t('Remise de la main (bay men)');
 }
 
 export default function ClientDetailScreen() {
@@ -204,7 +205,7 @@ export default function ClientDetailScreen() {
   const handleOpenEditModal = () => {
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès Lecture Seule', 'La modification est réservée aux gestionnaires.');
+      Alert.alert(t('Accès Lecture Seule'), t('La modification est réservée aux gestionnaires.'));
       return;
     }
     triggerLightImpact();
@@ -225,12 +226,12 @@ export default function ClientDetailScreen() {
   const handleSaveEdit = () => {
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès Lecture Seule', 'La modification est réservée aux gestionnaires.');
+      Alert.alert(t('Accès Lecture Seule'), t('La modification est réservée aux gestionnaires.'));
       return;
     }
     if (!client) return;
     if (!editFullName.trim()) {
-      Alert.alert('Erreur', "Le nom de l'adhérent ne peut pas être vide.");
+      Alert.alert(t('Erreur'), t('Le nom de l\'adhérent ne peut pas être vide.'));
       return;
     }
 
@@ -246,8 +247,8 @@ export default function ClientDetailScreen() {
     }
 
     requirePinForAction(
-      "Modifier l'Adhérent",
-      `Saisissez votre code PIN gestionnaire (4 chiffres) pour valider la mise à jour de ${editFullName} (${validHands} main(s)).`,
+      t('Modifier l\'Adhérent'),
+      t('Saisissez votre code PIN gestionnaire (4 chiffres) pour valider la mise à jour de {0} ({1} main(s)).', editFullName, validHands),
       async () => {
         try {
           const normPhone = normalizePhoneNumber(editPhoneNumber);
@@ -260,12 +261,12 @@ export default function ClientDetailScreen() {
           });
 
           triggerSuccessFeedback();
-          Alert.alert('Succès', `L'adhérent a été mis à jour avec ${validHands} main(s) (Rangs: #${finalRanks}).`);
+          Alert.alert(t('Succès'), t('L\'adhérent a été mis à jour avec {0} main(s) (Rangs: #{1}).', validHands, finalRanks));
           setIsEditModalOpen(false);
           await loadClientData();
         } catch (err: any) {
           triggerErrorFeedback();
-          Alert.alert('Erreur', err?.message || 'Échec de la modification.');
+          Alert.alert(t('Erreur'), err?.message || t('Échec de la modification.'));
         }
       }
     );
@@ -274,15 +275,15 @@ export default function ClientDetailScreen() {
   const handleInitiatePayout = () => {
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès Lecture Seule', 'Le décaissement est réservé aux gestionnaires.');
+      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement est réservé aux gestionnaires.'));
       return;
     }
     triggerMediumImpact();
     if (!client) return;
     if (client.hasReceivedHand || client.hasReceivedPayout) {
       Alert.alert(
-        'Main Déjà Remise',
-        `${client.fullName} a déjà touché sa main pour ce cycle de SOL. Une deuxième remise nécessite une procédure exceptionnelle.`
+        t('Main Déjà Remise'),
+        t('{0} a déjà touché sa main pour ce cycle de SOL. Une deuxième remise nécessite une procédure exceptionnelle.', client.fullName)
       );
     }
     setPayoutNote(`Remise de la main #${client.payoutRank || 1} - ${client.fullName}`);
@@ -292,14 +293,14 @@ export default function ClientDetailScreen() {
   const handleConfirmPayout = () => {
     if (!client) return;
     if (isOutOfOrder && !payoutNote.trim()) {
-      Alert.alert('Justification requise', 'Pour une remise hors ordre normal du SOL, veuillez obligatoirement saisir une justification.');
+      Alert.alert(t('Justification requise'), t('Pour une remise hors ordre normal du SOL, veuillez obligatoirement saisir une justification.'));
       return;
     }
     setIsPayoutModalOpen(false);
 
     requirePinForAction(
-      'Validation du Décaissement',
-      `Saisissez votre code PIN pour décaisser la cagnotte de ${formatCurrency(totalPotAmount)} (${totalCycleHands} mains × ${formatCurrency(unitAmount)}) à ${client.fullName}.`,
+      t('Validation du Décaissement'),
+      t('Saisissez votre code PIN pour décaisser la cagnotte de {0} ({1} mains × {2}) à {3}.', formatCurrency(totalPotAmount), totalCycleHands, formatCurrency(unitAmount), client.fullName),
       async () => {
         try {
           const tx = await payoutMemberHand(
@@ -316,17 +317,17 @@ export default function ClientDetailScreen() {
               action: 'PAYOUT_OUT_OF_ORDER',
               entityType: 'TRANSACTION',
               entityId: tx.id,
-              reason: payoutNote.trim() || `Remise au rang #${client.payoutRank} au lieu du rang attendu #${expectedNextRank}`,
+              reason: payoutNote.trim() || t('Remise au rang #{0} au lieu du rang attendu #{1}', client.payoutRank, expectedNextRank),
             });
           }
 
           triggerSuccessFeedback();
           Alert.alert(
-            'Main Remise avec Succès !',
-            `La main de ${formatCurrency(totalPotAmount)} a été décaissée pour ${client.fullName}.\n\nCalculée sur la base des ${totalCycleHands} mains effectives du cycle.`,
+            t('Main Remise avec Succès !'),
+            t('La main de {0} a été décaissée pour {1}.\n\nCalculée sur la base des {2} mains effectives du cycle.', formatCurrency(totalPotAmount), client.fullName, totalCycleHands),
             [
               {
-                text: 'Télécharger Reçu PDF',
+                text: t('Télécharger Reçu PDF'),
                 onPress: async () => {
                   try {
                     const pdfUri = await generatePayoutReceiptPdf({
@@ -346,17 +347,17 @@ export default function ClientDetailScreen() {
                     });
                     await sharePdfFile(pdfUri, `Recu_Decaissement_${client.fullName.replace(/\s+/g, '_')}.pdf`);
                   } catch {
-                    Alert.alert('Erreur', 'Impossible de générer le reçu PDF.');
+                    Alert.alert(t('Erreur'), t('Impossible de générer le reçu PDF.'));
                   }
                 },
               },
-              { text: 'Fermer', style: 'cancel' },
+              { text: t('Fermer'), style: 'cancel' },
             ]
           );
           loadClientData();
         } catch (err: any) {
           triggerErrorFeedback();
-          Alert.alert('Erreur', err?.message || 'Échec du décaissement de la main.');
+          Alert.alert(t('Erreur'), err?.message || t('Échec du décaissement de la main.'));
         }
       }
     );
@@ -365,31 +366,31 @@ export default function ClientDetailScreen() {
   const handleDeleteClient = () => {
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès Lecture Seule', 'La suppression est réservée aux gestionnaires.');
+      Alert.alert(t('Accès Lecture Seule'), t('La suppression est réservée aux gestionnaires.'));
       return;
     }
     if (!client) return;
     triggerMediumImpact();
 
     Alert.alert(
-      "Supprimer l'Adhérent",
-      `Êtes-vous sûr de vouloir supprimer définitivement le dossier de ${client.fullName} ? Cette action est irréversible.`,
+      t('Supprimer l\'Adhérent'),
+      t('Êtes-vous sûr de vouloir supprimer définitivement le dossier de {0} ? Cette action est irréversible.', client.fullName),
       [
-        { text: 'Annuler', style: 'cancel' },
+        { text: t('Annuler'), style: 'cancel' },
         {
-          text: 'Supprimer',
+          text: t('Supprimer'),
           style: 'destructive',
           onPress: () => {
             requirePinForAction(
-              'Confirmation de Suppression',
-              `Saisissez votre code PIN pour supprimer définitivement le dossier de ${client.fullName}.`,
+              t('Confirmation de Suppression'),
+              t('Saisissez votre code PIN pour supprimer définitivement le dossier de {0}.', client.fullName),
               async () => {
                 try {
                   await deleteClient(client.id);
                   triggerSuccessFeedback();
-                  Alert.alert('Supprimé', "Le dossier de l'adhérent a été supprimé.", [
+                  Alert.alert(t('Supprimé'), t('Le dossier de l\'adhérent a été supprimé.'), [
                     {
-                      text: 'OK',
+                      text: t('OK'),
                       onPress: () => {
                         if (router.canGoBack()) {
                           router.back();
@@ -401,7 +402,7 @@ export default function ClientDetailScreen() {
                   ]);
                 } catch (err: any) {
                   triggerErrorFeedback();
-                  Alert.alert('Erreur', err?.message || 'Échec de la suppression.');
+                  Alert.alert(t('Erreur'), err?.message || t('Échec de la suppression.'));
                 }
               }
             );
@@ -416,30 +417,23 @@ export default function ClientDetailScreen() {
     if (!client) return;
 
     Alert.alert(
-      `Fiche & Reçu : ${client.fullName}`,
-      'Comment souhaitez-vous transmettre le document officiel à l\'adhérent ?',
+      t('Fiche & Reçu : {0}', client.fullName),
+      t('Comment souhaitez-vous transmettre le document officiel à l\'adhérent ?'),
       [
         {
-          text: 'Envoyer par WhatsApp',
+          text: t('Envoyer par WhatsApp'),
           onPress: () => {
             const digitsOnly = client.phoneNumber.replace(/[^0-9]/g, '');
-            const message = `Bonjour ${client.fullName}, voici l'état certifié de votre compte SOL (${business?.name || 'SOL Mobile'}) :
-- Total Cotisé : ${formatCurrency(client.totalPaidAmount || client.currentBalance)}
-- Nombre de Mains : ${client.paidHandsCount || 0} main(s)
-- Rang attribué : Main #${client.payoutRank || 1}
-- Couvert jusqu'au : ${formatDate(client.paidUntilDate || new Date().toISOString())}
-- Main reçue : ${client.hasReceivedHand || client.hasReceivedPayout ? 'OUI' : 'NON'}
-
-Document sécurisé et certifié par SOL Mobile.`;
+            const message = t('Bonjour {0}, voici l\'état certifié de votre compte SOL ({1}) :\n- Total Cotisé : {2}\n- Nombre de Mains : {3} main(s)\n- Rang attribué : Main #{4}\n- Couvert jusqu\'au : {5}\n- Main reçue : {6}\n\nDocument sécurisé et certifié par SOL Mobile.', client.fullName, business?.name || 'SOL Mobile', formatCurrency(client.totalPaidAmount || client.currentBalance), client.paidHandsCount || 0, client.payoutRank || 1, formatDate(client.paidUntilDate || new Date().toISOString()), client.hasReceivedHand || client.hasReceivedPayout ? 'OUI' : 'NON');
             const encoded = encodeURIComponent(message);
             const url = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
             Linking.openURL(url).catch(() => {
-              Alert.alert('WhatsApp', 'Impossible d\'ouvrir WhatsApp.');
+              Alert.alert(t('WhatsApp'), t('Impossible d\'ouvrir WhatsApp.'));
             });
           },
         },
         {
-          text: 'Télécharger PDF',
+          text: t('Télécharger PDF'),
           onPress: async () => {
             try {
               const latestTx = transactions.length > 0 ? transactions[0] : null;
@@ -467,11 +461,11 @@ Document sécurisé et certifié par SOL Mobile.`;
 
               await sharePdfFile(pdfUri, `Fiche_SOL_${client.fullName.replace(/\s+/g, '_')}.pdf`);
             } catch (err: any) {
-              Alert.alert('Erreur', 'Impossible de générer le document PDF.');
+              Alert.alert(t('Erreur'), t('Impossible de générer le document PDF.'));
             }
           },
         },
-        { text: 'Annuler', style: 'cancel' },
+        { text: t('Annuler'), style: 'cancel' },
       ]
     );
   };
@@ -525,7 +519,7 @@ Document sécurisé et certifié par SOL Mobile.`;
       }
       await sharePdfFile(fileUri, `recu_operation_${selectedTx.id.slice(0, 8)}.pdf`);
     } catch (err: any) {
-      Alert.alert('Erreur', err?.message || 'Impossible de générer le reçu.');
+      Alert.alert(t('Erreur'), err?.message || t('Impossible de générer le reçu.'));
     }
   };
 
@@ -533,25 +527,18 @@ Document sécurisé et certifié par SOL Mobile.`;
     if (!selectedTx || !client) return;
     const digitsOnly = normalizePhoneNumber(client.phoneNumber);
     const typeLabel = selectedTx.type === 'SABOTAY_DEPOSIT'
-      ? 'Dépôt Sabotay'
+      ? t('Dépôt Sabotay')
       : selectedTx.type === 'SOL_CONTRIBUTION' || selectedTx.type === 'CONTRIBUTION'
-      ? 'Cotisation Sol'
+      ? t('Cotisation Sol')
       : selectedTx.type === 'REVERSAL' || selectedTx.isReversed
-      ? 'Annulation'
-      : 'Décaissement Main ("Bay Men")';
+      ? t('Annulation')
+      : t('Décaissement Main ("Bay Men")');
 
-    const message = `*SOL MOBILE - RÉCÉPISSÉ CERTIFIÉ*
-Adhérent : ${client.fullName}
-Opération : #${selectedTx.id.slice(0, 8)}
-Type : ${typeLabel}
-Montant : ${formatCurrency(selectedTx.amount)}
-Date : ${formatDate(selectedTx.createdAtLocal)}
-
-Reçu archivé avec succès sur SOL Mobile.`;
+    const message = t('*SOL MOBILE - RÉCÉPISSÉ CERTIFIÉ*\nAdhérent : {0}\nOpération : #{1}\nType : {2}\nMontant : {3}\nDate : {4}\n\nReçu archivé avec succès sur SOL Mobile.', client.fullName, selectedTx.id.slice(0, 8), typeLabel, formatCurrency(selectedTx.amount), formatDate(selectedTx.createdAtLocal));
     const encoded = encodeURIComponent(message);
     const url = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
     Linking.openURL(url).catch(() => {
-      Alert.alert('WhatsApp', "Impossible d'ouvrir WhatsApp.");
+      Alert.alert(t('WhatsApp'), t('Impossible d\'ouvrir WhatsApp.'));
     });
   };
 
@@ -568,14 +555,14 @@ Reçu archivé avec succès sur SOL Mobile.`;
   const handleConfirmReversal = () => {
     if (!selectedTxForReversal) return;
     if (!reversalReason.trim()) {
-      Alert.alert('Motif obligatoire', "Veuillez saisir la raison de l'annulation.");
+      Alert.alert(t('Motif obligatoire'), t('Veuillez saisir la raison de l\'annulation.'));
       return;
     }
     setIsReversalModalOpen(false);
 
     requirePinForAction(
-      'Annulation de Transaction',
-      `Saisissez votre code PIN pour valider l'annulation de l'opération #${selectedTxForReversal.id.slice(0, 8)} (${formatCurrency(selectedTxForReversal.amount)}).`,
+      t('Annulation de Transaction'),
+      t('Saisissez votre code PIN pour valider l\'annulation de l\'opération #{0} ({1}).', selectedTxForReversal.id.slice(0, 8), formatCurrency(selectedTxForReversal.amount)),
       async () => {
         try {
           await reverseTransaction({
@@ -585,11 +572,11 @@ Reçu archivé avec succès sur SOL Mobile.`;
             collectorId: activeCollector?.id,
           });
           triggerSuccessFeedback();
-          Alert.alert('Opération Rectifiée', "L'opération a été annulée et le solde/échéance de l'adhérent a été recalculé.");
+          Alert.alert(t('Opération Rectifiée'), t('L\'opération a été annulée et le solde/échéance de l\'adhérent a été recalculé.'));
           loadClientData();
         } catch (err: any) {
           triggerErrorFeedback();
-          Alert.alert('Erreur', err?.message || "Échec de l'annulation.");
+          Alert.alert(t('Erreur'), err?.message || t('Échec de l\'annulation.'));
         } finally {
           setSelectedTxForReversal(null);
         }
@@ -602,7 +589,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
       <Screen scroll={false}>
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text variant="bodyStrong">Chargement du dossier adhérent…</Text>
+          <Text variant="bodyStrong">{t('Chargement du dossier adhérent…')}</Text>
         </View>
       </Screen>
     );
@@ -610,14 +597,14 @@ Reçu archivé avec succès sur SOL Mobile.`;
 
   const isMulti = memberHandsCount > 1;
   const detailRows: { label: string; value: string; tone?: 'success' | 'primary' }[] = [
-    { label: 'Montant par main', value: formatCurrency(unitAmount) },
-    { label: "Cagnotte d'un tirage", value: formatCurrency(totalPotAmount) },
-    { label: 'Total à cotiser sur le cycle', value: `${formatCurrency(limits.maxPotAmount)} (${limits.maxAllowedHands} cotisations)` },
+    { label: t('Montant par main'), value: formatCurrency(unitAmount) },
+    { label: t('Cagnotte d\'un tirage'), value: formatCurrency(totalPotAmount) },
+    { label: t('Total à cotiser sur le cycle'), value: t('{0} ({1} cotisations)', formatCurrency(limits.maxPotAmount), limits.maxAllowedHands) },
     {
-      label: 'Total à recevoir',
-      value: `${formatCurrency(totalPotAmount * memberHandsCount)} (${memberHandsCount} tirage${memberHandsCount > 1 ? 's' : ''})`,
+      label: t('Total à recevoir'),
+      value: t('{0} ({1} tirage{2})', formatCurrency(totalPotAmount * memberHandsCount), memberHandsCount, memberHandsCount > 1 ? 's' : ''),
     },
-    { label: 'Tirages perçus', value: `${currentReceivedHands} / ${memberHandsCount}` },
+    { label: t('Tirages perçus'), value: `${currentReceivedHands} / ${memberHandsCount}` },
   ];
 
   return (
@@ -628,7 +615,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
             size="lg"
             fullWidth
             icon="cash"
-            label="Encaisser une cotisation"
+            label={t('Encaisser une cotisation')}
             onPress={() => {
               triggerLightImpact();
               router.navigate({ pathname: '/(tabs)/collect', params: { clientId: client.id } } as any);
@@ -644,9 +631,9 @@ Reçu archivé avec succès sur SOL Mobile.`;
               <ActionMenu
                 title={client.fullName}
                 items={[
-                  { label: "Modifier l'adhérent", icon: 'edit', onPress: handleOpenEditModal },
-                  { label: 'Fiche et reçu PDF', icon: 'printer', onPress: handlePrintOrShare },
-                  { label: "Supprimer l'adhérent", icon: 'trash', destructive: true, onPress: handleDeleteClient },
+                  { label: t('Modifier l\'adhérent'), icon: 'edit', onPress: handleOpenEditModal },
+                  { label: t('Fiche et reçu PDF'), icon: 'printer', onPress: handlePrintOrShare },
+                  { label: t('Supprimer l\'adhérent'), icon: 'trash', destructive: true, onPress: handleDeleteClient },
                 ]}
               />
             ),
@@ -667,42 +654,39 @@ Reçu archivé avec succès sur SOL Mobile.`;
         </View>
 
         <Text variant="caption" tone="muted">
-          {isMulti ? `${memberHandsCount} mains · rangs ${client.payoutRanks || client.payoutRank}` : `Rang ${client.payoutRank || 1}`} ·{' '}
-          {client.type === 'SABOTAY' ? 'Sabotay' : client.type === 'SOL' ? 'Sol' : client.type}
+          {isMulti ? t('{0} mains · rangs {1}', memberHandsCount, client.payoutRanks || client.payoutRank) : t('Rang {0}', client.payoutRank || 1)} ·{' '}
+          {client.type === 'SABOTAY' ? t('Sabotay') : client.type === 'SOL' ? t('Sol') : client.type}
         </Text>
         {isFullyReceived ? (
-          <StatusBadge status="HAND_RECEIVED" appearance="inline" label={isMulti ? `Toutes les mains reçues (${memberHandsCount}/${memberHandsCount})` : 'Main reçue'} />
+          <StatusBadge status="HAND_RECEIVED" appearance="inline" label={isMulti ? t('Toutes les mains reçues ({0}/{1})', memberHandsCount, memberHandsCount) : t('Main reçue')} />
         ) : isMulti && currentReceivedHands > 0 ? (
-          <StatusBadge status="HAND_RECEIVED" appearance="inline" label={`${currentReceivedHands}/${memberHandsCount} mains reçues`} />
+          <StatusBadge status="HAND_RECEIVED" appearance="inline" label={t('{0}/{1} mains reçues', currentReceivedHands, memberHandsCount)} />
         ) : null}
       </View>
 
       <StatStrip
         cells={[
-          { label: 'Total cotisé', children: <AmountText amount={client.totalPaidAmount || client.currentBalance} size="medium" /> },
+          { label: t('Total cotisé'), children: <AmountText amount={client.totalPaidAmount || client.currentBalance} size="medium" /> },
           remainingHands === 0
-            ? { label: 'Reste à verser', value: 'Complété', tone: 'success', hint: 'Toutes mains réglées' }
-            : { label: 'Reste à verser', tone: 'warning', hint: `${remainingHands} main(s)`, children: <AmountText amount={remainingAmount} size="medium" tone="warning" /> },
+            ? { label: t('Reste à verser'), value: t('Complété'), tone: 'success', hint: t('Toutes mains réglées') }
+            : { label: t('Reste à verser'), tone: 'warning', hint: t('{0} main(s)', remainingHands), children: <AmountText amount={remainingAmount} size="medium" tone="warning" /> },
         ]}
       />
 
       <Card style={styles.cardGap}>
         <View style={styles.progressBlock}>
           <View style={styles.rowBetween}>
-            <Text variant="label">
-              Cotisations : {client.paidHandsCount || 0} / {maxAllowedHands} mains
-            </Text>
+            <Text variant="label">{t('Cotisations :')}{' '}{client.paidHandsCount || 0} / {maxAllowedHands}{' '}{t('mains')}</Text>
             <Text variant="label" tone="muted">
               {memberContributionProgressPct} %
             </Text>
           </View>
-          <ProgressBar value={memberContributionProgressPct / 100} accessibilityLabel="Progression des cotisations" />
+          <ProgressBar value={memberContributionProgressPct / 100} accessibilityLabel={t('Progression des cotisations')} />
           <View style={styles.coverageRow}>
             <Icon name="calendar" size={16} color={theme.colors.textMuted} />
-            <Text variant="caption" tone="muted">
-              Couvert jusqu'au{' '}
+            <Text variant="caption" tone="muted">{t('Couvert jusqu\'au')}
             </Text>
-            <Text variant="label">{client.paidUntilDate ? formatDateShort(client.paidUntilDate) : 'en attente'}</Text>
+            <Text variant="label">{client.paidUntilDate ? formatDateShort(client.paidUntilDate) : t('en attente')}</Text>
           </View>
         </View>
       </Card>
@@ -714,10 +698,9 @@ Reçu archivé avec succès sur SOL Mobile.`;
             <Icon name="check" size={22} color={theme.colors.success} strokeWidth={2.5} />
             <View style={styles.flexShrink}>
               <Text variant="subheading" tone="success">
-                {isMulti ? `Toutes les mains remises (${memberHandsCount}/${memberHandsCount})` : 'Main déjà remise'}
+                {isMulti ? t('Toutes les mains remises ({0}/{1})', memberHandsCount, memberHandsCount) : t('Main déjà remise')}
               </Text>
-              <Text variant="body" tone="success">
-                Cagnotte perçue {client.handReceivedDate ? `le ${formatDate(client.handReceivedDate)}` : 'pour ce cycle'} ({formatCurrency(totalPotAmount)})
+              <Text variant="body" tone="success">{t('Cagnotte perçue')}{' '}{client.handReceivedDate ? t('le {0}', formatDate(client.handReceivedDate)) : t('pour ce cycle')} ({formatCurrency(totalPotAmount)})
               </Text>
             </View>
           </View>
@@ -725,17 +708,17 @@ Reçu archivé avec succès sur SOL Mobile.`;
       ) : !isReadOnly ? (
         <Card style={styles.cardGap}>
           <View style={styles.rowBetween}>
-            <Text variant="subheading">Remise de la main</Text>
+            <Text variant="subheading">{t('Remise de la main')}</Text>
             <AmountText amount={totalPotAmount} size="small" />
           </View>
           <Text variant="caption" tone="muted">
-            {totalCycleHands} mains effectives au cycle × {formatCurrency(unitAmount)}
+            {t('{0} mains effectives au cycle × {1}', totalCycleHands, formatCurrency(unitAmount))}
           </Text>
           <Button
             icon="payout"
             fullWidth
             variant="secondary"
-            label={isMulti ? `Remettre la main (${currentReceivedHands + 1}/${memberHandsCount})` : 'Remettre la main'}
+            label={isMulti ? t('Remettre la main ({0}/{1})', currentReceivedHands + 1, memberHandsCount) : t('Remettre la main')}
             onPress={handleInitiatePayout}
           />
         </Card>
@@ -744,7 +727,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
       {/* Cycle details */}
       <Card style={styles.cardGap}>
         <Text variant="subheading" accessibilityRole="header">
-          {isMulti ? `Cycle · ${memberHandsCount} mains souscrites` : 'Cycle'}
+          {isMulti ? t('Cycle · {0} mains souscrites', memberHandsCount) : t('Cycle')}
         </Text>
         {detailRows.map((row) => (
           <View key={row.label} style={styles.detailRow}>
@@ -759,10 +742,10 @@ Reçu archivé avec succès sur SOL Mobile.`;
       </Card>
 
       {/* Passbook */}
-      <SectionHeader title="Historique des opérations" count={transactions.length} />
+      <SectionHeader title={t('Historique des opérations')} count={transactions.length} />
       {transactions.length === 0 ? (
         <Card padding="none">
-          <EmptyState icon="history" title="Aucune opération" message="Aucun versement enregistré pour cet adhérent." />
+          <EmptyState icon="history" title={t('Aucune opération')} message={t('Aucun versement enregistré pour cet adhérent.')} />
         </Card>
       ) : (
         <Card padding="none" style={styles.ledger}>
@@ -803,15 +786,15 @@ Reçu archivé avec succès sur SOL Mobile.`;
       <BottomSheet
         visible={isDetailModalOpen && !!selectedTx}
         onClose={() => setIsDetailModalOpen(false)}
-        title={selectedTx ? getTxTypeLabel(selectedTx) : "Détail de l'opération"}
+        title={selectedTx ? getTxTypeLabel(selectedTx) : t('Détail de l\'opération')}
         subtitle={selectedTx ? formatDate(selectedTx.createdAtLocal) : undefined}
       >
         {selectedTx && (
           <>
             <AmountText amount={selectedTx.amount} size="hero" />
             {[
-              { label: 'Référence', value: `#${selectedTx.id.slice(0, 8)}` },
-              { label: 'Mains couvertes', value: `${selectedTx.handsCovered || 1} main(s)` },
+              { label: t('Référence'), value: `#${selectedTx.id.slice(0, 8)}` },
+              { label: t('Mains couvertes'), value: t('{0} main(s)', selectedTx.handsCovered || 1) },
             ].map((row) => (
               <View key={row.label} style={styles.detailRow}>
                 <Text variant="caption" tone="muted" style={styles.detailLabel}>
@@ -825,9 +808,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
 
             {selectedTx.note && (
               <View style={styles.noteBox}>
-                <Text variant="caption" tone="muted">
-                  Note d'enregistrement
-                </Text>
+                <Text variant="caption" tone="muted">{t('Note d\'enregistrement')}</Text>
                 <Text variant="body" selectable>
                   {selectedTx.note}
                 </Text>
@@ -835,14 +816,14 @@ Reçu archivé avec succès sur SOL Mobile.`;
             )}
 
             <View style={styles.actionsRow}>
-              <Button label="Reçu PDF" icon="printer" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
-              <Button label="WhatsApp" icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
+              <Button label={t('Reçu PDF')} icon="printer" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
+              <Button label={t('WhatsApp')} icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
             </View>
 
             {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
             {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
-              <Button label="Annuler cette opération" icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
+              <Button label={t('Annuler cette opération')} icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
             )}
 
 
@@ -850,9 +831,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
               <Card tone="sunken">
                 <View style={styles.noticeRow}>
                   <Icon name="shield" size={18} color={theme.colors.textMuted} />
-                  <Text variant="caption" tone="muted" style={styles.flexShrink}>
-                    Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.
-                  </Text>
+                  <Text variant="caption" tone="muted" style={styles.flexShrink}>{t('Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.')}</Text>
                 </View>
               </Card>
             )}
@@ -864,30 +843,29 @@ Reçu archivé avec succès sur SOL Mobile.`;
       <BottomSheet
         visible={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
-        title="Modifier l'adhérent"
-        subtitle="Mise à jour des informations de l'adhérent."
+        title={t('Modifier l\'adhérent')}
+        subtitle={t('Mise à jour des informations de l\'adhérent.')}
         footer={
           <View style={styles.actionsRow}>
-            <Button label="Annuler" variant="secondary" onPress={() => setIsEditModalOpen(false)} style={styles.flexGrow} />
-            <Button label="Enregistrer" onPress={handleSaveEdit} style={styles.flexGrow} />
+            <Button label={t('Annuler')} variant="secondary" onPress={() => setIsEditModalOpen(false)} style={styles.flexGrow} />
+            <Button label={t('Enregistrer')} onPress={handleSaveEdit} style={styles.flexGrow} />
           </View>
         }
       >
-        <TextField label="Nom complet" value={editFullName} onChangeText={setEditFullName} placeholder="Ex : Marie Carmelle Jean" />
+        <TextField label={t('Nom complet')} value={editFullName} onChangeText={setEditFullName} placeholder={t('Ex : Marie Carmelle Jean')} />
         <TextField
-          label="Numéro de téléphone"
+          label={t('Numéro de téléphone')}
           value={editPhoneNumber}
           onChangeText={setEditPhoneNumber}
-          placeholder="+509 XX XX XXXX"
+          placeholder={t('+509 XX XX XXXX')}
           keyboardType="phone-pad"
         />
 
         <View style={styles.cardGap}>
           <View style={styles.rowBetween}>
-            <Text variant="label">Mains souscrites</Text>
+            <Text variant="label">{t('Mains souscrites')}</Text>
             <Text variant="label" tone="primary">
-              {formatCurrency(editHandsCount * unitAmount)} / tour
-            </Text>
+              {t('{0} / tour', formatCurrency(editHandsCount * unitAmount))}</Text>
           </View>
           <View style={styles.stepperRow}>
             <Pressable
@@ -897,7 +875,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
                 triggerLightImpact();
               }}
               accessibilityRole="button"
-              accessibilityLabel="Retirer une main"
+              accessibilityLabel={t('Retirer une main')}
               style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
             >
               <Icon name="minus" size={22} color={theme.colors.text} />
@@ -906,8 +884,7 @@ Reçu archivé avec succès sur SOL Mobile.`;
               <Text variant="amountLarge" align="center">
                 {editHandsCount}
               </Text>
-              <Text variant="caption" tone="muted" align="center">
-                main{editHandsCount > 1 ? 's' : ''}
+              <Text variant="caption" tone="muted" align="center">{t('main{0}', editHandsCount > 1 ? 's' : '')}
               </Text>
             </View>
             <Pressable
@@ -917,23 +894,21 @@ Reçu archivé avec succès sur SOL Mobile.`;
                 triggerLightImpact();
               }}
               accessibilityRole="button"
-              accessibilityLabel="Ajouter une main"
+              accessibilityLabel={t('Ajouter une main')}
               style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
             >
               <Icon name="plus" size={22} color={theme.colors.text} />
             </Pressable>
           </View>
-          <Text variant="caption" tone="muted">
-            Ajouter une main à cet enfant augmente automatiquement la cagnotte du sol.
-          </Text>
+          <Text variant="caption" tone="muted">{t('Ajouter une main à cet enfant augmente automatiquement la cagnotte du sol.')}</Text>
         </View>
 
         <TextField
-          label="Rang(s) de tirage"
+          label={t('Rang(s) de tirage')}
           value={editMultiRanks}
           onChangeText={setEditMultiRanks}
-          placeholder="Ex : 1 ou 1, 4, 7"
-          helper="Séparez les rangs par des virgules."
+          placeholder={t('Ex : 1 ou 1, 4, 7')}
+          helper={t('Séparez les rangs par des virgules.')}
         />
       </BottomSheet>
 
@@ -941,12 +916,12 @@ Reçu archivé avec succès sur SOL Mobile.`;
       <BottomSheet
         visible={isPayoutModalOpen}
         onClose={() => setIsPayoutModalOpen(false)}
-        title="Remise de la main"
-        subtitle="Validation par code PIN gestionnaire."
+        title={t('Remise de la main')}
+        subtitle={t('Validation par code PIN gestionnaire.')}
         footer={
           <View style={styles.actionsRow}>
-            <Button label="Annuler" variant="secondary" onPress={() => setIsPayoutModalOpen(false)} style={styles.flexGrow} />
-            <Button label="Valider avec PIN" icon="lock" onPress={handleConfirmPayout} style={styles.flexGrow} />
+            <Button label={t('Annuler')} variant="secondary" onPress={() => setIsPayoutModalOpen(false)} style={styles.flexGrow} />
+            <Button label={t('Valider avec PIN')} icon="lock" onPress={handleConfirmPayout} style={styles.flexGrow} />
           </View>
         }
       >
@@ -954,34 +929,28 @@ Reçu archivé avec succès sur SOL Mobile.`;
           <Card tone="warning">
             <View style={styles.noticeRow}>
               <Icon name="alert" size={18} color={theme.colors.warning} />
-              <Text variant="label" tone="warning" style={styles.flexShrink}>
-                Cette remise ne suit pas l'ordre prévu (rang #{expectedNextRank} attendu). Justification obligatoire.
-              </Text>
+              <Text variant="label" tone="warning" style={styles.flexShrink}>{t('Cette remise ne suit pas l\'ordre prévu (rang #{0} attendu). Justification obligatoire.', expectedNextRank)}</Text>
             </View>
           </Card>
         )}
 
         <Card tone="sunken" style={styles.cardGap}>
-          <Text variant="caption" tone="muted">
-            Bénéficiaire
-          </Text>
+          <Text variant="caption" tone="muted">{t('Bénéficiaire')}</Text>
           <Text variant="bodyStrong">
             {client.fullName} · {client.phoneNumber}
           </Text>
-          <Text variant="caption" tone="muted">
-            Cagnotte calculée
-          </Text>
+          <Text variant="caption" tone="muted">{t('Cagnotte calculée')}</Text>
           <AmountText amount={totalPotAmount} size="large" />
           <Text variant="caption" tone="muted">
-            {totalCycleHands} mains au total × {formatCurrency(unitAmount)}
+            {t('{0} mains au total × {1}', totalCycleHands, formatCurrency(unitAmount))}
           </Text>
         </Card>
 
         <TextField
-          label={isOutOfOrder ? 'Justification (obligatoire)' : 'Motif / justification'}
+          label={isOutOfOrder ? t('Justification (obligatoire)') : t('Motif / justification')}
           value={payoutNote}
           onChangeText={setPayoutNote}
-          placeholder="Ex : remise normale du cycle 1"
+          placeholder={t('Ex : remise normale du cycle 1')}
         />
       </BottomSheet>
 
@@ -989,20 +958,20 @@ Reçu archivé avec succès sur SOL Mobile.`;
       <BottomSheet
         visible={isReversalModalOpen}
         onClose={() => setIsReversalModalOpen(false)}
-        title="Annuler une opération"
-        subtitle="Le solde, les mains payées et la couverture de l'adhérent seront recalculés."
+        title={t('Annuler une opération')}
+        subtitle={t('Le solde, les mains payées et la couverture de l\'adhérent seront recalculés.')}
         footer={
           <View style={styles.actionsRow}>
-            <Button label="Retour" variant="secondary" onPress={() => setIsReversalModalOpen(false)} style={styles.flexGrow} />
-            <Button label="Confirmer l'annulation" variant="danger" onPress={handleConfirmReversal} style={styles.flexGrow} />
+            <Button label={t('Retour')} variant="secondary" onPress={() => setIsReversalModalOpen(false)} style={styles.flexGrow} />
+            <Button label={t('Confirmer l\'annulation')} variant="danger" onPress={handleConfirmReversal} style={styles.flexGrow} />
           </View>
         }
       >
         <TextField
-          label="Motif obligatoire"
+          label={t('Motif obligatoire')}
           value={reversalReason}
           onChangeText={setReversalReason}
-          placeholder="Ex : erreur de saisie du montant"
+          placeholder={t('Ex : erreur de saisie du montant')}
         />
       </BottomSheet>
 

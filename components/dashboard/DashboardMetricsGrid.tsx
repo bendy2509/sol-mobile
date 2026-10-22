@@ -2,6 +2,7 @@ import React from 'react';
 import { DashboardMetrics } from '@/types';
 import { StatStrip } from '@/components/ui';
 import { formatCurrency } from '@/lib/formatters';
+import { t } from '@/i18n';
 
 interface DashboardMetricsGridProps {
   metrics: DashboardMetrics;
@@ -16,15 +17,15 @@ export const DashboardMetricsGrid: React.FC<DashboardMetricsGridProps> = ({ metr
     <StatStrip
       cells={[
         {
-          label: 'Encaissé',
+          label: t('Encaissé'),
           value: formatCurrency(metrics.handsCollectedToday * metrics.unitAmount),
-          hint: `${metrics.handsCollectedToday} main${metrics.handsCollectedToday > 1 ? 's' : ''}`,
+          hint: t('{0} main{1}', metrics.handsCollectedToday, metrics.handsCollectedToday > 1 ? 's' : ''),
         },
-        { label: 'À jour', value: `${metrics.paidTodayCount} / ${membersCount}`, hint: "aujourd'hui" },
+        { label: t('À jour'), value: `${metrics.paidTodayCount} / ${membersCount}`, hint: t('aujourd\'hui') },
         {
-          label: 'En retard',
+          label: t('En retard'),
           value: String(metrics.overdueMembersCount),
-          hint: isLate ? `${metrics.overdueHandsCount} main(s)` : 'Aucun',
+          hint: isLate ? t('{0} main(s)', metrics.overdueHandsCount) : t('Aucun'),
           tone: isLate ? 'danger' : 'default',
         },
       ]}

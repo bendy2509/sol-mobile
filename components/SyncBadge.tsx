@@ -5,6 +5,7 @@ import { useSync } from '@/context/SyncContext';
 import { Icon, Text, UiIconName } from '@/components/ui';
 import { triggerLightImpact } from '@/lib/haptics';
 import { useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface SyncBadgeProps {
   onSyncComplete?: () => void;
@@ -33,13 +34,13 @@ export const SyncBadge: React.FC<SyncBadgeProps> = ({ onSyncComplete, compact = 
 
   const getStatusDisplay = (): { bg: string; fg: string; label: string; short: string; icon?: UiIconName; spinner?: boolean } => {
     if (syncState.isSyncing) {
-      return { bg: colors.infoSoft, fg: colors.info, label: 'Envoi…', short: '', spinner: true };
+      return { bg: colors.infoSoft, fg: colors.info, label: t('Envoi…'), short: '', spinner: true };
     }
     if (!syncState.isOnline) {
       return {
         bg: colors.surfaceAlt,
         fg: colors.textMuted,
-        label: syncState.pendingCount > 0 ? `${syncState.pendingCount} en attente · hors ligne` : 'Hors ligne',
+        label: syncState.pendingCount > 0 ? t('{0} en attente · hors ligne', syncState.pendingCount) : t('Hors ligne'),
         short: syncState.pendingCount > 0 ? String(syncState.pendingCount) : '',
         icon: 'alert',
       };
@@ -48,12 +49,12 @@ export const SyncBadge: React.FC<SyncBadgeProps> = ({ onSyncComplete, compact = 
       return {
         bg: colors.surfaceAlt,
         fg: colors.textMuted,
-        label: `${syncState.pendingCount} à synchroniser`,
+        label: t('{0} à synchroniser', syncState.pendingCount),
         short: String(syncState.pendingCount),
         icon: 'cycle',
       };
     }
-    return { bg: colors.successSoft, fg: colors.success, label: 'Synchronisé', short: '', icon: 'check' };
+    return { bg: colors.successSoft, fg: colors.success, label: t('Synchronisé'), short: '', icon: 'check' };
   };
 
   const config = getStatusDisplay();
@@ -64,7 +65,7 @@ export const SyncBadge: React.FC<SyncBadgeProps> = ({ onSyncComplete, compact = 
       onPress={handlePress}
       hitSlop={8}
       accessibilityRole="button"
-      accessibilityLabel={`Statut de synchronisation : ${config.label}`}
+      accessibilityLabel={t('Statut de synchronisation : {0}', config.label)}
       style={({ pressed }) => [
         styles.container,
         {

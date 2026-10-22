@@ -4,6 +4,7 @@ import { Modal, Pressable, ScrollView, View, useWindowDimensions } from 'react-n
 import { useTheme } from '@/theme';
 import { Icon, UiIconName } from './Icon';
 import { Text } from './Text';
+import { t } from '@/i18n';
 
 export interface DialogProps {
   visible: boolean;
@@ -72,7 +73,7 @@ export function Dialog({ visible, onClose, title, subtitle, icon, tone = 'primar
             <Pressable
               onPress={onClose}
               accessibilityRole="button"
-              accessibilityLabel="Fermer"
+              accessibilityLabel={t('Fermer')}
               style={({ pressed }) => ({
                 width: layout.touchTarget,
                 height: layout.touchTarget,

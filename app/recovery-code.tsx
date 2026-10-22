@@ -7,6 +7,7 @@ import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { takePendingRecoveryCode } from '@/services/pendingSecret';
 import { triggerLightImpact } from '@/lib/haptics';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 /**
  * Shows a freshly generated recovery code exactly once. The code is the only way to
@@ -37,7 +38,7 @@ export default function RecoveryCodeScreen() {
         <Button
           size="lg"
           fullWidth
-          label={code ? "J'ai noté mon code" : 'Continuer'}
+          label={code ? t('J\'ai noté mon code') : t('Continuer')}
           disabled={!!code && !confirmed}
           onPress={leave}
         />
@@ -49,16 +50,12 @@ export default function RecoveryCodeScreen() {
             <View style={styles.disc}>
               <Icon name="key" size={28} color={theme.colors.primary} />
             </View>
-            <Text variant="title" align="center" accessibilityRole="header">
-              Votre code de récupération
-            </Text>
-            <Text variant="body" tone="muted" align="center">
-              Il permet de choisir un nouveau code PIN si vous oubliez le vôtre. Personne d'autre ne peut le faire pour vous.
-            </Text>
+            <Text variant="title" align="center" accessibilityRole="header">{t('Votre code de récupération')}</Text>
+            <Text variant="body" tone="muted" align="center">{t('Il permet de choisir un nouveau code PIN si vous oubliez le vôtre. Personne d\'autre ne peut le faire pour vous.')}</Text>
           </View>
 
           <Card style={styles.codeCard}>
-            <Text variant="amountLarge" align="center" selectable accessibilityLabel={`Code : ${code.split('').join(' ')}`}>
+            <Text variant="amountLarge" align="center" selectable accessibilityLabel={t('Code : {0}', code.split('').join(' '))}>
               {code}
             </Text>
           </Card>
@@ -69,7 +66,7 @@ export default function RecoveryCodeScreen() {
               'Ne le partagez avec personne, ne le prenez pas en photo.',
               'Il ne sera plus affiché : vous pourrez en générer un nouveau dans Sécurité.',
             ].map((rule) => (
-              <View key={rule} style={styles.rule}>
+              <View key={t(rule)} style={styles.rule}>
                 <Icon name="check" size={16} color={theme.colors.success} />
                 <Text variant="body" style={styles.flexShrink}>
                   {rule}
@@ -82,19 +79,17 @@ export default function RecoveryCodeScreen() {
             variant={confirmed ? 'primary' : 'secondary'}
             icon={confirmed ? 'check' : undefined}
             fullWidth
-            label={confirmed ? 'Code noté' : 'Je confirme avoir noté ce code'}
+            label={confirmed ? t('Code noté') : t('Je confirme avoir noté ce code')}
             onPress={() => {
               triggerLightImpact();
               setConfirmed(!confirmed);
             }}
-            accessibilityHint="Active le bouton de sortie"
+            accessibilityHint={t('Active le bouton de sortie')}
           />
         </>
       ) : (
         <Card tone="sunken">
-          <Text variant="body" tone="muted">
-            Ce code a déjà été affiché. Pour en obtenir un nouveau, ouvrez Sécurité et générez un nouveau code de récupération.
-          </Text>
+          <Text variant="body" tone="muted">{t('Ce code a déjà été affiché. Pour en obtenir un nouveau, ouvrez Sécurité et générez un nouveau code de récupération.')}</Text>
         </Card>
       )}
     </Screen>

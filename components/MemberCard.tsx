@@ -5,6 +5,7 @@ import { Member } from '@/types';
 import { Avatar, Icon, StatusBadge, Text } from '@/components/ui';
 import { triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface MemberCardProps {
   member: Member;
@@ -56,13 +57,13 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({
     member.paymentStatusToday === 'PAID_IN_ADVANCE'
       ? `+${member.handsCoveredAhead || 1}`
       : member.paymentStatusToday === 'OVERDUE' && member.overdueRoundsCount > 0
-      ? `${member.overdueRoundsCount} tour${member.overdueRoundsCount > 1 ? 's' : ''}`
+      ? t('{0} tour{1}', member.overdueRoundsCount, member.overdueRoundsCount > 1 ? 's' : '')
       : undefined;
 
   const handsNote = isMultiHands
-    ? `${member.receivedHandsCount || 0}/${member.handsCount} mains reçues`
+    ? t('{0}/{1} mains reçues', member.receivedHandsCount || 0, member.handsCount)
     : member.hasReceivedHand
-    ? 'Main reçue'
+    ? t('Main reçue')
     : null;
 
   return (
@@ -81,7 +82,7 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({
         <Pressable
           onPress={handleCardPress}
           accessibilityRole="button"
-          accessibilityLabel={`Ouvrir la fiche de ${member.fullName}`}
+          accessibilityLabel={t('Ouvrir la fiche de {0}', member.fullName)}
           style={({ pressed }) => ({
             flex: 1,
             minWidth: 0,
@@ -114,7 +115,7 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({
         <Pressable
           onPress={handleCollectPress}
           accessibilityRole="button"
-          accessibilityLabel={`${isCovered ? 'Ajouter une avance' : 'Encaisser'} pour ${member.fullName}`}
+          accessibilityLabel={t('{0} pour {1}', isCovered ? 'Ajouter une avance' : 'Encaisser', member.fullName)}
           hitSlop={4}
           style={({ pressed }) => ({
             width: layout.touchTarget,

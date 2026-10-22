@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { formatRecoveryCode, isWellFormedRecoveryCode } from '@/services/securityPolicy';
 import { setPendingRecoveryCode } from '@/services/pendingSecret';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 /** Forgotten PIN: phone + recovery code + new PIN. A new recovery code is issued afterwards. */
 export default function RecoverPinScreen() {
@@ -25,14 +26,14 @@ export default function RecoverPinScreen() {
 
   const handleSubmit = async () => {
     setError(null);
-    if (phoneDigits.length !== 8) return setError('Saisissez votre numéro à 8 chiffres.');
-    if (!isWellFormedRecoveryCode(code)) return setError('Le code de récupération comporte 12 caractères (ex : ABCD-EFGH-JKMN).');
-    if (newPin !== confirmPin) return setError('Les deux codes PIN ne correspondent pas.');
+    if (phoneDigits.length !== 8) return setError(t('Saisissez votre numéro à 8 chiffres.'));
+    if (!isWellFormedRecoveryCode(code)) return setError(t('Le code de récupération comporte 12 caractères (ex : ABCD-EFGH-JKMN).'));
+    if (newPin !== confirmPin) return setError(t('Les deux codes PIN ne correspondent pas.'));
 
     setSubmitting(true);
     try {
       const res = await resetPinWithRecoveryCode(`+509${phoneDigits}`, code, newPin);
-      if (!res.success) return setError(res.error || 'Réinitialisation impossible.');
+      if (!res.success) return setError(res.error || t('Réinitialisation impossible.'));
       // The used recovery code is retired: issue a new one and show it once.
       setPendingRecoveryCode(await regenerateRecoveryCode());
       router.replace({ pathname: '/recovery-code', params: { next: 'carnet' } } as any);
@@ -46,11 +47,9 @@ export default function RecoverPinScreen() {
       <Screen
         edges={['left', 'right']}
         contentStyle={styles.content}
-        footer={<Button size="lg" fullWidth icon="key" label="Choisir ce nouveau PIN" loading={submitting} onPress={handleSubmit} />}
+        footer={<Button size="lg" fullWidth icon="key" label={t('Choisir ce nouveau PIN')} loading={submitting} onPress={handleSubmit} />}
       >
-        <Text variant="body" tone="muted">
-          Saisissez le code de récupération reçu à l'inscription, puis votre nouveau code PIN.
-        </Text>
+        <Text variant="body" tone="muted">{t('Saisissez le code de récupération reçu à l\'inscription, puis votre nouveau code PIN.')}</Text>
 
         {error && (
           <Card tone="danger" padding="sm">
@@ -65,7 +64,7 @@ export default function RecoverPinScreen() {
 
         <Card style={styles.card}>
           <TextField
-            label="Numéro de téléphone (+509)"
+            label={t('Numéro de téléphone (+509)')}
             keyboardType="number-pad"
             maxLength={8}
             value={phoneDigits}
@@ -73,19 +72,19 @@ export default function RecoverPinScreen() {
             placeholder="37 12 34 56"
           />
           <TextField
-            label="Code de récupération"
+            label={t('Code de récupération')}
             autoCapitalize="characters"
             autoCorrect={false}
             maxLength={14}
             value={code}
             onChangeText={(t) => setCode(formatRecoveryCode(t))}
-            placeholder="ABCD-EFGH-JKMN"
+            placeholder={t('ABCD-EFGH-JKMN')}
           />
         </Card>
 
         <Card style={styles.card}>
-          <TextField label="Nouveau code PIN" keyboardType="number-pad" secureTextEntry maxLength={4} value={newPin} onChangeText={setNewPin} placeholder="••••" />
-          <TextField label="Confirmer le code PIN" keyboardType="number-pad" secureTextEntry maxLength={4} value={confirmPin} onChangeText={setConfirmPin} placeholder="••••" />
+          <TextField label={t('Nouveau code PIN')} keyboardType="number-pad" secureTextEntry maxLength={4} value={newPin} onChangeText={setNewPin} placeholder="••••" />
+          <TextField label={t('Confirmer le code PIN')} keyboardType="number-pad" secureTextEntry maxLength={4} value={confirmPin} onChangeText={setConfirmPin} placeholder="••••" />
         </Card>
       </Screen>
     </KeyboardAvoidingView>

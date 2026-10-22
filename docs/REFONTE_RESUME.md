@@ -64,6 +64,7 @@ Branche `design/refonte-ui`, octobre 2026. Direction retenue : **A « Registre s
 | `scripts/test_security.ts` | 30 / 30 |
 | Hex, `fontSize` ou `fontWeight` dans `app/` et `components/` | 0 |
 | Emojis dans l'interface | 0 |
+| `scripts/test_i18n.ts` (français et kreyòl) | 5 / 5, 788 textes, 0 sans traduction |
 | Action fréquente au-delà de 3 taps | aucune |
 
 **Vérifié dans le navigateur (web, 360 px) :**
@@ -93,5 +94,21 @@ Sur tablette, la feuille Encaisser a été contrôlée dans le DOM : elle fait 7
 - **Captures** : il n'y a pas de capture tablette des autres écrans, ni de Petite et Grande sur tous les écrans.
 - **Montants de démo sur le web** : l'Accueil affiche une cagnotte à 0 HTG alors que l'onglet Sol affiche 1 000 HTG. Ce sont les métriques de la base de démo web (`db/`, hors périmètre), pas l'interface.
 - **Natif** : biométrie, partage de fichiers, haptique et Android bas de gamme n'ont pas été testés sur un appareil.
-- **i18n** : les onglets, Réglages et les actions communes sont traduits. Les autres écrans restent en français (repli) et seront à extraire au fil de l'eau.
 - **Bug web hors périmètre** : l'adaptateur SQLite web (`db/sqlite.ts`) décale les colonnes du collecteur de démo, si bien que la zone affiche une date. Ce bug n'apparaît que sur le web, et `db/` est hors périmètre de la refonte : il n'est pas corrigé.
+
+## Traduction français et kreyòl (ajout du 22 octobre 2026)
+
+- **Couverture** : toute l'interface est en deux langues, avec environ 800 phrases :
+  - écrans, alertes, messages d'erreur et libellés d'accessibilité ;
+  - messages WhatsApp envoyés aux adhérents ;
+  - dates.
+- **Anglais retiré** : le choix de langue ne propose plus que Français et Kreyòl ayisyen.
+- **Méthode** :
+  - un script d'analyse du code TypeScript a entouré chaque texte de `t()` ;
+  - les phrases coupées autour d'une variable ont été réunies en une seule phrase avec des marqueurs `{0}` ;
+  - les traductions sont dans `i18n/ht.phrases.ts`.
+- **Contrôle** : `scripts/test_i18n.ts` échoue si un texte de l'interface n'a pas de traduction, ou si une traduction utilise une variable absente du texte français.
+- **Restent en français, volontairement :**
+  - les documents PDF (reçus, rapports, procès-verbaux), qui sont des pièces officielles ;
+  - les notes enregistrées avec les opérations dans la base, qui sont des données et non de l'interface.
+- **Relecture** : les traductions ont été écrites sans relecture par un locuteur natif. Une relecture est conseillée avant la mise en production.

@@ -20,7 +20,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { getDatabase } from '@/db/sqlite';
-import { LANGUAGES, useI18n } from '@/i18n';
+import { LANGUAGES, useI18n, t } from '@/i18n';
 import { formatCurrency } from '@/lib/formatters';
 import { triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { getReceiptPreferences, ReceiptPreferences, saveReceiptPreferences } from '@/lib/receiptPreferences';
@@ -42,7 +42,7 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { t, language, setLanguage } = useI18n();
+  const { language, setLanguage } = useI18n();
   const { preference, setPreference, textSize, setTextSize } = useThemePreference();
   const {
     activeCollector,
@@ -116,8 +116,8 @@ export default function SettingsScreen() {
   // --- Profil -------------------------------------------------------------
   const validateProfile = () => {
     setError(null);
-    if (!fullName.trim()) return fail('Le nom est obligatoire.'), false;
-    if (!phone.trim()) return fail('Le numéro de téléphone est obligatoire.'), false;
+    if (!fullName.trim()) return fail(t('Le nom est obligatoire.')), false;
+    if (!phone.trim()) return fail(t('Le numéro de téléphone est obligatoire.')), false;
     return true;
   };
 
@@ -136,7 +136,7 @@ export default function SettingsScreen() {
       triggerSuccessFeedback();
       setSheet(null);
     } catch (e: any) {
-      fail(e?.message || 'Mise à jour impossible.');
+      fail(e?.message || t('Mise à jour impossible.'));
       setSheet('profile');
     } finally {
       setBusy(false);
@@ -146,17 +146,17 @@ export default function SettingsScreen() {
   // --- Code PIN -----------------------------------------------------------
   const submitPinChange = async () => {
     setError(null);
-    if (oldPin.length !== 4) return fail('Saisissez votre code PIN actuel.');
+    if (oldPin.length !== 4) return fail(t('Saisissez votre code PIN actuel.'));
     const rule = validateNewPin(newPin);
     if (rule) return fail(rule);
-    if (newPin !== confirmPin) return fail('Les deux nouveaux codes ne correspondent pas.');
+    if (newPin !== confirmPin) return fail(t('Les deux nouveaux codes ne correspondent pas.'));
     setBusy(true);
     try {
       const res = await changePin(oldPin, newPin);
-      if (!res.success) return fail(res.error || 'Modification impossible.');
+      if (!res.success) return fail(res.error || t('Modification impossible.'));
       triggerSuccessFeedback();
       setSheet(null);
-      Alert.alert('Code PIN modifié', 'Utilisez votre nouveau code dès la prochaine connexion.');
+      Alert.alert(t('Code PIN modifié'), t('Utilisez votre nouveau code dès la prochaine connexion.'));
     } finally {
       setBusy(false);
     }
@@ -165,8 +165,8 @@ export default function SettingsScreen() {
   // --- Sauvegarde ---------------------------------------------------------
   const submitBackup = () => {
     setError(null);
-    if (password.length < MIN_BACKUP_PASSWORD_LENGTH) return fail(`Choisissez un mot de passe d'au moins ${MIN_BACKUP_PASSWORD_LENGTH} caractères.`);
-    if (password !== confirmPassword) return fail('Les deux mots de passe ne correspondent pas.');
+    if (password.length < MIN_BACKUP_PASSWORD_LENGTH) return fail(t('Choisissez un mot de passe d\'au moins {0} caractères.', MIN_BACKUP_PASSWORD_LENGTH));
+    if (password !== confirmPassword) return fail(t('Les deux mots de passe ne correspondent pas.'));
     if (!activeCollector) return;
     setBusy(true);
     // Let the spinner render before the key derivation blocks the JS thread
@@ -175,9 +175,9 @@ export default function SettingsScreen() {
         const fileName = await exportEncryptedBackup(activeCollector.id, password);
         triggerSuccessFeedback();
         setSheet(null);
-        Alert.alert('Sauvegarde créée', `${fileName}\n\nConservez ce fichier et son mot de passe : sans le mot de passe, il est illisible.`);
+        Alert.alert(t('Sauvegarde créée'), t('{0}\n\nConservez ce fichier et son mot de passe : sans le mot de passe, il est illisible.', fileName));
       } catch (e: any) {
-        fail(e?.message || "Échec de l'export.");
+        fail(e?.message || t('Échec de l\'export.'));
       } finally {
         setBusy(false);
       }
@@ -189,7 +189,7 @@ export default function SettingsScreen() {
     try {
       await exportBusinessReport();
     } catch {
-      Alert.alert('Rapport PDF', "Impossible de générer le rapport d'évolution.");
+      Alert.alert(t('Rapport PDF'), t('Impossible de générer le rapport d\'évolution.'));
     } finally {
       setBusy(false);
     }
@@ -206,14 +206,14 @@ export default function SettingsScreen() {
       openSheet('backup');
     } else if (purpose === 'biometrics') {
       const res = await setBiometricEnabled(true);
-      if (!res.success && res.error) Alert.alert('Biométrie', res.error);
+      if (!res.success && res.error) Alert.alert(t('Biométrie'), res.error);
     } else if (purpose === 'profile') {
       saveProfile();
     }
   };
 
   const handleLogout = () => {
-    Alert.alert(t('settings.logout'), 'Le code PIN sera demandé à la prochaine ouverture.', [
+    Alert.alert(t('settings.logout'), t('Le code PIN sera demandé à la prochaine ouverture.'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('settings.logout'),
@@ -232,7 +232,7 @@ export default function SettingsScreen() {
     { value: 'dark', label: t('settings.theme.dark') },
   ];
   const sizeOptions = TEXT_SIZE_PREFERENCES.map((value) => ({ value, label: t(`settings.textSize.${value}`) }));
-  const lockOptions = AUTO_LOCK_OPTIONS_MIN.map((m) => ({ value: String(m), label: `${m} min` }));
+  const lockOptions = AUTO_LOCK_OPTIONS_MIN.map((m) => ({ value: String(m), label: t('{0} min', m) }));
   const version = Constants.expoConfig?.version ?? '1.0.0';
 
   const errorBox = error ? (
@@ -277,7 +277,7 @@ export default function SettingsScreen() {
           <Avatar name={activeCollector?.fullName || 'SOL'} />
           <View style={styles.flexShrink}>
             <Text variant="bodyStrong" numberOfLines={1}>
-              {activeCollector?.fullName || 'Responsable du sol'}
+              {activeCollector?.fullName || t('Responsable du sol')}
             </Text>
             <Text variant="caption" tone="muted" numberOfLines={1}>
               {[activeCollector?.phoneNumber, activeCollector?.zone].filter(Boolean).join(' · ')}
@@ -290,13 +290,13 @@ export default function SettingsScreen() {
       {/* 3. Sécurité */}
       <SettingsGroup
         title={t('settings.security')}
-        footer="Le code de récupération est le seul moyen de choisir un nouveau PIN si vous l'oubliez."
+        footer={t('Le code de récupération est le seul moyen de choisir un nouveau PIN si vous l\'oubliez.')}
       >
         <SettingsRow label={t('settings.security.changePin')} icon="key" onPress={() => openSheet('pin')} />
         <SettingsRow
           label={t('settings.security.biometrics')}
           icon="fingerprint"
-          description={biometricAvailable ? undefined : 'Non disponible sur cet appareil'}
+          description={biometricAvailable ? undefined : t('Non disponible sur cet appareil')}
           toggle={{
             value: biometricEnabled,
             disabled: !biometricAvailable,
@@ -351,7 +351,7 @@ export default function SettingsScreen() {
       </SettingsGroup>
 
       {/* 5. Langue */}
-      <SettingsGroup title={t('settings.language')} footer="Les écrans non encore traduits restent en français.">
+      <SettingsGroup title={t('settings.language')}>
         {LANGUAGES.map((lang, i) => (
           <SettingsRow
             key={lang.code}
@@ -365,7 +365,7 @@ export default function SettingsScreen() {
       </SettingsGroup>
 
       {/* 6. Données */}
-      <SettingsGroup title={t('settings.data')} footer="Fichier .solbak chiffré en AES-256, illisible sans son mot de passe.">
+      <SettingsGroup title={t('settings.data')} footer={t('Fichier .solbak chiffré en AES-256, illisible sans son mot de passe.')}>
         <SettingsRow label={t('settings.data.backup')} icon="download" onPress={() => setPinPurpose('backup')} requiresPin />
         <SettingsRow label={t('settings.data.restore')} icon="upload" onPress={() => router.push('/restore-backup' as any)} requiresPin />
         <SettingsRow label={t('settings.data.export')} icon="printer" onPress={handleReport} value={busy && !sheet ? '…' : undefined} />
@@ -376,7 +376,7 @@ export default function SettingsScreen() {
       <SettingsGroup title={t('settings.about')}>
         <SettingsRow label={t('settings.about.version')} value={version} />
         <SettingsRow label={t('settings.about.help')} icon="help" onPress={() => openSheet('help')} />
-        <SettingsRow label="Diagnostic des données" icon="info" onPress={() => router.push('/backup-diagnostics' as any)} divider={false} />
+        <SettingsRow label={t('Diagnostic des données')} icon="info" onPress={() => router.push('/backup-diagnostics' as any)} divider={false} />
       </SettingsGroup>
 
       <SettingsGroup>
@@ -388,7 +388,7 @@ export default function SettingsScreen() {
         visible={sheet === 'profile'}
         onClose={() => setSheet(null)}
         title={t('settings.profile.edit')}
-        subtitle="Votre code PIN sera demandé pour enregistrer."
+        subtitle={t('Votre code PIN sera demandé pour enregistrer.')}
         footer={
           <Button
             size="lg"
@@ -413,25 +413,25 @@ export default function SettingsScreen() {
         visible={sheet === 'pin'}
         onClose={() => setSheet(null)}
         title={t('settings.security.changePin')}
-        subtitle="Évitez les suites (1234) et les chiffres répétés."
+        subtitle={t('Évitez les suites (1234) et les chiffres répétés.')}
         footer={<Button size="lg" fullWidth icon="key" label={t('common.save')} loading={busy} onPress={submitPinChange} />}
       >
         {errorBox}
-        <TextField label="Code PIN actuel" value={oldPin} onChangeText={setOldPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
-        <TextField label="Nouveau code PIN" value={newPin} onChangeText={setNewPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
-        <TextField label="Confirmer le nouveau code" value={confirmPin} onChangeText={setConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
+        <TextField label={t('Code PIN actuel')} value={oldPin} onChangeText={setOldPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
+        <TextField label={t('Nouveau code PIN')} value={newPin} onChangeText={setNewPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
+        <TextField label={t('Confirmer le nouveau code')} value={confirmPin} onChangeText={setConfirmPin} keyboardType="number-pad" secureTextEntry maxLength={4} />
       </BottomSheet>
 
       <BottomSheet
         visible={sheet === 'backup'}
         onClose={() => setSheet(null)}
-        title="Mot de passe de la sauvegarde"
-        subtitle="Il sera demandé pour restaurer. Il n'est enregistré nulle part : notez-le."
-        footer={<Button size="lg" fullWidth icon="download" label="Chiffrer et exporter" loading={busy} onPress={submitBackup} />}
+        title={t('Mot de passe de la sauvegarde')}
+        subtitle={t('Il sera demandé pour restaurer. Il n\'est enregistré nulle part : notez-le.')}
+        footer={<Button size="lg" fullWidth icon="download" label={t('Chiffrer et exporter')} loading={busy} onPress={submitBackup} />}
       >
         {errorBox}
-        <TextField label="Mot de passe" secureTextEntry autoCapitalize="none" value={password} onChangeText={setPassword} />
-        <TextField label="Confirmer le mot de passe" secureTextEntry autoCapitalize="none" value={confirmPassword} onChangeText={setConfirmPassword} />
+        <TextField label={t('Mot de passe')} secureTextEntry autoCapitalize="none" value={password} onChangeText={setPassword} />
+        <TextField label={t('Confirmer le mot de passe')} secureTextEntry autoCapitalize="none" value={confirmPassword} onChangeText={setConfirmPassword} />
       </BottomSheet>
 
       <BottomSheet
@@ -455,7 +455,7 @@ export default function SettingsScreen() {
           <Text variant="body">{t('settings.carnet.currency')}</Text>
           <SegmentedControl
             options={[
-              { value: 'HTG', label: '1 250 HTG' },
+              { value: 'HTG', label: t('1 250 HTG') },
               { value: 'G', label: '1 250 G' },
             ]}
             value={receipt.currencyLabel}
@@ -467,13 +467,13 @@ export default function SettingsScreen() {
           label={t('settings.carnet.receiptName')}
           value={receipt.receiptName}
           onChangeText={(receiptName) => setReceipt({ ...receipt, receiptName })}
-          placeholder={business?.name || 'Nom du carnet'}
+          placeholder={business?.name || t('Nom du carnet')}
         />
         <TextField
           label={t('settings.carnet.receiptNote')}
           value={receipt.receiptNote}
           onChangeText={(receiptNote) => setReceipt({ ...receipt, receiptNote })}
-          placeholder="Merci de votre confiance."
+          placeholder={t('Merci de votre confiance.')}
           maxLength={120}
         />
       </BottomSheet>
@@ -487,9 +487,9 @@ export default function SettingsScreen() {
           ['Changer de téléphone', 'Créez une sauvegarde chiffrée ici, puis « Restaurer une sauvegarde » sur le nouveau téléphone.'],
         ].map(([title, body]) => (
           <View key={title} style={styles.gapXs}>
-            <Text variant="bodyStrong">{title}</Text>
+            <Text variant="bodyStrong">{t(title)}</Text>
             <Text variant="body" tone="muted">
-              {body}
+              {t(body)}
             </Text>
           </View>
         ))}
@@ -497,15 +497,15 @@ export default function SettingsScreen() {
 
       <PinVerificationModal
         visible={pinPurpose !== null}
-        title="Confirmez avec votre code PIN"
+        title={t('Confirmez avec votre code PIN')}
         subtitle={
           pinPurpose === 'recovery'
-            ? "L'ancien code de récupération ne fonctionnera plus."
+            ? t('L\'ancien code de récupération ne fonctionnera plus.')
             : pinPurpose === 'backup'
-              ? 'La sauvegarde contient tout votre carnet.'
+              ? t('La sauvegarde contient tout votre carnet.')
               : pinPurpose === 'biometrics'
-                ? "L'empreinte ou le visage pourra ensuite remplacer le code PIN."
-                : 'Pour enregistrer vos informations.'
+                ? t('L\'empreinte ou le visage pourra ensuite remplacer le code PIN.')
+                : t('Pour enregistrer vos informations.')
         }
         onSuccess={onPinConfirmed}
         onCancel={() => setPinPurpose(null)}

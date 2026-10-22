@@ -4,6 +4,7 @@ import { Pressable, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { Icon } from './Icon';
 import { Text } from './Text';
+import { t } from '@/i18n';
 
 export interface PinPadProps {
   onDigit: (digit: string) => void;
@@ -41,7 +42,7 @@ export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compac
                 disabled={disabled}
                 onPress={() => (k === 'C' ? onClear() : k === 'DEL' ? onBackspace() : onDigit(k))}
                 accessibilityRole="button"
-                accessibilityLabel={k === 'DEL' ? 'Supprimer le dernier chiffre' : k === 'C' ? 'Tout effacer' : k}
+                accessibilityLabel={k === 'DEL' ? t('Supprimer le dernier chiffre') : k === 'C' ? t('Tout effacer') : k}
                 style={({ pressed }) => ({
                   flex: 1,
                   height: keyHeight,
@@ -55,9 +56,7 @@ export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compac
                 {k === 'DEL' ? (
                   <Icon name="backspace" size={22} color={colors.textMuted} />
                 ) : k === 'C' ? (
-                  <Text variant="label" tone="muted">
-                    Effacer
-                  </Text>
+                  <Text variant="label" tone="muted">{t('Effacer')}</Text>
                 ) : (
                   <Text variant="numpad">{k}</Text>
                 )}

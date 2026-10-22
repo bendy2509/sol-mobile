@@ -3,6 +3,7 @@ import { StyleProp, TextStyle } from 'react-native';
 
 import { formatCurrency } from '@/lib/formatters';
 import { Text, TextTone } from './Text';
+import { t } from '@/i18n';
 
 export type AmountSize = 'hero' | 'large' | 'medium' | 'small';
 
@@ -37,7 +38,7 @@ export function AmountText({ amount, currency, size = 'medium', tone = 'default'
       selectable
       numberOfLines={1}
       adjustsFontSizeToFit={size === 'hero' || size === 'large'}
-      accessibilityLabel={`${sign === 'debit' && !isZero ? 'moins ' : ''}${formatCurrency(Math.abs(value), currency)}`}
+      accessibilityLabel={`${sign === 'debit' && !isZero ? t('moins') + ' ' : ''}${formatCurrency(Math.abs(value), currency)}`}
       style={style}
     >
       {formatted}

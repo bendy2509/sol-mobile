@@ -5,6 +5,7 @@ import { MemberPaymentStatus } from '@/types';
 import { ThemeColors, useTheme } from '@/theme';
 import { Icon, UiIconName } from './Icon';
 import { Text } from './Text';
+import { t } from '@/i18n';
 
 /** Financial statuses + UI-only states (hand received, locked). */
 export type StatusKind = MemberPaymentStatus | 'HAND_RECEIVED' | 'LOCKED';
@@ -44,14 +45,14 @@ export function StatusBadge({ status, detail, label, appearance = 'chip', style 
   const { colors, spacing, radius } = useTheme();
   const cfg = STATUS_CONFIG[status];
   const fg = colors[cfg.fg];
-  const text = `${label ?? cfg.label}${detail ? ` · ${detail}` : ''}`;
+  const text = `${label ?? t(cfg.label)}${detail ? ` · ${detail}` : ''}`;
   const isChip = appearance === 'chip';
 
   return (
     <View
       accessible
       accessibilityRole="text"
-      accessibilityLabel={`Statut : ${text}`}
+      accessibilityLabel={t('Statut : {0}', text)}
       style={[
         {
           flexDirection: 'row',

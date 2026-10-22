@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/theme';
 import { Icon } from './Icon';
 import { Text } from './Text';
+import { t } from '@/i18n';
 
 export interface BottomSheetProps {
   visible: boolean;
@@ -41,7 +42,7 @@ export function BottomSheet({ visible, onClose, title, subtitle, children, foote
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay }}>
-          <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityRole="button" accessibilityLabel="Fermer" />
+          <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('Fermer')} />
           <Animated.View
             accessibilityViewIsModal
             style={[
@@ -79,7 +80,7 @@ export function BottomSheet({ visible, onClose, title, subtitle, children, foote
                 <Pressable
                   onPress={onClose}
                   accessibilityRole="button"
-                  accessibilityLabel="Fermer"
+                  accessibilityLabel={t('Fermer')}
                   hitSlop={4}
                   style={({ pressed }) => ({
                     width: layout.touchTarget,

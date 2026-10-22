@@ -4,6 +4,7 @@ import { DashboardMetrics } from '@/types';
 import { AmountText, Card, ProgressBar, Text } from '@/components/ui';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface DashboardHeroProps {
   metrics: DashboardMetrics;
@@ -26,8 +27,7 @@ export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProg
     <Card tone="hero" padding="lg" style={{ gap: spacing.lg }}>
       <View style={{ gap: spacing.xs }}>
         <AmountText amount={potTotal} size="hero" tone="onHero" />
-        <Text variant="body" tone="onHeroMuted">
-          Cagnotte du tour · {metrics.totalHandsExpected} mains × {formatCurrency(metrics.unitAmount)}
+        <Text variant="body" tone="onHeroMuted">{t('Cagnotte du tour · {0} mains × {1}', metrics.totalHandsExpected, formatCurrency(metrics.unitAmount))}
         </Text>
       </View>
 
@@ -36,7 +36,7 @@ export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProg
           <View
             accessible
             accessibilityRole="progressbar"
-            accessibilityLabel={`${handsTouched} main(s) remise(s) sur ${metrics.totalHandsExpected}`}
+            accessibilityLabel={t('{0} main(s) remise(s) sur {1}', handsTouched, metrics.totalHandsExpected)}
             style={{ flexDirection: 'row', gap: spacing.xs }}
           >
             {Array.from({ length: metrics.totalHandsExpected }).map((_, i) => (
@@ -52,15 +52,13 @@ export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProg
             ))}
           </View>
         ) : (
-          <ProgressBar value={cycleProgressPct / 100} tone="onHero" size="sm" accessibilityLabel="Progression du tirage" />
+          <ProgressBar value={cycleProgressPct / 100} tone="onHero" size="sm" accessibilityLabel={t('Progression du tirage')} />
         )}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: spacing.sm }}>
           <Text variant="label" tone="onHero">
-            {handsTouched} / {metrics.totalHandsExpected} mains remises
-          </Text>
+            {handsTouched} / {metrics.totalHandsExpected}{' '}{t('mains remises')}</Text>
           {metrics.endDate ? (
-            <Text variant="caption" tone="onHeroMuted">
-              Fin {formatDateShort(metrics.endDate)} · {metrics.daysRemaining} j
+            <Text variant="caption" tone="onHeroMuted">{t('Fin')}{' '}{formatDateShort(metrics.endDate)} · {metrics.daysRemaining} j
             </Text>
           ) : null}
         </View>

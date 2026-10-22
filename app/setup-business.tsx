@@ -10,6 +10,7 @@ import { triggerLightImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { AmountText, Button, Card, Icon, ListItem, Screen, SectionHeader, Text, TextField, UiIconName } from '@/components/ui';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function SetupBusinessScreen() {
   const router = useRouter();
@@ -50,30 +51,30 @@ export default function SetupBusinessScreen() {
   };
 
   const frequencyOptions: { key: PaymentFrequency; label: string; desc: string }[] = [
-    { key: 'DAILY', label: 'Quotidien', desc: 'Chaque jour ouvré' },
-    { key: 'WED_SAT', label: 'Mercredi & Samedi', desc: 'Jours de grand marché' },
-    { key: 'WEEKLY_WED', label: 'Chaque Mercredi', desc: 'Hebdomadaire (Mercredi)' },
-    { key: 'WEEKLY_SAT', label: 'Chaque Samedi', desc: 'Hebdomadaire (Samedi)' },
-    { key: '8J', label: 'Tous les 8 Jours', desc: 'Cycle traditionnel de 8 jours' },
-    { key: '15J', label: 'Quinzaine (15 Jours)', desc: 'Bimensuel / Quinzaine' },
-    { key: 'MONTHLY', label: 'Mensuel', desc: 'Chaque fin de mois' },
+    { key: 'DAILY', label: t('Quotidien'), desc: t('Chaque jour ouvré') },
+    { key: 'WED_SAT', label: t('Mercredi & Samedi'), desc: t('Jours de grand marché') },
+    { key: 'WEEKLY_WED', label: t('Chaque Mercredi'), desc: t('Hebdomadaire (Mercredi)') },
+    { key: 'WEEKLY_SAT', label: t('Chaque Samedi'), desc: t('Hebdomadaire (Samedi)') },
+    { key: '8J', label: t('Tous les 8 Jours'), desc: t('Cycle traditionnel de 8 jours') },
+    { key: '15J', label: t('Quinzaine (15 Jours)'), desc: t('Bimensuel / Quinzaine') },
+    { key: 'MONTHLY', label: t('Mensuel'), desc: t('Chaque fin de mois') },
   ];
 
   const handleSubmit = async () => {
     if (!name.trim()) {
-      Alert.alert('Nom requis', "Veuillez entrer le nom de l'activité ou du groupe.");
+      Alert.alert(t('Nom requis'), t('Veuillez entrer le nom de l\'activité ou du groupe.'));
       return;
     }
 
     const numAmount = Number(contributionAmount);
     if (isNaN(numAmount) || numAmount <= 0) {
-      Alert.alert('Montant invalide', 'Le montant de la cotisation doit être supérieur à 0.');
+      Alert.alert(t('Montant invalide'), t('Le montant de la cotisation doit être supérieur à 0.'));
       return;
     }
 
     const numSlots = parseInt(totalSlots, 10);
     if (isNaN(numSlots) || numSlots <= 0) {
-      Alert.alert('Nombre de membres invalide', 'Le nombre de participants doit être supérieur à 0.');
+      Alert.alert(t('Nombre de membres invalide'), t('Le nombre de participants doit être supérieur à 0.'));
       return;
     }
 
@@ -94,7 +95,7 @@ export default function SetupBusinessScreen() {
       triggerSuccessFeedback();
       router.replace('/(tabs)' as any);
     } catch (err: any) {
-      Alert.alert('Erreur', err?.message || "Impossible d'enregistrer la configuration.");
+      Alert.alert(t('Erreur'), err?.message || t('Impossible d\'enregistrer la configuration.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -104,8 +105,8 @@ export default function SetupBusinessScreen() {
   const estimatedPot = (Number(contributionAmount) || 0) * (parseInt(totalSlots, 10) || 0);
 
   const typeOptions: { key: BusinessType; label: string; desc: string; icon: UiIconName }[] = [
-    { key: 'SABOTAY', label: 'Sabotay', desc: "Collecte d'épargne quotidienne flexible sur le marché", icon: 'cash' },
-    { key: 'SOL', label: 'Sol (ROSCA)', desc: 'Épargne rotative avec tirage et passage de mains', icon: 'cycle' },
+    { key: 'SABOTAY', label: t('Sabotay'), desc: t("Collecte d'épargne quotidienne flexible sur le marché"), icon: 'cash' },
+    { key: 'SOL', label: t('Sol (ROSCA)'), desc: t('Épargne rotative avec tirage et passage de mains'), icon: 'cycle' },
   ];
 
   return (
@@ -119,19 +120,17 @@ export default function SetupBusinessScreen() {
             icon="check"
             loading={isSubmitting}
             disabled={isSubmitting}
-            label={isSubmitting ? 'Enregistrement…' : "Valider et lancer l'activité"}
+            label={isSubmitting ? t('Enregistrement…') : t('Valider et lancer l\'activité')}
             onPress={handleSubmit}
           />
         }
         contentStyle={styles.content}
       >
-        <Text variant="body" tone="muted">
-          Paramétrez les règles de votre carnet Sabotay ou groupe Sol pour lancer le cycle.
-        </Text>
+        <Text variant="body" tone="muted">{t('Paramétrez les règles de votre carnet Sabotay ou groupe Sol pour lancer le cycle.')}</Text>
 
         {/* Activity Type Selector */}
         <View style={styles.section}>
-          <SectionHeader title="1. Type d'activité" />
+          <SectionHeader title={t('1. Type d\'activité')} />
           <View style={[styles.typeRow, isVerySmallScreen && styles.typeColumn]}>
             {typeOptions.map((opt) => {
               const isSelected = businessType === opt.key;
@@ -139,7 +138,7 @@ export default function SetupBusinessScreen() {
                 <Card
                   key={opt.key}
                   onPress={() => handleTypeChange(opt.key)}
-                  accessibilityLabel={`${opt.label} : ${opt.desc}${isSelected ? ', sélectionné' : ''}`}
+                  accessibilityLabel={`${opt.label} : ${opt.desc}${isSelected ? t(', sélectionné') : ''}`}
                   style={[styles.typeCard, isSelected && styles.typeCardSelected]}
                 >
                   <View style={styles.typeHead}>
@@ -160,17 +159,17 @@ export default function SetupBusinessScreen() {
 
         {/* Basic Parameters */}
         <View style={styles.section}>
-          <SectionHeader title="2. Paramètres du carnet" />
+          <SectionHeader title={t('2. Paramètres du carnet')} />
           <Card style={styles.fieldsCard}>
             <TextField
-              label="Nom du groupe ou du carnet *"
-              placeholder="Ex : Sabotay Marché Cluny 2026"
+              label={t('Nom du groupe ou du carnet *')}
+              placeholder={t('Ex : Sabotay Marché Cluny 2026')}
               value={name}
               onChangeText={setName}
             />
             <TextField
-              label="Cotisation par main (HTG) *"
-              placeholder="Ex : 250"
+              label={t('Cotisation par main (HTG) *')}
+              placeholder={t('Ex : 250')}
               value={contributionAmount}
               onChangeText={setContributionAmount}
               keyboardType="numeric"
@@ -180,7 +179,7 @@ export default function SetupBusinessScreen() {
 
         {/* Frequency Options */}
         <View style={styles.section}>
-          <SectionHeader title="3. Fréquence des versements" />
+          <SectionHeader title={t('3. Fréquence des versements')} />
           <Card padding="none" style={styles.listCard}>
             {frequencyOptions.map((opt, index) => {
               const isSelected = frequency === opt.key;
@@ -192,7 +191,7 @@ export default function SetupBusinessScreen() {
                   selected={isSelected}
                   divider={index < frequencyOptions.length - 1}
                   trailing={isSelected ? <Icon name="check" size={20} color={theme.colors.primary} /> : undefined}
-                  accessibilityLabel={`${opt.label}, ${opt.desc}${isSelected ? ', sélectionné' : ''}`}
+                  accessibilityLabel={`${opt.label}, ${opt.desc}${isSelected ? t(', sélectionné') : ''}`}
                   onPress={() => {
                     triggerLightImpact();
                     setFrequency(opt.key);
@@ -205,47 +204,39 @@ export default function SetupBusinessScreen() {
 
         {/* Cycle: capacity, start date, computed end date */}
         <View style={styles.section}>
-          <SectionHeader title="4. Cycle" />
+          <SectionHeader title={t('4. Cycle')} />
           <Card style={styles.fieldsCard}>
             <TextField
-              label="Capacité initiale estimée (optionnelle)"
-              placeholder="Ex : 10"
+              label={t('Capacité initiale estimée (optionnelle)')}
+              placeholder={t('Ex : 10')}
               value={totalSlots}
               onChangeText={setTotalSlots}
               keyboardType="number-pad"
-              helper="Le nombre de mains n'est pas figé : chaque enfant inscrit ajoute les mains qu'il souscrit (ex : 3 enfants d'1 main + 1 enfant de 3 mains = 4 enfants et 6 mains)."
+              helper={t('Le nombre de mains n\'est pas figé : chaque enfant inscrit ajoute les mains qu\'il souscrit (ex : 3 enfants d\'1 main + 1 enfant de 3 mains = 4 enfants et 6 mains).')}
             />
             <TextField
-              label="Date de début du cycle *"
-              placeholder="AAAA-MM-JJ"
+              label={t('Date de début du cycle *')}
+              placeholder={t('AAAA-MM-JJ')}
               value={startDate}
               onChangeText={setStartDate}
-              helper="Format AAAA-MM-JJ"
+              helper={t('Format AAAA-MM-JJ')}
             />
           </Card>
 
           <Card tone="sunken" style={styles.computedCard}>
             <View style={styles.computedHead}>
               <Icon name="calendar" size={18} color={theme.colors.primary} />
-              <Text variant="label" tone="primary">
-                Durée du cycle et date de fin
-              </Text>
+              <Text variant="label" tone="primary">{t('Durée du cycle et date de fin')}</Text>
             </View>
-            <Text variant="heading">{estimatedDays} jours de cycle estimés</Text>
-            <Text variant="caption" tone="muted">
-              S'ajustera au nombre effectif de mains souscrites par les enfants.
-            </Text>
+            <Text variant="heading">{t('{0} jours de cycle estimés', estimatedDays)}</Text>
+            <Text variant="caption" tone="muted">{t('S\'ajustera au nombre effectif de mains souscrites par les enfants.')}</Text>
             <View style={styles.divider} />
             <View style={styles.row}>
-              <Text variant="body" tone="muted" style={styles.flexShrink}>
-                Fin prévisionnelle
-              </Text>
+              <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Fin prévisionnelle')}</Text>
               <Text variant="bodyStrong">{formatDateShort(endDate)}</Text>
             </View>
             <View style={styles.row}>
-              <Text variant="body" tone="muted" style={styles.flexShrink}>
-                Cagnotte estimée (po)
-              </Text>
+              <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Cagnotte estimée (po)')}</Text>
               <AmountText amount={estimatedPot} size="medium" tone="primary" />
             </View>
           </Card>

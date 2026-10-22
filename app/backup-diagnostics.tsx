@@ -8,6 +8,7 @@ import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface DiagnosticState {
   isHealthy: boolean;
@@ -64,7 +65,7 @@ export default function BackupDiagnosticsScreen() {
       triggerSuccessFeedback();
     } catch (err: any) {
       triggerErrorFeedback();
-      Alert.alert('Erreur Diagnostic', err?.message || 'Impossible d’inspecter la base locale.');
+      Alert.alert(t('Erreur Diagnostic'), err?.message || t('Impossible d’inspecter la base locale.'));
     } finally {
       setLoading(false);
     }
@@ -83,8 +84,8 @@ export default function BackupDiagnosticsScreen() {
       edges={['top', 'left', 'right', 'bottom']}
       header={
         <Header
-          title="Diagnostic & sauvegarde"
-          subtitle="Intégrité locale et sécurité des écritures"
+          title={t('Diagnostic & sauvegarde')}
+          subtitle={t('Intégrité locale et sécurité des écritures')}
           showBack
           showScanner={false}
           fallbackBackRoute="/(tabs)"
@@ -93,8 +94,8 @@ export default function BackupDiagnosticsScreen() {
       contentStyle={styles.content}
       footer={
         <View style={styles.footer}>
-          <Button size="lg" fullWidth icon="download" label="Sauvegarde chiffrée" onPress={() => router.push('/(tabs)/settings' as any)} />
-          <Button variant="secondary" fullWidth icon="cycle" loading={loading} disabled={loading} label="Relancer le test d'intégrité" onPress={runDiagnostics} />
+          <Button size="lg" fullWidth icon="download" label={t('Sauvegarde chiffrée')} onPress={() => router.push('/(tabs)/settings' as any)} />
+          <Button variant="secondary" fullWidth icon="cycle" loading={loading} disabled={loading} label={t('Relancer le test d\'intégrité')} onPress={runDiagnostics} />
         </View>
       }
     >
@@ -114,14 +115,14 @@ export default function BackupDiagnosticsScreen() {
           </View>
           <View style={styles.flexShrink}>
             <Text variant="subheading" tone={!diagnostics ? 'default' : diagnostics.isHealthy ? 'success' : 'danger'}>
-              {!diagnostics ? 'Vérification en cours…' : diagnostics.isHealthy ? 'Base SQLite intègre (mode WAL)' : 'Anomalie détectée'}
+              {!diagnostics ? t('Vérification en cours…') : diagnostics.isHealthy ? t('Base SQLite intègre (mode WAL)') : t('Anomalie détectée')}
             </Text>
             <Text variant="caption" tone="muted">
               {!diagnostics
-                ? 'Contrôle de la base locale.'
+                ? t('Contrôle de la base locale.')
                 : diagnostics.isHealthy
-                  ? `Vérification réussie à ${diagnostics.lastCheckTime}. Aucune corruption de bloc.`
-                  : 'La structure locale présente des incohérences.'}
+                  ? t('Vérification réussie à {0}. Aucune corruption de bloc.', diagnostics.lastCheckTime)
+                  : t('La structure locale présente des incohérences.')}
             </Text>
           </View>
         </View>
@@ -129,19 +130,19 @@ export default function BackupDiagnosticsScreen() {
 
       {/* Métriques Locales Inspectées */}
       <View style={styles.section}>
-        <SectionHeader title="Persistance locale" />
+        <SectionHeader title={t('Persistance locale')} />
         <View style={styles.grid}>
-          <MetricTile label="Adhérents enrôlés" icon="users" value={String(diagnostics?.totalClients ?? '–')} hint="Stockés sur l'appareil" style={styles.tile} />
-          <MetricTile label="Transactions" icon="history" value={String(diagnostics?.totalTransactions ?? '–')} hint="Entrées immuables" style={styles.tile} />
+          <MetricTile label={t('Adhérents enrôlés')} icon="users" value={String(diagnostics?.totalClients ?? '–')} hint={t('Stockés sur l\'appareil')} style={styles.tile} />
+          <MetricTile label={t('Transactions')} icon="history" value={String(diagnostics?.totalTransactions ?? '–')} hint={t('Entrées immuables')} style={styles.tile} />
           <MetricTile
-            label="En attente de sync"
+            label={t('En attente de sync')}
             icon="cycle"
             value={String(diagnostics?.pendingSyncCount ?? '–')}
-            hint="Transactions locales"
+            hint={t('Transactions locales')}
             tone={pending > 0 ? 'warning' : 'default'}
             style={styles.tile}
           />
-          <MetricTile label="Sécurité atomique" icon="lock" value="Active" hint="withTransactionAsync" tone="success" style={styles.tile} />
+          <MetricTile label={t('Sécurité atomique')} icon="lock" value={t('Active')} hint="withTransactionAsync" tone="success" style={styles.tile} />
         </View>
       </View>
     </Screen>

@@ -4,6 +4,7 @@ import { DashboardMetrics, FilterStatus, SortOption } from '@/types';
 import { Chip, Icon, SectionHeader } from '@/components/ui';
 import { triggerLightImpact } from '@/lib/haptics';
 import { useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface DashboardFiltersProps {
   metrics: DashboardMetrics;
@@ -31,20 +32,20 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
   const { colors, spacing, radius, layout, typography } = useTheme();
 
   const chips = [
-    { key: 'ALL' as FilterStatus, label: 'Tous', count: metrics.totalMembersCount || membersCount },
-    { key: 'PAID_TODAY' as FilterStatus, label: 'À jour', count: metrics.paidTodayCount },
-    { key: 'UNPAID_TODAY' as FilterStatus, label: 'À encaisser', count: metrics.unpaidTodayCount },
-    { key: 'OVERDUE' as FilterStatus, label: 'En retard', count: metrics.overdueMembersCount },
-    { key: 'HAND_RECEIVED' as FilterStatus, label: 'Main reçue', count: metrics.handsTouchedCount },
+    { key: 'ALL' as FilterStatus, label: t('Tous'), count: metrics.totalMembersCount || membersCount },
+    { key: 'PAID_TODAY' as FilterStatus, label: t('À jour'), count: metrics.paidTodayCount },
+    { key: 'UNPAID_TODAY' as FilterStatus, label: t('À encaisser'), count: metrics.unpaidTodayCount },
+    { key: 'OVERDUE' as FilterStatus, label: t('En retard'), count: metrics.overdueMembersCount },
+    { key: 'HAND_RECEIVED' as FilterStatus, label: t('Main reçue'), count: metrics.handsTouchedCount },
   ] as { key: FilterStatus; label: string; count: number }[];
 
   return (
     <View style={{ gap: spacing.md }}>
       <SectionHeader
-        title="Adhérents"
+        title={t('Adhérents')}
         count={filteredMembersCount !== undefined ? filteredMembersCount : membersCount}
         action={{
-          label: sort === 'PAYOUT_RANK' ? 'Tri : rang' : 'Tri : nom A-Z',
+          label: sort === 'PAYOUT_RANK' ? t('Tri : rang') : t('Tri : nom A-Z'),
           onPress: () => {
             triggerLightImpact();
             onSortChange(sort === 'PAYOUT_RANK' ? 'NAME' : 'PAYOUT_RANK');
@@ -66,15 +67,15 @@ export const DashboardFilters: React.FC<DashboardFiltersProps> = ({
         <Icon name="search" size={18} color={colors.textMuted} />
         <TextInput
           style={{ flex: 1, ...typography.body, color: colors.text, paddingVertical: spacing.sm }}
-          placeholder="Nom ou téléphone"
+          placeholder={t('Nom ou téléphone')}
           placeholderTextColor={colors.textPlaceholder}
           value={searchQuery}
           onChangeText={onSearchChange}
           returnKeyType="search"
-          accessibilityLabel="Rechercher un adhérent"
+          accessibilityLabel={t('Rechercher un adhérent')}
         />
         {searchQuery.length > 0 && (
-          <Pressable onPress={() => onSearchChange('')} hitSlop={12} accessibilityRole="button" accessibilityLabel="Effacer la recherche">
+          <Pressable onPress={() => onSearchChange('')} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('Effacer la recherche')}>
             <Icon name="close" size={18} color={colors.textMuted} />
           </Pressable>
         )}

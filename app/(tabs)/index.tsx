@@ -21,6 +21,7 @@ import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function DashboardScreen() {
   const theme = useTheme();
@@ -119,7 +120,7 @@ export default function DashboardScreen() {
   const handleInitiatePayout = (member: Member) => {
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès Lecture Seule', 'Le décaissement de la main est réservé aux gestionnaires.');
+      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement de la main est réservé aux gestionnaires.'));
       return;
     }
     triggerMediumImpact();
@@ -130,7 +131,7 @@ export default function DashboardScreen() {
 
   const handleConfirmPayoutDetails = () => {
     if (!payoutNote.trim()) {
-      Alert.alert('Justification requise', 'Veuillez saisir une note ou motif pour le déblocage de la main.');
+      Alert.alert(t('Justification requise'), t('Veuillez saisir une note ou motif pour le déblocage de la main.'));
       return;
     }
     setIsPayoutModalOpen(false);
@@ -149,12 +150,12 @@ export default function DashboardScreen() {
       );
       triggerSuccessFeedback();
       Alert.alert(
-        'Main remise',
-        `${formatCurrency(metrics.totalPotAmount)} remis à ${payoutTargetMember.fullName}. Ses cotisations continuent jusqu'à la fin du cycle.`
+        t('Main remise'),
+        t('{0} remis à {1}. Ses cotisations continuent jusqu\'à la fin du cycle.', formatCurrency(metrics.totalPotAmount), payoutTargetMember.fullName)
       );
       loadData();
     } catch (err: any) {
-      Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
+      Alert.alert(t('Erreur'), err?.message || t('Échec du décaissement.'));
     } finally {
       setPayoutTargetMember(null);
     }
@@ -166,7 +167,7 @@ export default function DashboardScreen() {
     try {
       await exportBusinessReport();
     } catch {
-      Alert.alert('Erreur', "Impossible de générer le rapport d'évolution.");
+      Alert.alert(t('Erreur'), t('Impossible de générer le rapport d\'évolution.'));
     } finally {
       setIsGeneratingReport(false);
     }
@@ -190,8 +191,8 @@ export default function DashboardScreen() {
   );
 
   const quickActions: { label: string; a11y: string; icon: UiIconName; onPress: () => void }[] = [
-    { label: 'Clôturer', a11y: 'Ouvrir la clôture de caisse du jour', icon: 'calendar', onPress: () => router.push('/closure' as any) },
-    { label: 'Inscrire', a11y: 'Inscrire un nouvel adhérent', icon: 'plus', onPress: () => router.push('/client/new' as any) },
+    { label: t('Clôturer'), a11y: t('Ouvrir la clôture de caisse du jour'), icon: 'calendar', onPress: () => router.push('/closure' as any) },
+    { label: t('Inscrire'), a11y: t('Inscrire un nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) },
   ];
 
   return (
@@ -203,20 +204,19 @@ export default function DashboardScreen() {
         <View style={[styles.topBar, isTablet && styles.listContentTablet]}>
           <View style={styles.flexShrink}>
             <Text variant="title" numberOfLines={1} accessibilityRole="header">
-              {metrics.businessName || 'SOL'}
+              {metrics.businessName || t('SOL')}
             </Text>
             <Text variant="caption" tone="muted" numberOfLines={1}>
-              {formatCurrency(metrics.unitAmount)} la main · {metrics.totalMembersCount} adhérents
-              {metrics.endDate ? ` · fin ${formatDateShort(metrics.endDate)}` : ''}
+              {t('{0} la main · {1} adhérents{2}', formatCurrency(metrics.unitAmount), metrics.totalMembersCount, metrics.endDate ? t(' · fin {0}', formatDateShort(metrics.endDate)) : '')}
             </Text>
           </View>
           <SyncBadge onSyncComplete={handleRefresh} compact />
           <ActionMenu
             title={metrics.businessName}
             items={[
-              { label: 'Rapport PDF du carnet', icon: 'printer', onPress: handleGenerateBusinessReport, disabled: isGeneratingReport },
-              { label: 'Scanner une carte', icon: 'scan', onPress: () => router.push('/scan' as any) },
-              { label: 'Gestion du cycle', icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
+              { label: t('Rapport PDF du carnet'), icon: 'printer', onPress: handleGenerateBusinessReport, disabled: isGeneratingReport },
+              { label: t('Scanner une carte'), icon: 'scan', onPress: () => router.push('/scan' as any) },
+              { label: t('Gestion du cycle'), icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
             ]}
           />
         </View>
@@ -288,14 +288,14 @@ export default function DashboardScreen() {
           ) : (
           <EmptyState
             icon={searchQuery ? 'search' : 'users'}
-            title="Aucun adhérent trouvé"
+            title={t('Aucun adhérent trouvé')}
             message={
-              searchQuery ? 'Aucun résultat ne correspond à votre recherche.' : 'Ajoutez des enfants pour démarrer la collecte et le cycle.'
+              searchQuery ? t('Aucun résultat ne correspond à votre recherche.') : t('Ajoutez des enfants pour démarrer la collecte et le cycle.')
             }
             action={
               searchQuery || isReadOnly
                 ? undefined
-                : { label: 'Nouvel adhérent', icon: 'plus', onPress: () => router.push('/client/new' as any) }
+                : { label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }
             }
           />
           )
@@ -306,9 +306,9 @@ export default function DashboardScreen() {
       <BottomSheet
         visible={isPayoutModalOpen}
         onClose={() => setIsPayoutModalOpen(false)}
-        title="Remettre la main"
-        subtitle="Cagnotte complète du tour, confirmée par votre code PIN."
-        footer={<Button size="lg" fullWidth label="Valider avec le PIN" icon="lock" onPress={handleConfirmPayoutDetails} />}
+        title={t('Remettre la main')}
+        subtitle={t('Cagnotte complète du tour, confirmée par votre code PIN.')}
+        footer={<Button size="lg" fullWidth label={t('Valider avec le PIN')} icon="lock" onPress={handleConfirmPayoutDetails} />}
       >
         <AmountText amount={metrics.totalPotAmount} size="hero" align="center" />
         {payoutTargetMember && (
@@ -316,23 +316,22 @@ export default function DashboardScreen() {
             <Avatar name={payoutTargetMember.fullName} />
             <View style={styles.flexShrink}>
               <Text variant="bodyStrong">{payoutTargetMember.fullName}</Text>
-              <Text variant="caption" tone="muted">
-                Main {payoutTargetMember.rankOrder || 1} · {payoutTargetMember.phoneNumber}
+              <Text variant="caption" tone="muted">{t('Main')}{' '}{payoutTargetMember.rankOrder || 1} · {payoutTargetMember.phoneNumber}
               </Text>
             </View>
           </View>
         )}
         <View style={styles.inputGroup}>
-          <Text variant="label">Motif</Text>
+          <Text variant="label">{t('Motif')}</Text>
           <TextInput
             style={styles.textArea}
             value={payoutNote}
             onChangeText={setPayoutNote}
-            placeholder="Ex : remise de la main, cycle 1"
+            placeholder={t('Ex : remise de la main, cycle 1')}
             placeholderTextColor={theme.colors.textPlaceholder}
             multiline
             numberOfLines={2}
-            accessibilityLabel="Motif de la remise"
+            accessibilityLabel={t('Motif de la remise')}
           />
         </View>
       </BottomSheet>
@@ -340,8 +339,8 @@ export default function DashboardScreen() {
       {/* Sensitive PIN Security Modal */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Confirmer la remise"
-        subtitle={`${formatCurrency(metrics.totalPotAmount)} pour ${payoutTargetMember?.fullName ?? ''}`}
+        title={t('Confirmer la remise')}
+        subtitle={t('{0} pour {1}', formatCurrency(metrics.totalPotAmount), payoutTargetMember?.fullName ?? '')}
         onSuccess={handlePinSuccessPayout}
         onCancel={() => setIsPinModalOpen(false)}
         onLockout={() => {
@@ -349,7 +348,7 @@ export default function DashboardScreen() {
             action: 'LOGIN_FAILURE',
             entityType: 'SYSTEM',
             entityId: payoutTargetMember?.id || 'unknown',
-            reason: `3 tentatives PIN échouées lors de la remise de main pour ${payoutTargetMember?.fullName || 'un adhérent'}.`,
+            reason: t('3 tentatives PIN échouées lors de la remise de main pour {0}.', payoutTargetMember?.fullName || 'un adhérent'),
             userId: 'c011ec70-0000-0000-0000-000000000001', // Fallback local
             userRole: 'MANAGER',
           });

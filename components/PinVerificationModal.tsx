@@ -6,6 +6,7 @@ import { Card, Icon, PinDots, PinPad, Text } from '@/components/ui';
 import { triggerLightImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 const MAX_ATTEMPTS = 3;
 
@@ -21,8 +22,8 @@ interface PinVerificationModalProps {
 
 export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   visible,
-  title = 'Confirmation de Sécurité',
-  subtitle = 'Veuillez saisir votre code PIN à 4 chiffres pour valider cette opération.',
+  title = t('Confirmation de Sécurité'),
+  subtitle = t('Veuillez saisir votre code PIN à 4 chiffres pour valider cette opération.'),
   onSuccess,
   onCancel,
   onLockout,
@@ -107,7 +108,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             if (nextFailures >= MAX_ATTEMPTS) {
               setIsLocked(true);
               setErrorMessage(
-                `Accès verrouillé — ${MAX_ATTEMPTS} tentatives incorrectes. Opération annulée par sécurité.`
+                t('Accès verrouillé — {0} tentatives incorrectes. Opération annulée par sécurité.', MAX_ATTEMPTS)
               );
               // Fermeture automatique après 2 secondes
               setTimeout(() => {
@@ -117,7 +118,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             } else {
               const remaining = MAX_ATTEMPTS - nextFailures;
               setErrorMessage(
-                `Code PIN incorrect — ${remaining} tentative${remaining > 1 ? 's' : ''} restante${remaining > 1 ? 's' : ''}.`
+                t('Code PIN incorrect — {0} tentative{1} restante{2}.', remaining, remaining > 1 ? 's' : '', remaining > 1 ? 's' : '')
               );
             }
           }
@@ -161,16 +162,16 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           <View style={styles.headerRow}>
             <View style={styles.flexShrink}>
               <Text variant="heading" accessibilityRole="header">
-                {isLocked ? 'Accès verrouillé' : title}
+                {isLocked ? t('Accès verrouillé') : title}
               </Text>
               <Text variant="caption" tone={isLocked ? 'danger' : 'muted'}>
-                {isLocked ? 'Saisie du code PIN suspendue pour votre sécurité.' : subtitle}
+                {isLocked ? t('Saisie du code PIN suspendue pour votre sécurité.') : subtitle}
               </Text>
             </View>
             <Pressable
               onPress={onCancel}
               accessibilityRole="button"
-              accessibilityLabel="Fermer"
+              accessibilityLabel={t('Fermer')}
               style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
             >
               <Icon name="close" size={22} color={theme.colors.textMuted} />
@@ -178,7 +179,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           </View>
 
           {failureCount > 0 && (
-            <View style={styles.attemptsRow} accessible accessibilityLabel={`${failureCount} tentative(s) incorrecte(s) sur ${MAX_ATTEMPTS}`}>
+            <View style={styles.attemptsRow} accessible accessibilityLabel={t('{0} tentative(s) incorrecte(s) sur {1}', failureCount, MAX_ATTEMPTS)}>
               {[1, 2, 3].map((n) => (
                 <View key={n} style={[styles.attemptDot, n <= failureCount && styles.attemptDotFailed]} />
               ))}
@@ -194,9 +195,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           {isVerifying && (
             <View style={styles.verifyingRow}>
               <ActivityIndicator size="small" color={theme.colors.primary} />
-              <Text variant="label" tone="primary">
-                Vérification…
-              </Text>
+              <Text variant="label" tone="primary">{t('Vérification…')}</Text>
             </View>
           )}
 

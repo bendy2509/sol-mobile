@@ -8,6 +8,7 @@ import { triggerLightImpact } from '@/lib/haptics';
 import { safeBack } from '@/lib/navigation';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface HeaderProps {
   title?: string;
@@ -60,7 +61,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Pressable
             onPress={handleBackPress}
             accessibilityRole="button"
-            accessibilityLabel="Retour"
+            accessibilityLabel={t('Retour')}
             style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
           >
             <Icon name="arrow-left" size={22} color={colors.text} />
@@ -69,10 +70,10 @@ export const Header: React.FC<HeaderProps> = ({
 
         <View style={styles.leftSection}>
           <Text variant={isSmallScreen ? 'subheading' : 'heading'} numberOfLines={1} accessibilityRole="header">
-            {title || 'SOL'}
+            {title || t('SOL')}
           </Text>
           <Text variant="caption" tone="muted" numberOfLines={1} ellipsizeMode="tail">
-            {subtitle || `${getFirstName()} • ${activeCollector?.zone || 'Zone Principale'}`}
+            {subtitle || `${getFirstName()} • ${activeCollector?.zone || t('Zone principale')}`}
           </Text>
         </View>
 
@@ -83,7 +84,7 @@ export const Header: React.FC<HeaderProps> = ({
             <Pressable
               onPress={handleScanPress}
               accessibilityRole="button"
-              accessibilityLabel="Scanner Code QR"
+              accessibilityLabel={t('Scanner Code QR')}
               style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
             >
               <Icon name="scan" size={22} color={colors.text} />

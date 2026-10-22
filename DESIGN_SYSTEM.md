@@ -4,7 +4,12 @@ Un outil de caisse calme : un seul bleu d'action, des fonds clairs et froids, de
 
 - **Source de vérité** : `theme/` pour les tokens et le `ThemeProvider`, `components/ui/` pour les composants.
 - **Préférences** : `lib/preferences.ts` les stocke en local (AsyncStorage) : thème, taille du texte, langue, reçus.
-- **i18n** : `i18n/`, avec FR comme référence et repli, plus Kreyòl et EN.
+- **i18n** : `i18n/`, en deux langues, français et kreyòl ayisyen, choisies dans Réglages → Langue.
+  - **Principe** : chaque texte d'écran est écrit en français et passé à `t('…')`. Le texte français sert de clé, et sa traduction kreyòl se trouve dans `i18n/ht.phrases.ts`.
+  - **Variables** : `t('{0} mains', n)`.
+  - **Dates** : elles suivent la langue (« 24 okt 2026 »).
+  - **Changement de langue** : il redessine tous les écrans sans déconnecter.
+  - **Contrôle** : `scripts/test_i18n.ts` vérifie qu'aucun texte n'est sans traduction.
 - **Catalogue de dev** : la route `/design-system`.
 
 ## Règles

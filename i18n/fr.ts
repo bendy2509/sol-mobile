@@ -1,4 +1,4 @@
-/** Français — reference dictionary. Every key must exist here; other languages fall back to it. */
+/** Français — structural ids (tabs, Réglages). Kreyòl labels live in ht.ts; screen texts use the French text itself as key (see index.tsx). */
 export const fr = {
   'tabs.home': 'Accueil',
   'tabs.collect': 'Encaisser',

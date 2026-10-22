@@ -4,13 +4,12 @@ import { View, ActivityIndicator, ColorValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/AuthContext';
 import { Icon, UiIconName } from '@/components/ui';
-import { useI18n } from '@/i18n';
+import { t } from '@/i18n';
 import { typography as fixedTypography, useTheme } from '@/theme';
 
 export default function TabLayout() {
   const { isAuthenticated, isLoading } = useAuth();
   const { colors, spacing, layout } = useTheme();
-  const { t } = useI18n();
   const insets = useSafeAreaInsets();
 
   if (isLoading) {

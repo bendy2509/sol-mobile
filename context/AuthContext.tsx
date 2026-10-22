@@ -32,6 +32,7 @@ import {
   setBiometricCollectorId,
   verifyRecoveryCode,
 } from '@/services/securityService';
+import { t } from '@/i18n';
 
 /**
  * Session of the manager. The app is fully autonomous: no administrator, no approval,
@@ -109,7 +110,7 @@ async function ensureCollectorActive(collectorId: string, status?: string): Prom
 async function failedPinResult(): Promise<AuthResult> {
   const state = await registerPinFailure();
   triggerErrorFeedback();
-  return { success: false, error: lockMessage(state) || 'Numéro de téléphone ou code PIN incorrect.' };
+  return { success: false, error: lockMessage(state) || t('Numéro de téléphone ou code PIN incorrect.') };
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -245,7 +246,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cleanPin = pin.trim();
       if (!cleanPhone || cleanPhone.length < 4 || !cleanPin || cleanPin.length !== 4) {
         triggerErrorFeedback();
-        return { success: false, error: 'Numéro de téléphone ou code PIN incorrect.' };
+        return { success: false, error: t('Numéro de téléphone ou code PIN incorrect.') };
       }
 
       // 1. FAST-PATH: Local SQLite check first (Instant < 5ms)
@@ -342,21 +343,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     } catch (err: any) {
       triggerErrorFeedback();
-      return { success: false, error: err?.message || 'Erreur lors de la connexion.' };
+      return { success: false, error: err?.message || t('Erreur lors de la connexion.') };
     }
   };
 
   const loginWithBiometrics = async (): Promise<AuthResult> => {
     const bioId = await getBiometricCollectorId();
-    if (!bioId) return { success: false, error: 'Déverrouillage biométrique non activé sur cet appareil.' };
-    const ok = await authenticateWithBiometrics('Déverrouiller SOL Mobile');
+    if (!bioId) return { success: false, error: t('Déverrouillage biométrique non activé sur cet appareil.') };
+    const ok = await authenticateWithBiometrics(t('Déverrouiller SOL Mobile'));
     if (!ok) return { success: false };
     const db = await getDatabase();
     const row = await db.getFirstAsync<{ phone_number: string }>(`SELECT phone_number FROM collectors WHERE id = ?`, [bioId]);
     const collector = row ? await getCollectorByPhone(row.phone_number) : null;
     if (!collector) {
       await setBiometricCollectorId(null);
-      return { success: false, error: 'Compte introuvable sur cet appareil. Connectez-vous avec votre code PIN.' };
+      return { success: false, error: t('Compte introuvable sur cet appareil. Connectez-vous avec votre code PIN.') };
     }
     await openSession(collector);
     return { success: true };
@@ -385,7 +386,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const normPhone = normalizePhoneNumber(data.phoneNumber);
       if (await isCollectorPhoneTaken(normPhone)) {
         triggerErrorFeedback();
-        return { success: false, error: 'Ce numéro de téléphone est déjà associé à un autre compte.' };
+        return { success: false, error: t('Ce numéro de téléphone est déjà associé à un autre compte.') };
       }
       const pinError = validateNewPin(data.pin);
       if (pinError) {
@@ -421,7 +422,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         entityType: 'BUSINESS',
         entityId: businessId,
         newData: { businessName: data.businessName, unitAmount: data.unitAmount, frequency: data.frequency },
-        reason: 'Inscription nouveau carnet SOL/Sabotay',
+        reason: t('Inscription nouveau carnet SOL/Sabotay'),
       }).catch(() => {});
 
       const recoveryCode = await createRecoveryCode(collectorId);
@@ -436,7 +437,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true, recoveryCode };
     } catch (err: any) {
       triggerErrorFeedback();
-      return { success: false, error: err?.message || "Échec de l'inscription." };
+      return { success: false, error: err?.message || t('Échec de l\'inscription.') };
     }
   };
 
@@ -444,7 +445,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const collector = await getCollectorByPhone(phone.trim());
     if (!collector || !(await verifyRecoveryCode(collector.id, recoveryCode))) {
       triggerErrorFeedback();
-      return { success: false, error: 'Numéro de téléphone ou code de récupération incorrect.' };
+      return { success: false, error: t('Numéro de téléphone ou code de récupération incorrect.') };
     }
     const pinError = validateNewPin(newPin);
     if (pinError) return { success: false, error: pinError };
@@ -457,18 +458,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       action: 'UPDATE_SECURITY',
       entityType: 'COLLECTOR',
       entityId: collector.id,
-      reason: 'Réinitialisation du PIN par code de récupération',
+      reason: t('Réinitialisation du PIN par code de récupération'),
     }).catch(() => {});
     await openSession({ ...collector, pinHash: hashPin(newPin) });
     return { success: true };
   };
 
   const changePin = async (currentPin: string, newPin: string): Promise<AuthResult> => {
-    if (!(await verifyPin(currentPin))) return { success: false, error: 'Code PIN actuel incorrect.' };
+    if (!(await verifyPin(currentPin))) return { success: false, error: t('Code PIN actuel incorrect.') };
     const pinError = validateNewPin(newPin);
     if (pinError) return { success: false, error: pinError };
     const collector = activeCollector || (await getActiveCollector());
-    if (!collector) return { success: false, error: 'Session expirée.' };
+    if (!collector) return { success: false, error: t('Session expirée.') };
     const db = await getDatabase();
     await db.runAsync(`UPDATE collectors SET pin_hash = ?, sync_status = 'PENDING' WHERE id = ?`, [hashPin(newPin), collector.id]);
     recordAuditLog({
@@ -477,7 +478,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       action: 'UPDATE_SECURITY',
       entityType: 'COLLECTOR',
       entityId: collector.id,
-      reason: 'Modification du code PIN',
+      reason: t('Modification du code PIN'),
     }).catch(() => {});
     await refreshSession();
     triggerSuccessFeedback();
@@ -486,7 +487,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const regenerateRecoveryCode = async (): Promise<string> => {
     const collector = activeCollector || (await getActiveCollector());
-    if (!collector) throw new Error('Session expirée.');
+    if (!collector) throw new Error(t('Session expirée.'));
     const code = await createRecoveryCode(collector.id);
     recordAuditLog({
       userId: collector.id,
@@ -494,7 +495,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       action: 'UPDATE_SECURITY',
       entityType: 'COLLECTOR',
       entityId: collector.id,
-      reason: 'Nouveau code de récupération',
+      reason: t('Nouveau code de récupération'),
     }).catch(() => {});
     return code;
   };
@@ -506,13 +507,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     }
     if (!(await isBiometricAvailable())) {
-      return { success: false, error: "Aucune empreinte ou reconnaissance faciale n'est configurée sur ce téléphone." };
+      return { success: false, error: t('Aucune empreinte ou reconnaissance faciale n\'est configurée sur ce téléphone.') };
     }
-    if (!(await authenticateWithBiometrics('Confirmer pour activer le déverrouillage biométrique'))) {
-      return { success: false, error: 'Vérification biométrique annulée.' };
+    if (!(await authenticateWithBiometrics(t('Confirmer pour activer le déverrouillage biométrique')))) {
+      return { success: false, error: t('Vérification biométrique annulée.') };
     }
     const collector = activeCollector || (await getActiveCollector());
-    if (!collector) return { success: false, error: 'Session expirée.' };
+    if (!collector) return { success: false, error: t('Session expirée.') };
     await setBiometricCollectorId(collector.id);
     await loadSecurityPrefs();
     return { success: true };
