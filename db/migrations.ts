@@ -203,7 +203,34 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 6,
+    name: 'cleanup',
+    // - Cash closures remember their carnet (rows written before this stay NULL: unknown).
+    // - The sol_groups / sol_group_members tables were never used by any screen (a sol is a
+    //   business_config with its clients). They are dropped when both are empty, kept otherwise.
+    async up(db) {
+      await addColumn(db, 'cash_closures', 'business_id', 'business_id TEXT');
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS idx_cash_closures_business ON cash_closures(business_id)`);
+
+      // The two tables go together: both are dropped only when both are empty
+      const legacy: string[] = [];
+      let rows = 0;
+      for (const table of ['sol_group_members', 'sol_groups']) {
+        const exists = await db.getFirstAsync(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [table]);
+        if (!exists) continue;
+        legacy.push(table);
+        const row = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`);
+        rows += Number(row?.n || 0);
+      }
+      if (rows > 0) return LEGACY_TABLES_KEPT_WARNING;
+      for (const table of legacy) await db.execAsync(`DROP TABLE ${table}`);
+    },
+  },
 ];
+
+/** Warning recorded by migration 6 when an unused legacy table still holds rows. */
+export const LEGACY_TABLES_KEPT_WARNING = 'Anciennes tables de groupes non vides : conservées, à vérifier.';
 
 /** Warning recorded by migration 3 when operations share an idempotency key. */
 export const DUPLICATE_KEYS_WARNING = "Opérations en double détectées : index unique non créé, à vérifier.";

@@ -1,7 +1,7 @@
 // Node built-ins without @types/node (the app's tsconfig has no Node types)
 declare const require: (id: string) => any;
 
-import { LATEST_SCHEMA_VERSION, Migration, MigrationDb, MIGRATIONS, runVersionedMigrations } from '../db/migrations';
+import { LATEST_SCHEMA_VERSION, LEGACY_TABLES_KEPT_WARNING, Migration, MigrationDb, MIGRATIONS, runVersionedMigrations } from '../db/migrations';
 
 const { DatabaseSync } = require('node:sqlite');
 
@@ -50,6 +50,10 @@ function legacySchema(db: { raw: any }) {
     CREATE TABLE clients (id TEXT PRIMARY KEY, collector_id TEXT NOT NULL, full_name TEXT NOT NULL, phone_number TEXT NOT NULL, type TEXT DEFAULT 'SABOTAY', daily_amount REAL DEFAULT 0, current_balance REAL DEFAULT 0, qr_code_token TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL, sync_status TEXT DEFAULT 'PENDING');
     CREATE TABLE transactions (id TEXT PRIMARY KEY, client_id TEXT NOT NULL, collector_id TEXT NOT NULL, sol_group_id TEXT, amount REAL NOT NULL, type TEXT NOT NULL, created_at_local TEXT NOT NULL, synced_at TEXT, sync_status TEXT DEFAULT 'PENDING');
     CREATE TABLE deleted_clients (id TEXT PRIMARY KEY, collector_id TEXT, deleted_at TEXT NOT NULL, sync_status TEXT DEFAULT 'PENDING');
+    CREATE TABLE cash_closures (id TEXT PRIMARY KEY, collector_id TEXT NOT NULL, closure_date TEXT NOT NULL, total_cash_declared REAL NOT NULL, total_system_calculated REAL NOT NULL, discrepancy_reason TEXT, status TEXT DEFAULT 'SUBMITTED', created_at TEXT NOT NULL);
+    CREATE TABLE sol_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, contribution_amount REAL NOT NULL, frequency TEXT NOT NULL, total_rounds INTEGER NOT NULL, current_round INTEGER DEFAULT 1, status TEXT DEFAULT 'ACTIVE', created_at TEXT NOT NULL);
+    CREATE TABLE sol_group_members (id TEXT PRIMARY KEY, sol_group_id TEXT NOT NULL, client_id TEXT NOT NULL, payout_rank INTEGER NOT NULL, has_paid INTEGER DEFAULT 0);
+    INSERT INTO cash_closures VALUES ('cc1', 'c1', '2026-01-02', 250, 250, NULL, 'SUBMITTED', '2026-01-02T22:00:00Z');
     INSERT INTO collectors VALUES ('c1', 'Jean', '+50937000000', 'h', '2026-01-01', 'PENDING_APPROVAL');
     INSERT INTO clients (id, collector_id, full_name, phone_number, qr_code_token, created_at) VALUES ('k1', 'c1', 'Marie', '+509', 'Q1', '2026-01-01');
     INSERT INTO transactions VALUES ('t1', 'k1', 'c1', NULL, 250, 'CONTRIBUTION', '2026-01-02T10:00:00Z', NULL, 'SYNCED');
@@ -87,6 +91,14 @@ const throws = async (fn: () => Promise<unknown>, part: string) => {
   assert((await db.getFirstAsync<{ status: string }>('SELECT status FROM collectors'))?.status === 'ACTIVE', 'Pending managers become active');
   const amounts = (await db.getAllAsync<{ amount: number }>('SELECT amount FROM transactions ORDER BY id')).map((r) => r.amount);
   assert(amounts[0] === 250 && amounts[1] === 1000, 'No amount changed by the upgrade');
+
+  // Phase 6 cleanup
+  const ccCols = new Set((await db.getAllAsync<{ name: string }>('PRAGMA table_info(cash_closures)')).map((r) => r.name));
+  assert(ccCols.has('business_id'), 'Cash closures gain a business_id column');
+  const oldClosure = await db.getFirstAsync<{ business_id: string | null; total_cash_declared: number }>(`SELECT business_id, total_cash_declared FROM cash_closures WHERE id = 'cc1'`);
+  assert(oldClosure?.business_id === null && oldClosure.total_cash_declared === 250, 'Existing closures are kept, their carnet left unknown (NULL)');
+  const legacy = await db.getAllAsync(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('sol_groups', 'sol_group_members')`);
+  assert(legacy.length === 0, 'Empty unused sol_groups tables are dropped');
 
   // 2. Running again changes nothing
   const again = await runVersionedMigrations(db);
@@ -154,6 +166,17 @@ const throws = async (fn: () => Promise<unknown>, part: string) => {
   assert(dupReport.to === LATEST_SCHEMA_VERSION && warning.includes('en double'), 'Existing duplicates raise a warning and the chain continues');
   const kept = await dupDb.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM transactions WHERE idempotency_key = 'dup'`);
   assert(Number(kept?.n) === 2, 'Duplicate operations are kept for the manager to check');
+
+  // 6b. Unused tables that still hold rows are kept, with a warning
+  const keepDb = open();
+  legacySchema(keepDb);
+  keepDb.raw.exec(`INSERT INTO sol_groups VALUES ('g1', 'Ancien', 250, 'DAILY', 4, 1, 'ACTIVE', 'now')`);
+  const keepReport = await runVersionedMigrations(keepDb);
+  const keptTables = await keepDb.getAllAsync(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('sol_groups', 'sol_group_members')`);
+  assert(
+    keepReport.to === LATEST_SCHEMA_VERSION && keepReport.applied.find((a) => a.version === 6)?.warning === LEGACY_TABLES_KEPT_WARNING && keptTables.length === 2,
+    'Non-empty legacy tables are kept and reported'
+  );
 
   // 7. A failing migration rolls back and stops the chain
   const failDb = open();

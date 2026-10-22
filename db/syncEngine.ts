@@ -1,7 +1,7 @@
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { SyncState } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
-import { markClientsSynced, markTransactionsSynced } from './transactionRepo';
+import { markClientsSynced, markTransactionsSynced } from './transactionRepository';
 
 type SyncSubscriber = (state: SyncState) => void;
 
@@ -232,9 +232,6 @@ class SyncEngine {
         for (const del of pendingDeletions) {
           try {
             await supabase.from('transactions').delete().eq('client_id', del.id);
-            try {
-              await supabase.from('sol_group_members').delete().eq('client_id', del.id);
-            } catch {}
             let delError;
             if (del.qr_code_token) {
               const res = await supabase.from('clients').delete().or(`id.eq.${del.id},qr_code_token.eq.${del.qr_code_token}`);

@@ -812,4 +812,5 @@ export const htPhrases: Record<string, string> = {
   'Pas de migrations sur le web': 'Pa gen migrasyon sou web la',
   'Mise à jour au prochain démarrage': 'Mizajou nan pwochen demaraj la',
   'Opérations en double détectées : index unique non créé, à vérifier.': 'Gen operasyon an double : endèks inik la pa kreye, fòk ou verifye.',
+  'Anciennes tables de groupes non vides : conservées, à vérifier.': 'Ansyen tab gwoup yo pa vid : yo kenbe yo, fòk ou verifye.',
 };
