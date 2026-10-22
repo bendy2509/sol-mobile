@@ -1,4 +1,5 @@
 import { parseInsert, splitTopLevel } from '../db/sqlInsertParser';
+import { localDateString } from '../lib/dates';
 import {
   DEMO_BUSINESS_NAME,
   DEMO_CLIENT_IDS,
@@ -95,6 +96,10 @@ assert(tx?.values.note === 'Dépôt, initial' && tx?.values.sync_status === null
 assert(splitTopLevel("a, 'b, c', COALESCE(x, 1)").length === 3, 'Commas inside quotes and parentheses do not split');
 assert(parseInsert("INSERT INTO t (a) VALUES ('it''s')")?.values.a === "it's", "Escaped quotes ('') are unescaped");
 assert(parseInsert('INSERT INTO t VALUES (?, ?)', [1, 2]) === null, 'No column list: positional fallback (null)');
+
+// 4. Calendar days are local, not UTC
+assert(localDateString(new Date(2026, 9, 22, 21, 30)) === '2026-10-22', 'A closure at 21:30 is dated the same day (local), not the next UTC day');
+assert(localDateString(new Date(2026, 0, 5, 0, 5)) === '2026-01-05', 'Just after midnight is the new local day, zero-padded');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);

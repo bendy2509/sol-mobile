@@ -23,8 +23,6 @@ interface WebTableStore {
   collectors: any[];
   business_configs: any[];
   clients: any[];
-  sol_groups: any[];
-  sol_group_members: any[];
   transactions: any[];
   cash_closures: any[];
   audit_logs: any[];
@@ -44,8 +42,6 @@ class WebSQLiteAdapter {
     collectors: [],
     business_configs: [],
     clients: [],
-    sol_groups: [],
-    sol_group_members: [],
     transactions: [],
     cash_closures: [],
     audit_logs: [],
@@ -646,27 +642,6 @@ async function initDatabaseInternal(db: any): Promise<void> {
       sync_status TEXT DEFAULT 'PENDING'
     );
 
-    CREATE TABLE IF NOT EXISTS sol_groups (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      contribution_amount REAL NOT NULL,
-      frequency TEXT NOT NULL,
-      total_rounds INTEGER NOT NULL,
-      current_round INTEGER DEFAULT 1,
-      status TEXT DEFAULT 'ACTIVE',
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS sol_group_members (
-      id TEXT PRIMARY KEY,
-      sol_group_id TEXT NOT NULL,
-      client_id TEXT NOT NULL,
-      payout_rank INTEGER NOT NULL,
-      has_paid INTEGER DEFAULT 0,
-      UNIQUE(sol_group_id, payout_rank),
-      UNIQUE(sol_group_id, client_id)
-    );
-
     CREATE TABLE IF NOT EXISTS transactions (
       id TEXT PRIMARY KEY,
       client_id TEXT NOT NULL,
@@ -690,6 +665,7 @@ async function initDatabaseInternal(db: any): Promise<void> {
     CREATE TABLE IF NOT EXISTS cash_closures (
       id TEXT PRIMARY KEY,
       collector_id TEXT NOT NULL,
+      business_id TEXT,
       closure_date TEXT NOT NULL,
       total_cash_declared REAL NOT NULL,
       total_system_calculated REAL NOT NULL,

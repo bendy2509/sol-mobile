@@ -27,6 +27,14 @@ La refonte n'a pas touché `db/`. Chaque phase ci-dessous se fait sur sa propre 
   Tests : `scripts/test_migrations.ts`, 27/27, sur un vrai SQLite.
   **Écart avec le plan :** les clés étrangères ne sont pas déclarées. Il faudrait reconstruire les tables, ce qui échouerait sur des lignes anciennes, et la restauration d'une sauvegarde insère les opérations avant la liste des adhérents supprimés. Les triggers couvrent les contrôles sans ce risque.
 
+- **PR 4, livrée sur `chore/db-nettoyage` (phase 6) :**
+  - migration v6 : les tables `sol_groups` et `sol_group_members` sont supprimées si elles sont vides, et conservées avec un avertissement sinon. `cash_closures.business_id` est ajoutée et remplie pour les nouvelles clôtures ; les anciennes restent à NULL, carnet inconnu.
+  - Code mort retiré : `db/solRepository.ts`, `db/transactionRepo.ts`, les types `SolGroup` et l'export de la sauvegarde. Les anciennes sauvegardes qui contiennent ces tables se restaurent toujours.
+  - Convention de dates définie dans `lib/dates.ts` : horodatages en UTC (ISO), jours calendaires en heure locale. La date de clôture est désormais le jour local. Avant, une clôture faite après 20 h à Haïti était datée du lendemain.
+  - **Reporté en phase 4 :** le calcul de la date du jour dans les statuts des adhérents. Il est encore en UTC, mais de façon cohérente des deux côtés de chaque comparaison. Le passer en heure locale demande de toucher aux règles financières, sous leurs tests.
+
+  Tests : migrations 31/31, démo et dates 23/23.
+
 ## Résumé par priorité
 
 | # | Phase | Pourquoi | Effort | Risque |

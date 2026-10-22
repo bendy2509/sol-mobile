@@ -600,9 +600,6 @@ export async function deleteClient(clientId: string): Promise<void> {
   if (isCloudSyncActive) {
     try {
       await supabase.from('transactions').delete().eq('client_id', clientId);
-      try {
-        await supabase.from('sol_group_members').delete().eq('client_id', clientId);
-      } catch {}
       let delError;
       if (token) {
         const res = await supabase.from('clients').delete().or(`id.eq.${clientId},qr_code_token.eq.${token}`);

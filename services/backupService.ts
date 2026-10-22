@@ -24,7 +24,6 @@ const TABLES: { name: string; where: string }[] = [
   { name: 'cash_closures', where: 'collector_id = ?' },
   { name: 'closed_cycles', where: 'collector_id = ?' },
   { name: 'deleted_clients', where: 'collector_id = ?' },
-  { name: 'sol_group_members', where: 'client_id IN (SELECT id FROM clients WHERE collector_id = ?)' },
 ];
 
 interface BackupPayload {

@@ -261,9 +261,6 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
       if (isCloudSyncActive) {
         try {
           await supabase.from('transactions').delete().eq('client_id', ec.id);
-          try {
-            await supabase.from('sol_group_members').delete().eq('client_id', ec.id);
-          } catch {}
           if (ec.qr_code_token) {
             await supabase.from('clients').delete().or(`id.eq.${ec.id},qr_code_token.eq.${ec.qr_code_token}`);
           } else {

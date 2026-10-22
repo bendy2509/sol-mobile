@@ -138,27 +138,6 @@ export interface Member extends MemberChild {
 
 export type Client = Member;
 
-export interface SolGroup {
-  id: string; // UUIDv4
-  name: string;
-  contributionAmount: number;
-  frequency: string;
-  totalRounds: number;
-  currentRound: number;
-  status: 'ACTIVE' | 'COMPLETED' | 'PENDING';
-  createdAt: string;
-  members?: SolGroupMember[];
-}
-
-export interface SolGroupMember {
-  id: string; // UUIDv4
-  solGroupId: string;
-  clientId: string;
-  payoutRank: number;
-  hasPaid: boolean;
-  client?: Member;
-}
-
 export interface LocalTransaction {
   id: string; // UUIDv4
   memberId: string;

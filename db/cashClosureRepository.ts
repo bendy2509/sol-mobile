@@ -1,7 +1,8 @@
 import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { CashClosure } from '@/types';
-import { getActiveCollectorId, getDatabase } from './sqlite';
+import { localDateString } from '@/lib/dates';
+import { getActiveBusinessId, getActiveCollectorId, getDatabase } from './sqlite';
 import { getTodayStats } from './transactionRepository';
 
 export async function createCashClosure(data: {
@@ -13,17 +14,20 @@ export async function createCashClosure(data: {
   const collectorId = data.collectorId || (await getActiveCollectorId());
   const id = uuidv4();
   const now = new Date().toISOString();
-  const todayIsoDate = now.split('T')[0];
+  // The manager's calendar day (the UTC day already reads « tomorrow » from 20:00 in Haiti)
+  const todayIsoDate = localDateString();
+  const businessId = await getActiveBusinessId();
 
   const todayStats = await getTodayStats(collectorId);
   const totalSystemCalculated = todayStats.totalCollectedToday;
 
   await db.runAsync(
-    `INSERT INTO cash_closures (id, collector_id, closure_date, total_cash_declared, total_system_calculated, discrepancy_reason, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'SUBMITTED', ?)`,
+    `INSERT INTO cash_closures (id, collector_id, business_id, closure_date, total_cash_declared, total_system_calculated, discrepancy_reason, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'SUBMITTED', ?)`,
     [
       id,
       collectorId,
+      businessId,
       todayIsoDate,
       data.totalCashDeclared,
       totalSystemCalculated,
