@@ -6,21 +6,22 @@ import { Theme, useTheme } from '@/theme';
 import { Icon, UiIconName } from './Icon';
 import { Text } from './Text';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
+/** inverse = ink button (high-contrast action on a tinted surface). */
+export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'inverse';
 export type ButtonSize = 'md' | 'lg';
 
 export interface ButtonProps {
   label: string;
   onPress?: () => void;
   variant?: ButtonVariant;
-  /** md = 48dp (default), lg = 56dp main action in the thumb zone. */
+  /** md = 44dp (default), lg = 48dp main action in the thumb zone. */
   size?: ButtonSize;
   icon?: UiIconName;
   iconPosition?: 'left' | 'right';
   loading?: boolean;
   disabled?: boolean;
   /**
-   * Locked state (e.g. closed-cycle transaction, admin-only action):
+   * Locked state (e.g. preset beyond the cycle cap):
    * dashed outline + lock icon, not pressable, `lockedLabel` replaces the label.
    */
   locked?: boolean;
@@ -38,9 +39,11 @@ function variantColors(theme: Theme, variant: ButtonVariant, pressed: boolean) {
     case 'primary':
       return { bg: pressed ? c.primaryPressed : c.primary, fg: c.onPrimary, border: 'transparent' };
     case 'secondary':
-      return { bg: pressed ? c.surfacePressed : c.surface, fg: c.text, border: c.borderStrong };
+      return { bg: pressed ? c.surfacePressed : c.surfaceAlt, fg: c.text, border: 'transparent' };
     case 'danger':
-      return { bg: pressed ? c.dangerLine : c.dangerSoft, fg: c.danger, border: c.dangerLine };
+      return { bg: pressed ? c.dangerLine : c.dangerSoft, fg: c.danger, border: 'transparent' };
+    case 'inverse':
+      return { bg: pressed ? c.textMuted : c.text, fg: c.textInverse, border: 'transparent' };
     case 'ghost':
       return { bg: pressed ? c.surfacePressed : 'transparent', fg: c.link, border: 'transparent' };
   }
@@ -86,7 +89,7 @@ export function Button({
         const v = variantColors(theme, variant, pressed && !inactive);
         const base: ViewStyle = {
           minHeight: height,
-          paddingHorizontal: size === 'lg' ? spacing.xl : spacing.md,
+          paddingHorizontal: size === 'lg' ? spacing.xl : spacing.lg,
           borderRadius: radius.md,
           borderCurve: 'continuous',
           borderWidth: 1,
@@ -102,7 +105,7 @@ export function Button({
           return [base, { backgroundColor: colors.lockedSoft, borderColor: colors.lockedLine, borderStyle: 'dashed' }, style];
         }
         if (disabled) {
-          return [base, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }, style];
+          return [base, { backgroundColor: colors.surfaceAlt, borderColor: 'transparent' }, style];
         }
         return [base, style];
       }}
@@ -117,7 +120,7 @@ export function Button({
             ) : locked ? (
               <Icon name="lock" size={18} color={fg} />
             ) : icon ? (
-              <Icon name={icon} size={size === 'lg' ? 22 : 18} color={fg} />
+              <Icon name={icon} size={size === 'lg' ? 20 : 18} color={fg} />
             ) : null}
             <View style={{ flexShrink: 1 }}>
               <Text variant={size === 'lg' ? 'buttonLarge' : 'button'} style={{ color: fg }} numberOfLines={2} align="center">

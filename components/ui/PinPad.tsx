@@ -4,13 +4,14 @@ import { Pressable, View } from 'react-native';
 import { useTheme } from '@/theme';
 import { Icon } from './Icon';
 import { Text } from './Text';
+import { t } from '@/i18n';
 
 export interface PinPadProps {
   onDigit: (digit: string) => void;
   onBackspace: () => void;
   onClear: () => void;
   disabled?: boolean;
-  /** 52dp keys instead of 64dp (short screens, dialogs). */
+  /** 44dp keys instead of 48dp (short screens). */
   compact?: boolean;
 }
 
@@ -22,12 +23,12 @@ const ROWS = [
 ];
 
 /**
- * Numeric keypad for phone numbers and PINs. Large keys for one-handed field use.
+ * Numeric keypad for phone numbers and PINs. Flat 48dp keys, one-handed use.
  * Haptic feedback stays in the screen handlers (they already trigger it).
  */
 export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compact = false }: PinPadProps) {
   const { colors, spacing, radius, layout } = useTheme();
-  const keyHeight = compact ? layout.touchTarget + spacing.xs : layout.actionHeight + spacing.sm;
+  const keyHeight = compact ? layout.touchTarget : layout.actionHeight;
 
   return (
     <View style={{ gap: spacing.sm, opacity: disabled ? 0.6 : 1 }}>
@@ -41,7 +42,7 @@ export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compac
                 disabled={disabled}
                 onPress={() => (k === 'C' ? onClear() : k === 'DEL' ? onBackspace() : onDigit(k))}
                 accessibilityRole="button"
-                accessibilityLabel={k === 'DEL' ? 'Supprimer le dernier chiffre' : k === 'C' ? 'Tout effacer' : k}
+                accessibilityLabel={k === 'DEL' ? t('Supprimer le dernier chiffre') : k === 'C' ? t('Tout effacer') : k}
                 style={({ pressed }) => ({
                   flex: 1,
                   height: keyHeight,
@@ -49,17 +50,13 @@ export function PinPad({ onDigit, onBackspace, onClear, disabled = false, compac
                   borderCurve: 'continuous',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  backgroundColor: pressed ? colors.surfacePressed : isAction ? colors.surfaceAlt : colors.surface,
+                  backgroundColor: pressed ? colors.surfacePressed : isAction ? 'transparent' : colors.surfaceAlt,
                 })}
               >
                 {k === 'DEL' ? (
-                  <Icon name="backspace" size={24} color={colors.textMuted} />
+                  <Icon name="backspace" size={22} color={colors.textMuted} />
                 ) : k === 'C' ? (
-                  <Text variant="subheading" tone="muted">
-                    Effacer
-                  </Text>
+                  <Text variant="label" tone="muted">{t('Effacer')}</Text>
                 ) : (
                   <Text variant="numpad">{k}</Text>
                 )}

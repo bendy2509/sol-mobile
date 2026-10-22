@@ -1,125 +1,126 @@
-# Design system — SOL Mobile (Direction A « Registre »)
+# Design system — SOL Mobile (Direction A « Registre sobre »)
 
-Le carnet officiel, version numérique : bleu national en signature, fonds clairs et froids, chiffres alignés comme dans un livre de comptes.
+Un outil de caisse calme : un seul bleu d'action, des fonds clairs et froids, des chiffres tabulaires et un seul montant héros par écran. Le bleu et le rouge du drapeau restent des accents de marque : le logo, le liseré de connexion et les reçus.
 
-- **Source de vérité** : `theme/` (tokens) et `components/ui/` (composants de base).
-- **Catalogue vivant** : la route `/design-system`, disponible en développement uniquement, montre chaque composant en clair et en sombre.
-- **Planches de référence** : https://claude.ai/artifact/56Dy5h9g22QPhxCyiyd6ar
+- **Source de vérité** : `theme/` pour les tokens et le `ThemeProvider`, `components/ui/` pour les composants.
+- **Préférences** : `lib/preferences.ts` les stocke en local (AsyncStorage) : thème, taille du texte, langue, reçus.
+- **i18n** : `i18n/`, en deux langues, français et kreyòl ayisyen, choisies dans Réglages → Langue.
+  - **Principe** : chaque texte d'écran est écrit en français et passé à `t('…')`. Le texte français sert de clé, et sa traduction kreyòl se trouve dans `i18n/ht.phrases.ts`.
+  - **Variables** : `t('{0} mains', n)`.
+  - **Dates** : elles suivent la langue (« 24 okt 2026 »).
+  - **Changement de langue** : il redessine tous les écrans sans déconnecter.
+  - **Contrôle** : `scripts/test_i18n.ts` vérifie qu'aucun texte n'est sans traduction.
+- **Catalogue de dev** : la route `/design-system`.
 
-## Règles d'or
+## Règles
 
-1. **Aucune couleur, taille ou espacement codé en dur** dans `app/` ni dans `components/` : tout passe par `useTheme()` ou par les composants `ui/`. Seules exceptions : `theme/` et `services/pdfService.ts`.
-2. **Les montants sont les héros** : toujours `<AmountText>`, avec des chiffres tabulaires. Un zéro reste neutre, sans signe ni rouge.
-3. **Un statut = couleur + icône + libellé**, toujours via `<StatusBadge>`. Le vocabulaire est fixé dans `STATUS_CONFIG` : ne pas réinventer de libellé écran par écran.
-4. **Rouge haïtien `#D21034`** : réservé au liseré bicolore et aux documents officiels, **jamais pour un statut**. Les erreurs et retards utilisent `danger` (orange brûlé `#B83A0B`).
-5. **Le terrain d'abord** :
-   - texte ≥ 14 ;
-   - cibles tactiles ≥ 48 dp ;
-   - action principale en bas de l'écran, dans la zone du pouce (`<Screen footer>` + `<Button size="lg">`) ;
-   - contraste AA minimum.
-6. **Hors ligne** : police embarquée (`assets/fonts/`, licence OFL), icônes SVG locales. Aucune ressource réseau au runtime.
-7. **Android bas de gamme** : pas de flou ni de verre, ombres légères (bordures d'abord), pas d'animation dans les listes. `ListItem` est mémoïsé.
+1. **Pas de hex ni de `fontSize` dans `app/` ni dans `components/`.** Tout passe par `useTheme()` ou par les composants `ui/`. Les exceptions sont `theme/` et `services/pdfService.ts`.
+2. **Un héros par écran.** Il s'affiche avec `<AmountText size="hero">` (30) sur une `Card tone="hero"`, qui est une surface simple et non un bloc coloré. Un zéro reste neutre.
+3. **Un écran = une intention.**
+   - Il y a une seule action principale, en bas de l'écran ou dans la feuille.
+   - Les actions secondaires vont dans `<ActionMenu>` (⋯ → bottom sheet).
+   - Les actions rapides passent par `<BottomSheet>` : encaisser, remettre, détail, annulation.
+4. **Statut = couleur + icône + libellé**, via `<StatusBadge>` et `STATUS_CONFIG`.
+5. **Les couleurs du drapeau ne servent jamais d'interface.** `#00209F` et `#D21034` ne s'utilisent que dans `brand.*` (logo, reçus). Le rouge n'est jamais une erreur : les erreurs utilisent `danger`, un orange brûlé.
+6. **Tailles.**
+   - Corps 15, légendes et sous-titres 13, titres d'écran 21, montant héros 30.
+   - Boutons 44 (`md`) et 48 (`lg`), touches du pavé 48 (44 en compact).
+   - Cibles tactiles d'au moins 44, lignes de liste d'au moins 56.
+7. **Taille du texte.** Les choix Petite, Normale et Grande appliquent un facteur de 0,92, 1 ou 1,14 à toute l'échelle. La taille système s'ajoute par-dessus via `allowFontScaling`, plafonnée par `maxFontSizeMultiplier` à 1,6.
+8. **Hors ligne et Android bas de gamme.**
+   - Public Sans et les icônes SVG sont embarquées.
+   - Pas de flou ; seules deux animations existent, la translation de la feuille et la pulsation des squelettes, toutes deux en driver natif.
+   - Les `FlatList` sont optimisées (`windowSize`, `removeClippedSubviews`).
+9. **États.** Chaque écran gère quatre états :
+   - squelettes (`ListSkeleton`) au premier chargement ;
+   - `EmptyState` avec une action ;
+   - erreurs dans une `Card tone="danger"` ;
+   - succès dans la feuille elle-même, avec un retour haptique.
 
 ## Couleurs (`theme/colors.ts`)
 
 | Rôle | Clair | Sombre | Usage |
 |---|---|---|---|
-| `primary` | `#00209F` | `#8EA0FF` | Actions principales, liens, rang actif |
-| `hero` / `onHero` | `#00209F` / `#FFFFFF` | `#14247A` / `#FFFFFF` | Bandeau cagnotte |
-| `background` | `#F4F5F8` | `#0E1322` | Fond d'écran |
-| `surface` / `surfaceAlt` | `#FFFFFF` / `#EEF0F4` | `#171E31` / `#1E2740` | Cartes / zones en creux |
-| `border` / `borderStrong` | `#E3E6EC` / `#C5CBD8` | `#2A3450` / `#3A4566` | Filets |
-| `text` / `textMuted` | `#141B2D` / `#4A5368` | `#EEF1F8` / `#A8B0C4` | Texte (les deux passent AA) |
-| `success` | `#0B6E47` | `#4CC38A` | Payé, main reçue |
-| `advance` | `#0F6B66` | `#4FC1B8` | En avance |
-| `warning` | `#8A5300` | `#F0B45A` | À encaisser |
-| `danger` | `#B83A0B` | `#FF8A5C` | En retard, annulation (≠ rouge drapeau) |
-| `info` | `#00209F` | `#8EA0FF` | Reçoit la main, informations |
-| `locked` | `#4A5368` | `#A8B0C4` | Cycle clôturé, action réservée à l'admin (bordure en tirets) |
-| `supervisor` | `#3D1A78` | `#B99AF0` | 👑 Mode superviseur, à ne jamais utiliser en mode gestionnaire |
-| `brand.haitiBlue` / `brand.haitiRed` | `#00209F` / `#D21034` | idem | Liseré, logo, PDF |
-
-Chaque statut a trois variantes : `x` (texte et icône), `xSoft` (fond) et `xLine` (bordure).
+| `primary` | `#1F3FB8` | `#93A6FF` | La seule couleur d'action |
+| `primarySoft` / `onPrimarySoft` | `#EBEEFA` / `#1F3FB8` | `#1F2950` / `#C9D2FF` | Sélection, rang actif |
+| `hero` / `onHero` | `#FFFFFF` / `#141B2D` | `#171E31` / `#EEF1F8` | Carte du montant héros |
+| `background` | `#F4F5F8` | `#0E1322` | Fond |
+| `surface` / `surfaceAlt` | `#FFFFFF` / `#EEF0F4` | `#171E31` / `#1E2740` | Cartes / champs, segments, touches |
+| `text` / `textMuted` | `#141B2D` / `#4A5368` | `#EEF1F8` / `#A8B0C4` | Texte (AA) |
+| `success` · `advance` · `warning` · `danger` | `#0B6E47` · `#0F6B66` · `#8A5300` · `#B83A0B` | `#4CC38A` · `#4FC1B8` · `#F0B45A` · `#FF8A5C` | Statuts |
+| `brand.haitiBlue` / `brand.haitiRed` | `#00209F` / `#D21034` | idem | Logo, liseré, reçus uniquement |
 
 ## Typographie (`theme/typography.ts`)
 
-Police : **Public Sans**, 400 / 500 / 600 / 700 / 800, embarquée et chargée par `useFonts` dans `app/_layout.tsx`.
+`buildTypography(textSize)` renvoie l'échelle multipliée par le facteur ; les montants utilisent `tabular-nums`.
 
-Chaque graisse est une famille distincte (`PublicSans_700Bold`, etc.). **Ne jamais combiner** `fontFamily` et `fontWeight` : Android retomberait sur la police système.
-
-| Variante | Taille / interligne | Graisse | Usage |
-|---|---|---|---|
-| `amountHero` | 40 / 46 | 800 | Cagnotte, montant à encaisser |
-| `amountLarge` | 28 / 34 | 800 | Totaux de clôture |
-| `amount` | 18 / 22 | 700 | Tuiles de métriques |
-| `amountSmall` | 15 / 20 | 700 | Montants en liste |
-| `title` | 22 / 28 | 700 | Titre d'écran |
-| `heading` | 18 / 24 | 700 | Titre de carte |
-| `subheading` | 16 / 22 | 700 | Titre de section |
-| `bodyStrong` | 16 / 22 | 600 | Nom d'adhérent |
-| `body` | 15 / 22 | 400 | Texte courant |
-| `label` / `caption` | 14 / 18 | 600 / 500 | Libellés, légendes (minimum absolu) |
-| `button` / `buttonLarge` | 16 / 17 | 700 | Boutons |
-| `numpad` | 26 / 32 | 700 | Pavé PIN |
-
-Les variantes de montant et `numpad` incluent `fontVariant: ['tabular-nums']`. Les titres sont en casse de phrase, sans libellés en MAJUSCULES espacées.
+| Variante | Normale | Usage |
+|---|---|---|
+| `amountHero` | 30 / 36 extrabold | Le montant héros |
+| `amountLarge` | 22 / 28 | Compteur de mains, aperçu |
+| `amount` / `amountSmall` | 16 / 15 | Montants de liste |
+| `title` | 21 / 28 | Titre d'écran |
+| `heading` / `subheading` | 18 / 16 | Titres de feuille, sections |
+| `body` / `bodyStrong` | 15 / 22 | Texte courant |
+| `label` / `caption` | 13 / 18 | Sous-titres, légendes |
+| `button` / `buttonLarge` | 15 / 16 semibold | Boutons |
+| `tab` | 12 | Barre d'onglets (taille fixe) |
+| `numpad` | 24 | Pavé numérique |
 
 ## Espacements, rayons, ombres
 
-- **`spacing`** : `xs 4 · sm 8 · md 12 · lg 16 · xl 24 · xxl 32 · xxxl 48`. Aucune autre valeur n'est autorisée.
-- **`layout`** :
-  - `gutter 16` : marge latérale d'écran ;
-  - `touchTarget 48` : taille minimale d'une cible tactile ;
-  - `actionHeight 56` : hauteur du bouton principal ;
-  - `maxContentWidth 720` : largeur du contenu centré sur tablette (dès `tabletMinWidth 768`).
-- **`radius`** : `sm 8` (petits éléments) · `md 12` (contrôles, cartes) · `lg 16` (bandeau hero) · `pill` (badges).
-- **`shadows`** : `card`, `raised`, `sheet`, en CSS `boxShadow` (iOS + Android New Arch). Ils sont vides en mode sombre, où les bordures font la séparation.
+- **Espacements** : `xs 4 · sm 8 · md 12 · lg 16 · xl 24 · xxl 32`, plus `xxxl 48`. La gouttière fait 16.
+- **Gabarits** : `touchTarget` 44, `actionHeight` 48, `rowHeight` 56, `maxContentWidth` 720 (contenu centré sur tablette à partir de 768).
+- **Rayons** : `sm 8 · md 12 · lg 16 · xl 24` (feuilles) et `pill`.
+- **Ombres** (`boxShadow`, iOS et Android New Arch) :
+  - `card` est un contact très léger ;
+  - `raised` et `sheet` sont réservées aux feuilles ;
+  - en sombre, la séparation se fait par la luminosité des surfaces.
+
+## ThemeProvider
+
+`theme/ThemeProvider.tsx` expose :
+
+- `useTheme()`, qui renvoie le thème actif ;
+- `useThemePreference()`, qui donne `preference` (`system | light | dark`) et `setPreference`, `textSize` et `setTextSize`, et `ready`.
+
+Les préférences sont lues au démarrage, et le splash attend `ready` pour éviter un flash. Une modification s'applique sans redémarrer.
 
 ## Composants (`components/ui/`)
 
-Tout s'importe depuis `@/components/ui`.
+| Composant | Rôle |
+|---|---|
+| `Screen` | Fond, zones sûres, largeur max tablette, pied collant |
+| `Button` | `primary · secondary · danger · ghost · inverse`, tailles `md 44` et `lg 48`, état `locked` |
+| `Card` | `default · sunken · hero · success · warning · danger · locked` |
+| `AmountText` | Montant tabulaire, signe ±, zéro neutre ; la devise vient des réglages (HTG ou G) |
+| `StatusBadge` | Statut en couleur + icône + libellé |
+| `ListItem` | Ligne de registre (56) |
+| `EmptyState` | Vide avec une action |
+| `SectionHeader` | Titre de section en casse de phrase |
+| `MetricTile` / `StatStrip` | Indicateurs (3 au plus sur l'Accueil) |
+| `BottomSheet` | Feuille du bas (Modal RN + translation native, sans bibliothèque de gestes), centrée sur tablette |
+| `ActionMenu` | Bouton ⋯ qui ouvre les actions secondaires en feuille, avec les destructives en `danger` |
+| `SegmentedControl` | 2 à 4 choix exclusifs (thème, taille, filtres d'historique, verrouillage) |
+| `SettingsRow` / `SettingsGroup` | Lignes de Réglages : valeur, interrupteur, coche, cadenas « PIN requis » |
+| `Skeleton` / `ListSkeleton` | Chargement |
+| `TextField`, `Chip`, `Avatar`, `ProgressBar`, `PinPad`, `PinDots`, `Icon`, `Dialog` | Base |
 
-| Composant | Rôle | Points clés |
-|---|---|---|
-| `Screen` | Coque d’écran | Fond thématisé, safe area, largeur max centrée sur tablette, `keyboardShouldPersistTaps`. `header` pleine largeur, `footer` = zone d’action fixe en bas (`footerSafeArea={false}` dans les onglets). `scroll={false}` quand la racine est une `FlatList`. |
-| `Text` | Tout texte | `variant` (échelle typo) + `tone` (`muted`, `danger`, `onHero`…). `maxFontSizeMultiplier` 1.6. |
-| `Button` | Actions | `primary` / `secondary` / `danger` / `ghost`, tailles `md` 48 et `lg` 56, `icon`, `loading`, `disabled`. **`locked` + `lockedLabel`** pour les actions verrouillées (bordure en tirets + cadenas, non pressable). `haptic` pour le retour tactile. |
-| `Card` | Surface | Tons `default`, `sunken`, `hero`, `success`, `warning`, `danger`, `locked`, `supervisor`. `onPress` optionnel. |
-| `AmountText` | Montants HTG | Tailles `hero` / `large` / `medium` / `small`. `sign="credit"` → `+`, `sign="debit"` → `−`. Zéro neutre. Sélectionnable. |
-| `StatusBadge` | Statuts | `PAID_TODAY`, `PAID_IN_ADVANCE`, `UNPAID_TODAY`, `OVERDUE`, `UPCOMING_PAYOUT`, `HAND_RECEIVED`, **`LOCKED`**. `detail` (« 1 tour », « 2/3 mains »). `appearance="inline"` pour les listes denses. |
-| `ListItem` | Ligne de registre | `leading` · titre / sous-titre / `meta` · `trailing`, hauteur ≥ 64, séparateur, chevron, `selected` (choix courant d'un sélecteur). Mémoïsé pour `FlatList`. |
-| `Chip` | Filtre | Pastille 40 dp (+ hit slop 48), pleine quand sélectionnée, ton `danger` pour les filtres de retard / annulation. |
-| `Dialog` | Modale centrée | Titre, sous-titre, icône teintée (`primary` / `success` / `danger`), bouton fermer 48 dp, corps défilant, rangée `actions`. |
-| `TextField` | Champ de saisie | Libellé, aide ou erreur, focus en bordure primaire, ≥ 48 dp, multiligne. |
-| `ProgressBar` | Progression | Valeur 0 → 1, tons `primary` / `success` / `onHero`, rôle `progressbar` accessible. |
-| `Avatar` | Initiales ou rang | `rank` pour l'ordre de tirage, `highlighted` pour le bénéficiaire courant. |
-| `MetricTile` | Chiffre clé | `tone` `danger` / `warning` teinte la tuile entière (attention requise), `success` colore seulement la valeur. |
-| `SectionHeader` | Titre de section | « Adhérents (4) » + action texte (cible 48 dp). |
-| `EmptyState` | Liste vide, aucun résultat | Dit ce qui manque et propose l'action suivante. |
-| `Icon` | Icônes SVG locales | 35 icônes au trait sur une grille 24. Elles remplacent l'ancien `components/Icon.tsx` (supprimé) et les emojis. |
+**Pourquoi pas `@expo/ui` pour `BottomSheet`, `Switch` et `SegmentedControl` :** ce paquet ajoute du code natif, ce qui impose un nouveau build de développement, et son rendu web est partiel. Or l'app est testée sur le web hors ligne. Les composants maison gardent la même API : on pourra basculer plus tard sans toucher aux écrans.
 
-## Thème clair / sombre
+## Navigation
 
-- `ThemeProvider` (dans `app/_layout.tsx`) suit le système par défaut. `useThemePreference()` permet de forcer `light` ou `dark`.
-- **Le mode sombre ne s'active sur l'appareil** qu'avec `userInterfaceStyle: "automatic"` dans `app.json`. C'est déjà prévu : `expo-system-ui` est installé pour Android.
-- Je laisse `app.json` sur `"light"` tant que les écrans ne sont pas migrés : sinon les écrans encore codés en dur afficheraient des bandeaux sombres au milieu de fonds blancs. On basculera à la fin de la Phase 3.
+- **Onglets** : Accueil · Encaisser · Sol · Historique · Réglages.
+- **Écrans en stack** : fiche adhérent, clôture de caisse, gestion du cycle, inscription d'un adhérent, paramètres du sol, restauration, code de récupération.
+- **Anciennes routes** : `/profile` et `/security` redirigent vers Réglages.
 
-## Migration d'un écran (Phase 3)
+| Action fréquente | Taps |
+|---|---|
+| Encaisser depuis l'onglet | adhérent → Encaisser → PIN (3 taps + PIN) |
+| Encaisser depuis l'Accueil | bouton rond → Encaisser → PIN (2 taps + PIN) |
+| Remettre la main | Remettre → Valider → PIN (2 taps + PIN) |
+| Clôturer la journée | Accueil → Clôturer (1 tap jusqu'à l'écran) |
 
-1. Remplacer le conteneur racine par `<Screen>`, et placer l'action principale dans `footer`.
-2. Remplacer `Text`, les boutons et les badges par `components/ui`.
-3. Supprimer chaque hex ; les styles restants lisent `useTheme()`.
-4. Vérifier :
+## PDF
 
-   ```bash
-   grep -nE "#[0-9A-Fa-f]{3,6}\b" app/<ecran>.tsx
-   ```
-
-   doit renvoyer 0 ligne. Faire une capture avant/après à 360px et en tablette, en clair et en sombre.
-5. `npx tsc --noEmit`, puis les tests financiers et crypto. Un commit par écran.
-
-## Écarts assumés par rapport aux skills
-
-- **Noms de fichiers** : `expo-native-ui` recommande le kebab-case, mais le projet utilise le PascalCase pour les composants. Je garde la convention du dépôt.
-- **Couleurs dynamiques Material You** : écartées, pour garder l'identité SOL.
-- **`theme/index.tsx`** au lieu de `index.ts` : le fichier contient le JSX du provider.
+Les reçus et rapports reprennent la palette A (encre, gris, bleu d'action, statuts) et la pile `Public Sans, système`, avec des chiffres tabulaires. Le liseré bicolore reste comme marque. Le nom et la mention du reçu viennent de Réglages → Carnet et reçus. Le repli `Print.printAsync` est conservé.

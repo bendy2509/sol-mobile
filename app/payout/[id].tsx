@@ -22,6 +22,7 @@ import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 
 import { calculateCycleTotalHands } from '@/services/financialService';
+import { t } from '@/i18n';
 
 export default function PayoutScreen() {
   const router = useRouter();
@@ -106,21 +107,21 @@ export default function PayoutScreen() {
     if (isFullyReceived) {
       triggerErrorFeedback();
       Alert.alert(
-        'Action Interdite',
-        `Cet adhérent (${client?.fullName}) a déjà reçu l'intégralité de ses mains (${memberHandsCount}/${memberHandsCount}) pour ce cycle de SOL.`
+        t('Action Interdite'),
+        t('Cet adhérent ({0}) a déjà reçu l\'intégralité de ses mains ({1}/{2}) pour ce cycle de SOL.', client?.fullName, memberHandsCount, memberHandsCount)
       );
       return;
     }
 
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès Lecture Seule', 'Le décaissement de la main est réservé aux gestionnaires.');
+      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement de la main est réservé aux gestionnaires.'));
       return;
     }
 
     if (!payoutNote.trim()) {
       triggerErrorFeedback();
-      Alert.alert('Motif requis', 'Veuillez saisir une note ou justification pour le décaissement.');
+      Alert.alert(t('Motif requis'), t('Veuillez saisir une note ou justification pour le décaissement.'));
       return;
     }
 
@@ -134,7 +135,7 @@ export default function PayoutScreen() {
 
     if (isFullyReceived) {
       triggerErrorFeedback();
-      Alert.alert('Erreur', "Action interdite : Cet adhérent a déjà reçu l'intégralité de ses mains pour ce cycle.");
+      Alert.alert(t('Erreur'), t('Action interdite : Cet adhérent a déjà reçu l\'intégralité de ses mains pour ce cycle.'));
       return;
     }
 
@@ -150,15 +151,15 @@ export default function PayoutScreen() {
       triggerSuccessFeedback();
       const remainingHandsToReceive = memberHandsCount - (currentReceivedHands + 1);
       const remainingNotice = remainingHandsToReceive > 0
-        ? `\n\nIl reste encore ${remainingHandsToReceive} main${remainingHandsToReceive > 1 ? 's' : ''} à décaisser pour cet adhérent au cours de ce cycle.`
-        : `\n\nToutes les ${memberHandsCount} mains de cet adhérent ont été intégralement remises.`;
+        ? '\n\n' + t('Il reste encore {0} main{1} à décaisser pour cet adhérent au cours de ce cycle.', remainingHandsToReceive, remainingHandsToReceive > 1 ? 's' : '')
+        : '\n\n' + t('Toutes les {0} mains de cet adhérent ont été intégralement remises.', memberHandsCount);
 
       Alert.alert(
-        'Main Remise avec Succès !',
-        `La cagnotte de ${formatCurrency(totalPotAmount)} a été décaissée pour ${client.fullName} (Main ${currentReceivedHands + 1}/${memberHandsCount}).\n\nCalculée sur la base des ${totalCycleHands} mains effectives du cycle (${totalCycleHands} × ${formatCurrency(unitAmount)}).${remainingNotice}`,
+        t('Main Remise avec Succès !'),
+        t('La cagnotte de {0} a été décaissée pour {1} (Main {2}/{3}).\n\nCalculée sur la base des {4} mains effectives du cycle ({5} × {6}).{7}', formatCurrency(totalPotAmount), client.fullName, currentReceivedHands + 1, memberHandsCount, totalCycleHands, totalCycleHands, formatCurrency(unitAmount), remainingNotice),
         [
           {
-            text: 'Télécharger Reçu PDF',
+            text: t('Télécharger Reçu PDF'),
             onPress: async () => {
               try {
                 const pdfUri = await generatePayoutReceiptPdf({
@@ -178,13 +179,13 @@ export default function PayoutScreen() {
                 });
                 await sharePdfFile(pdfUri, `Recu_Decaissement_${client.fullName.replace(/\s+/g, '_')}.pdf`);
               } catch {
-                Alert.alert('Erreur', 'Impossible de générer le reçu PDF.');
+                Alert.alert(t('Erreur'), t('Impossible de générer le reçu PDF.'));
               }
               router.replace('/(tabs)' as any);
             },
           },
           {
-            text: 'Fermer',
+            text: t('Fermer'),
             style: 'cancel',
             onPress: () => router.replace('/(tabs)' as any),
           },
@@ -192,7 +193,7 @@ export default function PayoutScreen() {
       );
     } catch (err: any) {
       triggerErrorFeedback();
-      Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
+      Alert.alert(t('Erreur'), err?.message || t('Échec du décaissement.'));
     } finally {
       setIsProcessing(false);
     }
@@ -200,10 +201,9 @@ export default function PayoutScreen() {
 
   const header = (
     <Header
-      title="Décaissement"
-      subtitle={`Bay Men · ${business?.name || 'Carnet SOL'}`}
+      title={t('Décaissement')}
+      subtitle={t('Bay Men · {0}', business?.name || 'Carnet SOL')}
       showBack={true}
-      showProfile={false}
       showScanner={false}
       fallbackBackRoute="/(tabs)"
     />
@@ -214,9 +214,7 @@ export default function PayoutScreen() {
       <Screen edges={['top', 'left', 'right', 'bottom']} header={header} scroll={false}>
         <View style={styles.loading}>
           <ActivityIndicator color={theme.colors.primary} />
-          <Text variant="body" tone="muted">
-            Chargement du dossier…
-          </Text>
+          <Text variant="body" tone="muted">{t('Chargement du dossier…')}</Text>
         </View>
       </Screen>
     );
@@ -224,10 +222,10 @@ export default function PayoutScreen() {
 
   const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`;
   const details: { label: string; value: string }[] = [
-    { label: 'Effectif total du cycle', value: `${plural(allClients.length, 'enfant')} · ${plural(totalCycleHands, 'main')}` },
-    { label: "Mains souscrites par l'adhérent", value: `${plural(memberHandsCount, 'part')} (rangs #${client.payoutRanks || client.payoutRank || 1})` },
-    { label: 'Cotisation par main', value: formatCurrency(unitAmount) },
-    { label: 'Total à percevoir sur le cycle', value: `${formatCurrency(totalPotAmount * memberHandsCount)} (${plural(memberHandsCount, 'tirage')})` },
+    { label: t('Effectif total du cycle'), value: `${plural(allClients.length, 'enfant')} · ${plural(totalCycleHands, 'main')}` },
+    { label: t('Mains souscrites par l\'adhérent'), value: t('{0} (rangs #{1})', plural(memberHandsCount, 'part'), client.payoutRanks || client.payoutRank || 1) },
+    { label: t('Cotisation par main'), value: formatCurrency(unitAmount) },
+    { label: t('Total à percevoir sur le cycle'), value: `${formatCurrency(totalPotAmount * memberHandsCount)} (${plural(memberHandsCount, 'tirage')})` },
   ];
 
   return (
@@ -243,8 +241,8 @@ export default function PayoutScreen() {
             icon="payout"
             loading={isProcessing}
             disabled={isProcessing}
-            label={isProcessing ? 'Validation en cours…' : `Valider la remise · ${formatCurrency(totalPotAmount)}`}
-            accessibilityHint="Demande votre code PIN gestionnaire"
+            label={isProcessing ? t('Validation en cours…') : t('Valider la remise · {0}', formatCurrency(totalPotAmount))}
+            accessibilityHint={t('Demande votre code PIN gestionnaire')}
             onPress={handleInitiatePayout}
           />
         )
@@ -265,14 +263,13 @@ export default function PayoutScreen() {
               <View style={styles.pill}>
                 <Icon name="payout" size={14} color={theme.colors.primary} />
                 <Text variant="label" tone="primary">
-                  {memberHandsCount > 1 && client.payoutRanks ? `Rangs #${client.payoutRanks}` : `Main #${client.payoutRank || 1}`}
+                  {memberHandsCount > 1 && client.payoutRanks ? t('Rangs #{0}', client.payoutRanks) : t('Main #{0}', client.payoutRank || 1)}
                 </Text>
               </View>
               {memberHandsCount > 1 && (
                 <View style={styles.pill}>
                   <Text variant="label" tone="primary">
-                    {memberHandsCount} mains souscrites
-                  </Text>
+                    {t('{0} mains souscrites', memberHandsCount)}</Text>
                 </View>
               )}
             </View>
@@ -287,27 +284,20 @@ export default function PayoutScreen() {
             <Icon name="check" size={28} color={theme.colors.success} />
           </View>
           <Text variant="heading" align="center">
-            {memberHandsCount > 1 ? `Toutes les mains remises (${memberHandsCount}/${memberHandsCount})` : 'Main déjà remise'}
+            {memberHandsCount > 1 ? t('Toutes les mains remises ({0}/{1})', memberHandsCount, memberHandsCount) : t('Main déjà remise')}
           </Text>
-          <Text variant="body" align="center">
-            Cet adhérent a déjà perçu l'intégralité de ses mains ({memberHandsCount} main(s)) pour ce cycle de SOL.
-            {client.handReceivedDate ? `\nDernière remise : ${formatDate(client.handReceivedDate)}.` : ''}
+          <Text variant="body" align="center">{t('Cet adhérent a déjà perçu l\'intégralité de ses mains ({0} main(s)) pour ce cycle de SOL.{1}', memberHandsCount, client.handReceivedDate ? t('\nDernière remise : {0}.', formatDate(client.handReceivedDate)) : '')}
           </Text>
-          <Text variant="caption" tone="muted" align="center">
-            Règle SOL : un adhérent ne peut pas recevoir plus de mains que son quota souscrit.
-          </Text>
+          <Text variant="caption" tone="muted" align="center">{t('Règle SOL : un adhérent ne peut pas recevoir plus de mains que son quota souscrit.')}</Text>
         </Card>
       ) : (
         <>
           {/* Pot Breakdown Card */}
           <Card tone="hero" style={styles.heroCard}>
-            <Text variant="label" tone="onHeroMuted">
-              Montant de la cagnotte du tirage
-            </Text>
+            <Text variant="label" tone="onHeroMuted">{t('Montant de la cagnotte du tirage')}</Text>
             <AmountText amount={totalPotAmount} size="hero" tone="onHero" />
             <Text variant="caption" tone="onHeroMuted">
-              {totalCycleHands} mains effectives au cycle × {formatCurrency(unitAmount)} par main
-            </Text>
+              {t('{0} mains effectives au cycle × {1} par main', totalCycleHands, formatCurrency(unitAmount))}</Text>
           </Card>
 
           <Card style={styles.detailsCard}>
@@ -327,33 +317,33 @@ export default function PayoutScreen() {
             {/* Recipient Payout Progress */}
             <View style={styles.progressBlock}>
               <View style={styles.row}>
-                <Text variant="label">Tirages perçus</Text>
+                <Text variant="label">{t('Tirages perçus')}</Text>
                 <Text variant="amountSmall">
                   {currentReceivedHands} / {memberHandsCount} · {memberPayoutProgressPct} %
                 </Text>
               </View>
-              <ProgressBar value={memberPayoutProgressPct / 100} accessibilityLabel={`Tirages perçus : ${memberPayoutProgressPct} %`} />
+              <ProgressBar value={memberPayoutProgressPct / 100} accessibilityLabel={t('Tirages perçus : {0} %', memberPayoutProgressPct)} />
             </View>
 
             {/* Global Cycle Progress */}
             <View style={styles.progressBlock}>
               <View style={styles.row}>
-                <Text variant="label">Mains données au total</Text>
+                <Text variant="label">{t('Mains données au total')}</Text>
                 <Text variant="amountSmall">
                   {totalHandsTouched} / {totalCycleHands} · {cycleProgressPct} %
                 </Text>
               </View>
-              <ProgressBar value={cycleProgressPct / 100} tone="success" accessibilityLabel={`Mains données au total : ${cycleProgressPct} %`} />
+              <ProgressBar value={cycleProgressPct / 100} tone="success" accessibilityLabel={t('Mains données au total : {0} %', cycleProgressPct)} />
             </View>
           </Card>
 
           {/* Justification / Note */}
           <Card>
             <TextField
-              label="Justification / note de remise *"
+              label={t('Justification / note de remise *')}
               value={payoutNote}
               onChangeText={setPayoutNote}
-              placeholder="Motif ou référence de la remise…"
+              placeholder={t('Motif ou référence de la remise…')}
               multiline
             />
           </Card>
@@ -365,14 +355,14 @@ export default function PayoutScreen() {
         visible={isPinModalOpen}
         onCancel={() => setIsPinModalOpen(false)}
         onSuccess={handleConfirmPayout}
-        title="Validation par Code PIN"
-        subtitle={`Saisissez votre code PIN gestionnaire pour confirmer le décaissement de ${formatCurrency(totalPotAmount)} à ${client.fullName}.`}
+        title={t('Validation par Code PIN')}
+        subtitle={t('Saisissez votre code PIN gestionnaire pour confirmer le décaissement de {0} à {1}.', formatCurrency(totalPotAmount), client.fullName)}
         onLockout={() => {
           recordAuditLog({
             action: 'LOGIN_FAILURE',
             entityType: 'SYSTEM',
             entityId: client.id || 'unknown',
-            reason: `3 tentatives PIN échouées lors du décaissement pour ${client.fullName} (Montant: ${formatCurrency(totalPotAmount)}).`,
+            reason: t('3 tentatives PIN échouées lors du décaissement pour {0} (Montant: {1}).', client.fullName, formatCurrency(totalPotAmount)),
             userId: activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001',
             userRole: 'MANAGER',
           });

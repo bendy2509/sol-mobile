@@ -83,8 +83,8 @@ export default function DesignSystemScreen() {
         <Button label="Encaisser" icon="cash" />
         <Button label="Reçu PDF" icon="printer" variant="secondary" />
         <Button label="Annuler l'opération" icon="trash" variant="danger" />
-        <Button label="Contacter l'administrateur" icon="phone" variant="ghost" />
-        <Button label="Annuler" locked lockedLabel="Cycle clôturé · admin seul" />
+        <Button label="Code PIN oublié ?" variant="ghost" />
+        <Button label="5 mains" locked lockedLabel="Plafond du cycle atteint" />
         <Button label="Plafond atteint" disabled />
         <Button label="Validation…" loading />
 
@@ -130,14 +130,6 @@ export default function DesignSystemScreen() {
           />
         </Card>
 
-        <Card tone="supervisor">
-          <Text variant="subheading" style={{ color: colors.supervisor }}>
-            Mode superviseur
-          </Text>
-          <Text variant="body" tone="muted">
-            Ton réservé à l'administrateur.
-          </Text>
-        </Card>
       </Screen>
     </>
   );

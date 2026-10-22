@@ -17,10 +17,12 @@ export type SpacingToken = keyof typeof spacing;
 export const layout = {
   /** Horizontal screen gutter. */
   gutter: spacing.lg,
-  /** Minimum touch target (dp), field use with one hand. */
-  touchTarget: 48,
+  /** Minimum touch target (dp). Buttons are 44, main actions 48. */
+  touchTarget: 44,
   /** Main action button height (thumb zone). */
-  actionHeight: 56,
+  actionHeight: 48,
+  /** Minimum list row height. */
+  rowHeight: 56,
   /** Centered content width on tablets. */
   maxContentWidth: 720,
   /** Tablet breakpoint. */

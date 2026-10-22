@@ -1,10 +1,11 @@
 /**
- * SOL Mobile — Corner radii. Hierarchy: chips < controls < cards < hero.
+ * SOL Mobile — Corner radii. Hierarchy: chips < controls < cards < sheets.
  */
 export const radius = {
   sm: 8,
   md: 12,
   lg: 16,
+  xl: 24,
   pill: 999,
 } as const;
 

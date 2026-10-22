@@ -21,12 +21,12 @@ export interface MetricTileProps {
 
 /** Compact key figure. Tone tints the tile only for states that need attention. */
 export function MetricTile({ label, value, children, hint, icon, tone = 'default', onPress, style }: MetricTileProps) {
-  const { colors, spacing, radius } = useTheme();
+  const { colors, spacing, radius, shadows } = useTheme();
   const palette: Record<MetricTone, { bg: string; line: string; fg: TextTone }> = {
-    default: { bg: colors.surface, line: colors.border, fg: 'default' },
-    success: { bg: colors.surface, line: colors.border, fg: 'success' },
-    warning: { bg: colors.warningSoft, line: colors.warningLine, fg: 'warning' },
-    danger: { bg: colors.dangerSoft, line: colors.dangerLine, fg: 'danger' },
+    default: { bg: colors.surface, line: 'transparent', fg: 'default' },
+    success: { bg: colors.surface, line: 'transparent', fg: 'success' },
+    warning: { bg: colors.warningSoft, line: 'transparent', fg: 'warning' },
+    danger: { bg: colors.dangerSoft, line: 'transparent', fg: 'danger' },
   };
   const p = palette[tone];
 
@@ -64,6 +64,7 @@ export function MetricTile({ label, value, children, hint, icon, tone = 'default
     borderWidth: 1,
     backgroundColor: p.bg,
     borderColor: p.line,
+    ...(tone === 'default' || tone === 'success' ? shadows.card : null),
   };
 
   if (!onPress) return <View style={[box, style]}>{body}</View>;

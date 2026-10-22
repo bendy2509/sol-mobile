@@ -3,6 +3,7 @@ import { StyleProp, TextStyle } from 'react-native';
 
 import { formatCurrency } from '@/lib/formatters';
 import { Text, TextTone } from './Text';
+import { t } from '@/i18n';
 
 export type AmountSize = 'hero' | 'large' | 'medium' | 'small';
 
@@ -23,7 +24,7 @@ const VARIANT = { hero: 'amountHero', large: 'amountLarge', medium: 'amount', sm
  * HTG amount with tabular figures. A zero is always neutral: never red, never signed,
  * so "-0 HTG" can't be read as a loss.
  */
-export function AmountText({ amount, currency = 'HTG', size = 'medium', tone = 'default', sign = 'none', align, style }: AmountTextProps) {
+export function AmountText({ amount, currency, size = 'medium', tone = 'default', sign = 'none', align, style }: AmountTextProps) {
   const value = Number.isFinite(amount) ? amount : 0;
   const isZero = value === 0;
   const prefix = isZero || sign === 'none' ? '' : sign === 'credit' ? '+' : '−';
@@ -37,7 +38,7 @@ export function AmountText({ amount, currency = 'HTG', size = 'medium', tone = '
       selectable
       numberOfLines={1}
       adjustsFontSizeToFit={size === 'hero' || size === 'large'}
-      accessibilityLabel={`${sign === 'debit' && !isZero ? 'moins ' : ''}${formatCurrency(Math.abs(value), currency)}`}
+      accessibilityLabel={`${sign === 'debit' && !isZero ? t('moins') + ' ' : ''}${formatCurrency(Math.abs(value), currency)}`}
       style={style}
     >
       {formatted}

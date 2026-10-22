@@ -123,7 +123,7 @@ export interface RenewCycleParams {
   collectorId?: string;
   mode: 'RENEW_SAME_MEMBERS' | 'START_FRESH';
   userId: string;
-  userRole: 'ADMIN' | 'MANAGER' | 'USER' | 'COLLECTOR';
+  userRole: 'MANAGER' | 'USER' | 'COLLECTOR';
   name: string;
   contributionAmount: number;
   frequency: PaymentFrequency;
@@ -330,7 +330,7 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
 export async function closeCycle(params: {
   businessId: string;
   userId: string;
-  userRole: 'ADMIN' | 'MANAGER';
+  userRole: 'MANAGER';
   reason: string;
 }): Promise<void> {
   const { businessId, userId, userRole, reason } = params;

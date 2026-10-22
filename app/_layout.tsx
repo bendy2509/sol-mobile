@@ -8,11 +8,13 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import 'react-native-reanimated';
 
 import { initDatabase } from '@/db/sqlite';
+import { loadReceiptPreferences } from '@/lib/receiptPreferences';
 import { syncEngine } from '@/db/syncEngine';
 import { AuthProvider } from '@/context/AuthContext';
 import { SyncProvider } from '@/context/SyncContext';
 import { Text } from '@/components/ui';
-import { ThemeProvider, fontAssets, useTheme } from '@/theme';
+import { I18nProvider, t, useI18n } from '@/i18n';
+import { ThemeProvider, fontAssets, useTheme, useThemePreference } from '@/theme';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -32,7 +34,7 @@ export default function RootLayout() {
 
     async function prepare() {
       try {
-        await initDatabase();
+        await Promise.all([initDatabase(), loadReceiptPreferences()]);
         syncEngine.startAutoSync(30000);
       } catch (err) {
         console.warn('Database initialization error:', err);
@@ -54,19 +56,24 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AuthProvider>
-          <SyncProvider>
-            <RootNavigator ready={databaseReady && (fontsLoaded || !!fontError)} />
-          </SyncProvider>
-        </AuthProvider>
+        <I18nProvider>
+          <AuthProvider>
+            <SyncProvider>
+              <RootNavigator ready={databaseReady && (fontsLoaded || !!fontError)} />
+            </SyncProvider>
+          </AuthProvider>
+        </I18nProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );
 }
 
 /** Stack, status bar and boot screen, themed (rendered inside ThemeProvider). */
-function RootNavigator({ ready }: { ready: boolean }) {
-  const { colors, fonts, spacing, isDark } = useTheme();
+function RootNavigator({ ready: bootReady }: { ready: boolean }) {
+  const { colors, spacing, isDark, typography } = useTheme();
+  const { ready: preferencesReady } = useThemePreference();
+  const { language, ready: languageReady } = useI18n();
+  const ready = bootReady && preferencesReady && languageReady;
 
   return (
     <>
@@ -74,19 +81,22 @@ function RootNavigator({ ready }: { ready: boolean }) {
       {!ready ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: spacing.md, backgroundColor: colors.background }}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text variant="bodyStrong">Chargement de SOL…</Text>
+          <Text variant="bodyStrong">{t('Chargement de SOL…')}</Text>
         </View>
       ) : (
         <Stack
+          // Re-mounted when the language changes, so every t() is evaluated again
+          key={language}
           screenOptions={{
             headerStyle: {
               backgroundColor: colors.surface,
             },
             headerTintColor: colors.text,
             headerTitleStyle: {
-              fontFamily: fonts.bold,
-              fontSize: 18,
+              fontFamily: typography.subheading.fontFamily,
+              fontSize: typography.subheading.fontSize,
             },
+            headerShadowVisible: false,
             contentStyle: {
               backgroundColor: colors.background,
             },
@@ -103,31 +113,14 @@ function RootNavigator({ ready }: { ready: boolean }) {
           <Stack.Screen
             name="register"
             options={{
-              title: 'Inscription',
-              headerBackTitle: 'Connexion',
+              title: t('Inscription'),
+              headerBackTitle: t('Connexion'),
             }}
           />
-          <Stack.Screen
-            name="pending-approval"
-            options={{
-              headerShown: false,
-              gestureEnabled: false,
-            }}
-          />
-          <Stack.Screen
-            name="suspended"
-            options={{
-              headerShown: false,
-              gestureEnabled: false,
-            }}
-          />
-          <Stack.Screen
-            name="admin"
-            options={{
-              headerShown: false,
-              gestureEnabled: false,
-            }}
-          />
+          <Stack.Screen name="recover-pin" options={{ title: t('Code PIN oublié'), headerBackTitle: t('Connexion') }} />
+          <Stack.Screen name="restore-backup" options={{ title: t('Restaurer une sauvegarde'), headerBackTitle: t('Retour') }} />
+          <Stack.Screen name="recovery-code" options={{ title: t('Code de récupération'), headerBackVisible: false, gestureEnabled: false }} />
+          <Stack.Screen name="security" options={{ headerShown: false }} />
           <Stack.Screen
             name="profile"
             options={{
@@ -143,8 +136,8 @@ function RootNavigator({ ready }: { ready: boolean }) {
           <Stack.Screen
             name="setup-business"
             options={{
-              title: "Configuration de l'Activité",
-              headerBackTitle: 'Retour',
+              title: t('Configuration de l\'Activité'),
+              headerBackTitle: t('Retour'),
             }}
           />
           <Stack.Screen
@@ -157,8 +150,8 @@ function RootNavigator({ ready }: { ready: boolean }) {
           <Stack.Screen
             name="client/[id]"
             options={{
-              title: 'Dossier Adhérent',
-              headerBackTitle: 'Retour',
+              title: t('Adhérent'),
+              headerBackTitle: t('Retour'),
             }}
           />
           <Stack.Screen
@@ -189,7 +182,7 @@ function RootNavigator({ ready }: { ready: boolean }) {
             name="modal"
             options={{
               presentation: 'modal',
-              title: 'Diagnostic & Synchronisation',
+              title: t('Diagnostic & Synchronisation'),
             }}
           />
         </Stack>

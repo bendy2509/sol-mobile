@@ -20,6 +20,7 @@ import { recordAuditLog } from '@/services/auditService';
 import { safeBack } from '@/lib/navigation';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function NewClientScreen() {
   const router = useRouter();
@@ -101,19 +102,19 @@ export default function NewClientScreen() {
   const handleValidateForm = () => {
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès Lecture Seule', "L'inscription d'adhérents est réservée aux gestionnaires.");
+      Alert.alert(t('Accès Lecture Seule'), t('L\'inscription d\'adhérents est réservée aux gestionnaires.'));
       return;
     }
 
     if (!fullName.trim()) {
       triggerErrorFeedback();
-      Alert.alert('Nom requis', "Veuillez saisir le nom complet de l'adhérent.");
+      Alert.alert(t('Nom requis'), t('Veuillez saisir le nom complet de l\'adhérent.'));
       return;
     }
 
     if (phoneDigits.length < 8) {
       triggerErrorFeedback();
-      Alert.alert('Téléphone incomplet', 'Veuillez saisir un numéro de téléphone à 8 chiffres (ex: 37123456).');
+      Alert.alert(t('Téléphone incomplet'), t('Veuillez saisir un numéro de téléphone à 8 chiffres (ex: 37123456).'));
       return;
     }
 
@@ -171,18 +172,18 @@ export default function NewClientScreen() {
       triggerSync().catch(() => {});
 
       Alert.alert(
-        'Adhérent Enregistré avec Succès !',
-        `${fullName.trim()} a été ajouté(e) au carnet avec ${effectiveHandsCount} main${effectiveHandsCount > 1 ? 's' : ''} (Rangs : #${computedRanks}) (${formatCurrency(unitAmount)} / main).${collectFirstHand ? `\n\n1ère cotisation encaissée avec succès (${formatCurrency(unitAmount * effectiveHandsCount)}).` : ''}`,
+        t('Adhérent Enregistré avec Succès !'),
+        t('{0} a été ajouté(e) au carnet avec {1} main{2} (Rangs : #{3}) ({4} / main).{5}', fullName.trim(), effectiveHandsCount, effectiveHandsCount > 1 ? 's' : '', computedRanks, formatCurrency(unitAmount), collectFirstHand ? `\n\n1ère cotisation encaissée avec succès (${formatCurrency(unitAmount * effectiveHandsCount)}).` : ''),
         [
           {
-            text: 'Voir le Tableau de Bord',
+            text: t('Voir le Tableau de Bord'),
             onPress: () => router.replace('/(tabs)' as any),
           },
         ]
       );
     } catch (err: any) {
       triggerErrorFeedback();
-      Alert.alert('Erreur', err?.message || "Échec de l'enregistrement de l'adhérent.");
+      Alert.alert(t('Erreur'), err?.message || t('Échec de l\'enregistrement de l\'adhérent.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -201,7 +202,7 @@ export default function NewClientScreen() {
         onPress={opts.onMinus}
         disabled={opts.minusDisabled}
         accessibilityRole="button"
-        accessibilityLabel={`Retirer ${opts.noun}`}
+        accessibilityLabel={t('Retirer {0}', opts.noun)}
         style={({ pressed }) => [styles.stepBtn, opts.minusDisabled && styles.stepBtnDisabled, pressed && styles.pressed]}
       >
         <Icon name="minus" size={22} color={opts.minusDisabled ? theme.colors.borderStrong : theme.colors.text} />
@@ -217,7 +218,7 @@ export default function NewClientScreen() {
       <Pressable
         onPress={opts.onPlus}
         accessibilityRole="button"
-        accessibilityLabel={`Ajouter ${opts.noun}`}
+        accessibilityLabel={t('Ajouter {0}', opts.noun)}
         style={({ pressed }) => [styles.stepBtn, pressed && styles.pressed]}
       >
         <Icon name="plus" size={22} color={theme.colors.text} />
@@ -231,10 +232,9 @@ export default function NewClientScreen() {
         edges={['top', 'left', 'right', 'bottom']}
         header={
           <Header
-            title="Nouvel adhérent"
-            subtitle={`${business?.name || 'Carnet actif'} · ${formatCurrency(unitAmount)} / main`}
+            title={t('Nouvel adhérent')}
+            subtitle={t('{0} · {1} / main', business?.name || 'Carnet actif', formatCurrency(unitAmount))}
             showBack={true}
-            showProfile={false}
             showScanner={false}
             fallbackBackRoute="/(tabs)"
           />
@@ -247,8 +247,8 @@ export default function NewClientScreen() {
             icon="check"
             loading={isSubmitting}
             disabled={isSubmitting}
-            label={isSubmitting ? 'Enregistrement en cours…' : "Enregistrer l'adhérent"}
-            accessibilityHint="Demande votre code PIN gestionnaire"
+            label={isSubmitting ? t('Enregistrement en cours…') : t('Enregistrer l\'adhérent')}
+            accessibilityHint={t('Demande votre code PIN gestionnaire')}
             onPress={handleValidateForm}
           />
         }
@@ -258,20 +258,20 @@ export default function NewClientScreen() {
           <View style={styles.previewTop}>
             <View style={styles.heroAvatar}>
               <Text variant="subheading" tone="onHero">
-                {fullName.trim() ? getInitials(fullName) : 'SOL'}
+                {fullName.trim() ? getInitials(fullName) : t('SOL')}
               </Text>
             </View>
             <View style={styles.flexShrink}>
               <Text variant="heading" tone="onHero" numberOfLines={1}>
-                {fullName.trim() || "Nom de l'adhérent"}
+                {fullName.trim() || t('Nom de l\'adhérent')}
               </Text>
               <Text variant="caption" tone="onHeroMuted">
-                {phoneDigits ? `+509 ${formatDisplayPhone(phoneDigits)}` : '+509 XX XX XX XX'}
+                {phoneDigits ? `+509 ${formatDisplayPhone(phoneDigits)}` : t('+509 XX XX XX XX')}
               </Text>
             </View>
             <View style={styles.heroPill}>
               <Text variant="label" tone="onHero" numberOfLines={1}>
-                {handsCount > 1 ? `#${multiRanks}` : `Main #${assignedRank}`}
+                {handsCount > 1 ? `#${multiRanks}` : t('Main #{0}', assignedRank)}
               </Text>
             </View>
           </View>
@@ -279,16 +279,12 @@ export default function NewClientScreen() {
           {/* Financial Grid Info (Real-Time Feedback) */}
           <View style={styles.heroStats}>
             <View style={styles.heroStat}>
-              <Text variant="caption" tone="onHeroMuted">
-                Cotisation (1 main)
-              </Text>
+              <Text variant="caption" tone="onHeroMuted">{t('Cotisation (1 main)')}</Text>
               <AmountText amount={unitAmount} size="medium" tone="onHero" />
             </View>
             <View style={styles.heroStatDivider} />
             <View style={styles.heroStat}>
-              <Text variant="caption" tone="onHeroMuted">
-                Tirages prévus
-              </Text>
+              <Text variant="caption" tone="onHeroMuted">{t('Tirages prévus')}</Text>
               <Text variant="amount" tone="onHero" numberOfLines={1}>
                 {handsCount} × {formatCurrency(totalPotAmount)}
               </Text>
@@ -297,26 +293,21 @@ export default function NewClientScreen() {
 
           {/* Projection Temps Réel */}
           <Text variant="caption" tone="onHeroMuted">
-            <Text variant="label" tone="onHero">
-              Impact SOL :{' '}
-            </Text>
-            en prenant {handsCount} main{handsCount > 1 ? 's' : ''}, la cagnotte s'ajuste pour tout le monde à{' '}
+            <Text variant="label" tone="onHero">{t('Impact SOL :')}
+            </Text>{t('en prenant')}{' '}{handsCount}{' '}{t('main')}{handsCount > 1 ? 's' : ''}{t(', la cagnotte s\'ajuste pour tout le monde à')}{' '}
             <Text variant="label" tone="onHero">
               {formatCurrency(totalPotAmount)}
             </Text>{' '}
-            ({totalCycleHands} mains). Cet adhérent paiera{' '}
+            ({totalCycleHands}{' '}{t('mains). Cet adhérent paiera')}{' '}
             <Text variant="label" tone="onHero">
-              {formatCurrency(memberTotalDue)} au total
-            </Text>{' '}
-            sur la durée du cycle.
-          </Text>
+              {t('{0} au total', formatCurrency(memberTotalDue))}</Text>{' '}{t('sur la durée du cycle.')}</Text>
         </Card>
 
         {/* Identity */}
         <Card style={styles.formCard}>
           <TextField
-            label="Nom complet *"
-            placeholder="Ex : Marie Carmel Saint-Fleur"
+            label={t('Nom complet *')}
+            placeholder={t('Ex : Marie Carmel Saint-Fleur')}
             value={fullName}
             onChangeText={setFullName}
             onFocus={() => setActiveInput('NAME')}
@@ -327,7 +318,7 @@ export default function NewClientScreen() {
 
           {/* Haitian Phone Number Input */}
           <View style={styles.group}>
-            <Text variant="label">Numéro de téléphone *</Text>
+            <Text variant="label">{t('Numéro de téléphone *')}</Text>
             <View style={[styles.phoneBox, activeInput === 'PHONE' && styles.phoneBoxActive]}>
               <View style={styles.countryChip}>
                 <Text variant="label">+509</Text>
@@ -342,13 +333,13 @@ export default function NewClientScreen() {
                 onBlur={() => setActiveInput(null)}
                 keyboardType="phone-pad"
                 maxLength={11}
-                accessibilityLabel="Numéro de téléphone, 8 chiffres"
+                accessibilityLabel={t('Numéro de téléphone, 8 chiffres')}
               />
               {phoneDigits.length > 0 && (
                 <Pressable
                   onPress={() => setPhoneDigits('')}
                   accessibilityRole="button"
-                  accessibilityLabel="Effacer le numéro"
+                  accessibilityLabel={t('Effacer le numéro')}
                   style={styles.clearBtn}
                 >
                   <Icon name="close" size={18} color={theme.colors.textMuted} />
@@ -360,13 +351,13 @@ export default function NewClientScreen() {
 
         {/* Number of Subscribed Hands (Multi-Mains) */}
         <View style={styles.section}>
-          <SectionHeader title="Mains souscrites" />
+          <SectionHeader title={t('Mains souscrites')} />
           <Card style={styles.formCard}>
             <View style={styles.chipRow}>
               {[1, 2, 3, 4].map((num) => (
                 <Chip
                   key={num}
-                  label={num === 1 ? '1 main' : `${num} mains`}
+                  label={num === 1 ? t('1 main') : t('{0} mains', num)}
                   selected={handsCount === num}
                   onPress={() => {
                     triggerLightImpact();
@@ -377,9 +368,9 @@ export default function NewClientScreen() {
             </View>
 
             {renderStepper({
-              title: `${handsCount} ${handsCount > 1 ? 'mains souscrites' : 'main souscrite'}`,
-              sub: `+${handsCount} ${handsCount > 1 ? 'enfants / places au cycle' : 'enfant / place au cycle'}`,
-              noun: 'une main',
+              title: handsCount > 1 ? t('{0} mains souscrites', handsCount) : t('{0} main souscrite', handsCount),
+              sub: handsCount > 1 ? t('+{0} enfants / places au cycle', handsCount) : t('+{0} enfant / place au cycle', handsCount),
+              noun: t('une main'),
               minusDisabled: handsCount <= 1,
               onMinus: () => {
                 triggerLightImpact();
@@ -396,8 +387,8 @@ export default function NewClientScreen() {
                 <Icon name="info" size={18} color={theme.colors.textMuted} />
                 <Text variant="caption" tone="muted" style={styles.flexShrink}>
                   {handsCount > 1
-                    ? `Cet enfant prend ${handsCount} mains (l'effectif du SOL passe de ${existingTotalCycleHands} à ${totalCycleHands} mains effectives). La cagnotte de chaque main tirée passe à ${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)}). Cet enfant recevra ${handsCount} tirages de ${formatCurrency(totalPotAmount)} (Total: ${formatCurrency(memberTotalDue)}).`
-                    : `1 part standard. L'effectif du SOL est de ${existingMembersCount + 1} enfants et ${totalCycleHands} mains. Chaque main tirée est de ${formatCurrency(totalPotAmount)} (${totalCycleHands} × ${formatCurrency(unitAmount)}).`}
+                    ? t('Cet enfant prend {0} mains (l\'effectif du SOL passe de {1} à {2} mains effectives). La cagnotte de chaque main tirée passe à {3} ({4} × {5}). Cet enfant recevra {6} tirages de {7} (Total: {8}).', handsCount, existingTotalCycleHands, totalCycleHands, formatCurrency(totalPotAmount), totalCycleHands, formatCurrency(unitAmount), handsCount, formatCurrency(totalPotAmount), formatCurrency(memberTotalDue))
+                    : t('1 part standard. L\'effectif du SOL est de {0} enfants et {1} mains. Chaque main tirée est de {2} ({3} × {4}).', existingMembersCount + 1, totalCycleHands, formatCurrency(totalPotAmount), totalCycleHands, formatCurrency(unitAmount))}
                 </Text>
               </View>
             </Card>
@@ -406,24 +397,24 @@ export default function NewClientScreen() {
 
         {/* Assigned Hand / Multi-Ranks */}
         <View style={styles.section}>
-          <SectionHeader title={handsCount > 1 ? 'Rangs de tirage de ses mains' : 'Rang dans le cycle'} />
+          <SectionHeader title={handsCount > 1 ? t('Rangs de tirage de ses mains') : t('Rang dans le cycle')} />
           <Card style={styles.formCard}>
             {handsCount > 1 ? (
               <TextField
-                label="Rangs attribués"
-                placeholder={`Ex : ${multiRanks}`}
+                label={t('Rangs attribués')}
+                placeholder={t('Ex : {0}', multiRanks)}
                 value={multiRanks}
                 onChangeText={setMultiRanks}
                 onFocus={() => setActiveInput('RANKS')}
                 onBlur={() => setActiveInput(null)}
                 keyboardType="numbers-and-punctuation"
-                helper="Séparez les rangs par des virgules (ex : 5, 6, 7)."
+                helper={t('Séparez les rangs par des virgules (ex : 5, 6, 7).')}
               />
             ) : (
               renderStepper({
-                title: `Main #${assignedRank}`,
-                sub: 'Ordre de réception de la cagnotte',
-                noun: 'un rang',
+                title: t('Main #{0}', assignedRank),
+                sub: t('Ordre de réception de la cagnotte'),
+                noun: t('un rang'),
                 minusDisabled: assignedRank <= 1,
                 onMinus: () => {
                   triggerLightImpact();
@@ -442,12 +433,8 @@ export default function NewClientScreen() {
         <Card>
           <View style={styles.switchRow}>
             <View style={styles.flexShrink}>
-              <Text variant="bodyStrong">
-                Encaisser sa part ({handsCount} main{handsCount > 1 ? 's' : ''}) dès l'inscription
-              </Text>
-              <Text variant="caption" tone="muted">
-                Crédite immédiatement {formatCurrency(unitAmount * handsCount)} au solde de l'adhérent.
-              </Text>
+              <Text variant="bodyStrong">{t('Encaisser sa part ({0} main{1}) dès l\'inscription', handsCount, handsCount > 1 ? 's' : '')}</Text>
+              <Text variant="caption" tone="muted">{t('Crédite immédiatement {0} au solde de l\'adhérent.', formatCurrency(unitAmount * handsCount))}</Text>
             </View>
             <Switch
               value={collectFirstHand}
@@ -457,7 +444,7 @@ export default function NewClientScreen() {
               }}
               trackColor={{ false: theme.colors.borderStrong, true: theme.colors.primary }}
               thumbColor={theme.colors.surface}
-              accessibilityLabel="Encaisser sa part dès l'inscription"
+              accessibilityLabel={t('Encaisser sa part dès l\'inscription')}
             />
           </View>
         </Card>
@@ -465,8 +452,8 @@ export default function NewClientScreen() {
         {/* 4-Digit PIN Security Modal */}
         <PinVerificationModal
           visible={isPinModalOpen}
-          title="Validation de l'Inscription"
-          subtitle={`Saisissez votre code PIN gestionnaire pour confirmer l'ajout de ${fullName.trim() || 'un adhérent'} (Main #${assignedRank}).`}
+          title={t('Validation de l\'Inscription')}
+          subtitle={t('Saisissez votre code PIN gestionnaire pour confirmer l\'ajout de {0} (Main #{1}).', fullName.trim() || 'un adhérent', assignedRank)}
           onSuccess={executeSaveClient}
           onCancel={() => setIsPinModalOpen(false)}
           onLockout={() => {
@@ -474,7 +461,7 @@ export default function NewClientScreen() {
               action: 'LOGIN_FAILURE',
               entityType: 'SYSTEM',
               entityId: 'unknown',
-              reason: `3 tentatives PIN échouées lors de la création du profil "${fullName.trim()}".`,
+              reason: t('3 tentatives PIN échouées lors de la création du profil "{0}".', fullName.trim()),
               userId: activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001',
               userRole: 'MANAGER',
             });

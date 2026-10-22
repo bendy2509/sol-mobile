@@ -711,7 +711,7 @@ assert(calculatePotAmount(totalHandsAfterIncrease, 250) === 1750, 'Pot after inc
 
 // 18. SECTION 18: CLOSED-CYCLE REVERSAL LOCK
 // Transactions recorded before the current cycle boundary belong to a closed cycle:
-// managers cannot reverse them, only the Admin can on request.
+// their reversal (PIN + reason) is archival only and leaves current-cycle counters untouched.
 const cycleBoundary = '2026-10-15T14:30:00.000Z';
 assert(isTransactionFromClosedCycle('2026-10-15T09:00:00.000Z', cycleBoundary) === true, 'Tx earlier the same day as renewal is from the closed cycle');
 assert(isTransactionFromClosedCycle('2026-09-01T12:00:00.000Z', cycleBoundary) === true, 'Tx from a previous month is from the closed cycle');

@@ -6,6 +6,7 @@ import { useSync } from '@/context/SyncContext';
 import { Button, Card, Icon, Screen, SectionHeader, Text } from '@/components/ui';
 import { formatDate } from '@/lib/formatters';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function InfoModalScreen() {
   const { activeCollector } = useAuth();
@@ -19,9 +20,9 @@ export default function InfoModalScreen() {
 
   const pending = syncState.pendingCount;
   const collectorRows = [
-    { label: 'Nom', value: activeCollector?.fullName || '—' },
-    { label: 'Téléphone', value: activeCollector?.phoneNumber || '—' },
-    { label: 'Zone', value: activeCollector?.zone || '—' },
+    { label: t('Nom'), value: activeCollector?.fullName || '—' },
+    { label: t('Téléphone'), value: activeCollector?.phoneNumber || '—' },
+    { label: t('Zone'), value: activeCollector?.zone || '—' },
   ];
 
   return (
@@ -35,18 +36,14 @@ export default function InfoModalScreen() {
           icon="cycle"
           loading={syncState.isSyncing}
           disabled={syncState.isSyncing}
-          label={syncState.isSyncing ? 'Synchronisation en cours…' : 'Synchroniser maintenant'}
+          label={syncState.isSyncing ? t('Synchronisation en cours…') : t('Synchroniser maintenant')}
           onPress={handleManualSync}
         />
       }
     >
       <View style={styles.intro}>
-        <Text variant="title" tone="primary">
-          SOL Mobile v1.0
-        </Text>
-        <Text variant="body" tone="muted" align="center">
-          Sabotay et Sol en Haïti, conçu pour fonctionner hors ligne.
-        </Text>
+        <Text variant="title" tone="primary">{t('SOL Mobile v1.0')}</Text>
+        <Text variant="body" tone="muted" align="center">{t('Sabotay et Sol en Haïti, conçu pour fonctionner hors ligne.')}</Text>
       </View>
 
       {/* Sync Diagnostics */}
@@ -60,32 +57,28 @@ export default function InfoModalScreen() {
             />
           </View>
           <View style={styles.flexShrink}>
-            <Text variant="subheading">{syncState.isOnline ? 'En ligne' : 'Hors ligne'}</Text>
+            <Text variant="subheading">{syncState.isOnline ? t('En ligne') : t('Hors ligne')}</Text>
             <Text variant="caption" tone="muted">
-              {syncState.isOnline ? 'Connecté : les opérations peuvent être envoyées.' : 'Mode avion ou local : tout reste enregistré sur l’appareil.'}
+              {syncState.isOnline ? t('Connecté : les opérations peuvent être envoyées.') : t('Mode avion ou local : tout reste enregistré sur l’appareil.')}
             </Text>
           </View>
         </View>
       </Card>
 
       <View style={styles.section}>
-        <SectionHeader title="Synchronisation" />
+        <SectionHeader title={t('Synchronisation')} />
         <Card style={styles.card}>
           <View style={styles.row}>
-            <Text variant="body" tone="muted" style={styles.flexShrink}>
-              Transactions en attente d'envoi
-            </Text>
+            <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Transactions en attente d\'envoi')}</Text>
             <Text variant="amount" tone={pending > 0 ? 'warning' : 'success'}>
               {pending}
             </Text>
           </View>
           <View style={styles.divider} />
           <View style={styles.row}>
-            <Text variant="body" tone="muted" style={styles.flexShrink}>
-              Dernière synchronisation
-            </Text>
+            <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Dernière synchronisation')}</Text>
             <Text variant="bodyStrong" align="right" style={styles.value}>
-              {syncState.lastSyncedAt ? formatDate(syncState.lastSyncedAt) : 'Aucune récente'}
+              {syncState.lastSyncedAt ? formatDate(syncState.lastSyncedAt) : t('Aucune récente')}
             </Text>
           </View>
         </Card>
@@ -93,7 +86,7 @@ export default function InfoModalScreen() {
 
       {/* Collector Info */}
       <View style={styles.section}>
-        <SectionHeader title="Agent collecteur actif" />
+        <SectionHeader title={t('Agent collecteur actif')} />
         <Card style={styles.card}>
           {collectorRows.map((r, i) => (
             <React.Fragment key={r.label}>

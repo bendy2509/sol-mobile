@@ -12,11 +12,6 @@ const APP_SALT = 'SOL_HAITI_SECURE_SALT_2026_@v1';
 // Fast in-memory cache to make repeated PIN checks instant (0 ms)
 const pinVerificationCache = new Map<string, boolean>();
 
-// Precomputed default admin PIN (9999) hash to prevent recomputation on every login
-export const DEFAULT_ADMIN_PIN_HASH = '$2a$08$U2lI4eUqD.e/v4E5d098t.3y1L5oN8B7tC5Y7Z1W9A2D4F6G8H0J2';
-pinVerificationCache.set(`9999:${DEFAULT_ADMIN_PIN_HASH}`, true);
-pinVerificationCache.set('9999:9999', true);
-
 // Legacy SHA-256 for backward-compatibility fallback during on-the-fly migration
 function sha256(ascii: string): string {
   function rightRotate(value: number, amount: number) {
@@ -161,7 +156,7 @@ export function verifyPinHash(rawPin: string, storedHashOrPlain: string | null |
     }
   } catch {}
 
-  // 3. Backward compatibility for legacy demo plaintext PINs (e.g. '1234', '9999')
+  // 3. Backward compatibility for legacy demo plaintext PINs (e.g. '1234'), upgraded to bcrypt at login
   if (cleanRaw === cleanStored) {
     pinVerificationCache.set(cacheKey, true);
     return true;

@@ -9,6 +9,7 @@ import { Button, Card, Icon, Screen, Text } from '@/components/ui';
 import { triggerSuccessFeedback } from '@/lib/haptics';
 import { safeBack } from '@/lib/navigation';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -37,16 +38,16 @@ export default function ScanScreen() {
       } as any);
     } else {
       Alert.alert(
-        'Adhérent non trouvé',
-        `Aucun adhérent ne correspond au code "${token}" dans la base locale. Voulez-vous inscrire un nouvel adhérent ?`,
+        t('Adhérent non trouvé'),
+        t('Aucun adhérent ne correspond au code "{0}" dans la base locale. Voulez-vous inscrire un nouvel adhérent ?', token),
         [
           {
-            text: 'Re-scanner',
+            text: t('Re-scanner'),
             onPress: () => setScanned(false),
             style: 'cancel',
           },
           {
-            text: '+ Inscrire Adhérent',
+            text: t('+ Inscrire Adhérent'),
             onPress: () => {
               router.replace('/client/new' as any);
             },
@@ -65,7 +66,7 @@ export default function ScanScreen() {
         params: { clientId: client.id },
       } as any);
     } else {
-      Alert.alert('Non trouvé', `Le code "${manualCode}" ne correspond à aucun adhérent.`);
+      Alert.alert(t('Non trouvé'), t('Le code "{0}" ne correspond à aucun adhérent.', manualCode));
     }
   };
 
@@ -74,9 +75,7 @@ export default function ScanScreen() {
       <Screen edges={['top', 'left', 'right', 'bottom']} scroll={false}>
         <View style={styles.center}>
           <ActivityIndicator color={theme.colors.primary} />
-          <Text variant="body" tone="muted" align="center">
-            Vérification des autorisations caméra…
-          </Text>
+          <Text variant="body" tone="muted" align="center">{t('Vérification des autorisations caméra…')}</Text>
         </View>
       </Screen>
     );
@@ -89,8 +88,8 @@ export default function ScanScreen() {
         scroll={false}
         footer={
           <View style={styles.footer}>
-            <Button size="lg" fullWidth icon="scan" label="Autoriser la caméra" onPress={requestPermission} />
-            <Button variant="ghost" fullWidth label="Annuler" onPress={() => safeBack(router)} />
+            <Button size="lg" fullWidth icon="scan" label={t('Autoriser la caméra')} onPress={requestPermission} />
+            <Button variant="ghost" fullWidth label={t('Annuler')} onPress={() => safeBack(router)} />
           </View>
         }
       >
@@ -98,12 +97,8 @@ export default function ScanScreen() {
           <View style={styles.disc}>
             <Icon name="scan" size={32} color={theme.colors.primary} />
           </View>
-          <Text variant="title" align="center" accessibilityRole="header">
-            Autorisation caméra requise
-          </Text>
-          <Text variant="body" tone="muted" align="center">
-            SOL a besoin de la caméra pour scanner rapidement les codes QR des adhérents sur le marché.
-          </Text>
+          <Text variant="title" align="center" accessibilityRole="header">{t('Autorisation caméra requise')}</Text>
+          <Text variant="body" tone="muted" align="center">{t('SOL a besoin de la caméra pour scanner rapidement les codes QR des adhérents sur le marché.')}</Text>
         </View>
       </Screen>
     );
@@ -126,15 +121,13 @@ export default function ScanScreen() {
           <Pressable
             onPress={() => safeBack(router)}
             accessibilityRole="button"
-            accessibilityLabel="Fermer le scanner"
+            accessibilityLabel={t('Fermer le scanner')}
             style={({ pressed }) => [styles.roundBtn, pressed && styles.roundBtnPressed]}
           >
             <Icon name="close" size={22} color={theme.brand.white} />
           </Pressable>
           <View style={styles.instruction}>
-            <Text variant="label" style={styles.onCamera} align="center">
-              Centrez le code QR de l'adhérent dans le cadre
-            </Text>
+            <Text variant="label" style={styles.onCamera} align="center">{t('Centrez le code QR de l\'adhérent dans le cadre')}</Text>
           </View>
         </View>
 
@@ -154,11 +147,11 @@ export default function ScanScreen() {
               onPress={() => setTorch(!torch)}
               accessibilityRole="switch"
               accessibilityState={{ checked: torch }}
-              accessibilityLabel="Lampe torche"
+              accessibilityLabel={t('Lampe torche')}
               style={({ pressed }) => [styles.control, torch && styles.controlActive, pressed && styles.roundBtnPressed]}
             >
               <Text variant="label" style={torch ? styles.onLight : styles.onCamera}>
-                {torch ? 'Lampe allumée' : 'Lampe'}
+                {torch ? t('Lampe allumée') : t('Lampe')}
               </Text>
             </Pressable>
             <Pressable
@@ -168,9 +161,7 @@ export default function ScanScreen() {
               style={({ pressed }) => [styles.control, isManualOpen && styles.controlActive, pressed && styles.roundBtnPressed]}
             >
               <Icon name="edit" size={16} color={isManualOpen ? theme.colors.primary : theme.brand.white} />
-              <Text variant="label" style={isManualOpen ? styles.onLight : styles.onCamera}>
-                Saisir le code
-              </Text>
+              <Text variant="label" style={isManualOpen ? styles.onLight : styles.onCamera}>{t('Saisir le code')}</Text>
             </Pressable>
           </View>
 
@@ -178,18 +169,18 @@ export default function ScanScreen() {
             <Card padding="sm" style={styles.manualCard}>
               <TextInput
                 style={styles.manualInput}
-                placeholder="Code QR (ex : SOL-CLT-MARIECARMEL)"
+                placeholder={t('Code QR (ex : SOL-CLT-MARIECARMEL)')}
                 placeholderTextColor={theme.colors.textPlaceholder}
                 value={manualCode}
                 onChangeText={setManualCode}
                 autoCapitalize="characters"
-                accessibilityLabel="Code QR de l'adhérent"
+                accessibilityLabel={t('Code QR de l\'adhérent')}
               />
-              <Button icon="search" label="Chercher" onPress={handleManualLookup} />
+              <Button icon="search" label={t('Chercher')} onPress={handleManualLookup} />
             </Card>
           )}
 
-          {scanned && <Button variant="secondary" size="lg" fullWidth icon="scan" label="Re-scanner" onPress={() => setScanned(false)} />}
+          {scanned && <Button variant="secondary" size="lg" fullWidth icon="scan" label={t('Re-scanner')} onPress={() => setScanned(false)} />}
         </View>
       </View>
     </View>

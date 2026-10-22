@@ -1,20 +1,19 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, TextInput, FlatList, Pressable, StyleSheet, RefreshControl, Alert, Modal, BackHandler } from 'react-native';
+import { View, TextInput, FlatList, StyleSheet, RefreshControl, Alert } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 
-import { Header } from '@/components/Header';
+import { SyncBadge } from '@/components/SyncBadge';
 import { MemberCard } from '@/components/MemberCard';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { DashboardHero } from '@/components/dashboard/DashboardHero';
 import { DashboardMetricsGrid } from '@/components/dashboard/DashboardMetricsGrid';
 import { BeneficiaryBanner } from '@/components/dashboard/BeneficiaryBanner';
 import { DashboardFilters } from '@/components/dashboard/DashboardFilters';
-import { AmountText, Avatar, Button, EmptyState, Icon, Screen, Text, UiIconName } from '@/components/ui';
+import { ActionMenu, AmountText, Avatar, BottomSheet, Button, EmptyState, ListSkeleton, Screen, Text, UiIconName } from '@/components/ui';
 import { getDashboardMetrics } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { recordAuditLog } from '@/services/auditService';
-import { getActiveCollector } from '@/db/sqlite';
-import { generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfService';
+import { exportBusinessReport } from '@/services/reportExport';
 import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
 import { DashboardMetrics, FilterStatus, Member, SortOption } from '@/types';
@@ -22,14 +21,15 @@ import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function DashboardScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { userRole, isImpersonating, exitImpersonation } = useAuth();
+  const { userRole } = useAuth();
   const { triggerSync } = useSync();
-  const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
+  const { isTablet } = useResponsive();
   const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [metrics, setMetrics] = useState<DashboardMetrics>({
@@ -63,6 +63,7 @@ export default function DashboardScreen() {
   const [sort, setSort] = useState<SortOption>('PAYOUT_RANK');
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   // Payout Flow State
   const [payoutTargetMember, setPayoutTargetMember] = useState<Member | null>(null);
@@ -85,6 +86,8 @@ export default function DashboardScreen() {
       setMembers(memberList);
     } catch (err) {
       console.warn('Dashboard load error:', err);
+    } finally {
+      setLoaded(true);
     }
   }, [filter, sort, searchQuery]);
 
@@ -117,7 +120,7 @@ export default function DashboardScreen() {
   const handleInitiatePayout = (member: Member) => {
     if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Accès Lecture Seule', 'Le décaissement de la main est réservé aux gestionnaires.');
+      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement de la main est réservé aux gestionnaires.'));
       return;
     }
     triggerMediumImpact();
@@ -128,7 +131,7 @@ export default function DashboardScreen() {
 
   const handleConfirmPayoutDetails = () => {
     if (!payoutNote.trim()) {
-      Alert.alert('Justification requise', 'Veuillez saisir une note ou motif pour le déblocage de la main.');
+      Alert.alert(t('Justification requise'), t('Veuillez saisir une note ou motif pour le déblocage de la main.'));
       return;
     }
     setIsPayoutModalOpen(false);
@@ -147,12 +150,12 @@ export default function DashboardScreen() {
       );
       triggerSuccessFeedback();
       Alert.alert(
-        'Main Remise avec Succès !',
-        `La cagnotte complète de ${formatCurrency(metrics.totalPotAmount)} a été décaissée pour ${payoutTargetMember.fullName}.\n\nRappel : Cet enfant reste actif et doit continuer ses cotisations restantes jusqu'à la fin du cycle.`
+        t('Main remise'),
+        t('{0} remis à {1}. Ses cotisations continuent jusqu\'à la fin du cycle.', formatCurrency(metrics.totalPotAmount), payoutTargetMember.fullName)
       );
       loadData();
     } catch (err: any) {
-      Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
+      Alert.alert(t('Erreur'), err?.message || t('Échec du décaissement.'));
     } finally {
       setPayoutTargetMember(null);
     }
@@ -162,48 +165,9 @@ export default function DashboardScreen() {
     triggerMediumImpact();
     setIsGeneratingReport(true);
     try {
-      const activeCollector = await getActiveCollector();
-      const currentMembers = await getMembersWithPaymentStatus({ filter: 'ALL', sort: 'PAYOUT_RANK' });
-
-      const totalCashCollected = currentMembers.reduce((sum, m) => sum + (m.totalPaidInCycle || m.currentBalance || 0), 0);
-      const totalDistributed = currentMembers.filter(m => m.hasReceivedPayout).length * metrics.totalPotAmount;
-      const netReserveBalance = totalCashCollected - totalDistributed;
-      const completionRate = metrics.totalHandsExpected > 0 ? Math.round((metrics.handsCollectedTotal / metrics.totalHandsExpected) * 100) : 0;
-
-      const pdfUri = await generateManagerBusinessReportPdf({
-        businessName: metrics.businessName,
-        collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-        collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
-        collectorZone: activeCollector?.zone,
-        unitAmount: metrics.unitAmount,
-        totalSlots: metrics.totalHandsExpected,
-        registeredChildrenCount: metrics.totalMembersCount,
-        totalPotAmount: metrics.totalPotAmount,
-        cycleStartDate: metrics.startDate || new Date().toISOString(),
-        cycleEndDate: metrics.endDate || new Date().toISOString(),
-        handsCollectedTotal: metrics.handsCollectedTotal,
-        totalCashCollected,
-        totalDistributed,
-        netReserveBalance,
-        completionRate,
-        members: currentMembers.map((m) => {
-          const hands = metrics.unitAmount > 0 ? Math.floor((m.totalPaidInCycle || m.currentBalance || 0) / metrics.unitAmount) : 1;
-          return {
-            rank: m.payoutRank || 1,
-            fullName: m.fullName,
-            phoneNumber: m.phoneNumber,
-            totalPaid: m.totalPaidInCycle || m.currentBalance || 0,
-            handsCovered: hands,
-            coverageStatus: m.paymentStatusToday,
-            hasReceivedPayout: m.hasReceivedPayout,
-          };
-        }),
-        generatedAt: new Date().toISOString(),
-      });
-
-      await sharePdfFile(pdfUri, `Rapport_Evolution_${metrics.businessName.replace(/\s+/g, '_')}.pdf`);
-    } catch (err: any) {
-      Alert.alert('Erreur', 'Impossible de générer le rapport d\'évolution.');
+      await exportBusinessReport();
+    } catch {
+      Alert.alert(t('Erreur'), t('Impossible de générer le rapport d\'évolution.'));
     } finally {
       setIsGeneratingReport(false);
     }
@@ -214,49 +178,21 @@ export default function DashboardScreen() {
       ? Math.min(100, Math.round((metrics.handsTouchedCount / metrics.totalHandsExpected) * 100))
       : 0;
 
-  // Hardware BackHandler for Admin Impersonation Mode
-  useFocusEffect(
-    useCallback(() => {
-      if (!isImpersonating && userRole !== 'ADMIN') return;
-
-      const onBackPress = () => {
-        Alert.alert(
-          'Mode Superviseur',
-          'Voulez-vous quitter ce carnet et retourner au Dashboard Administrateur ?',
-          [
-            { text: 'Rester ici', style: 'cancel' },
-            {
-              text: 'Retour Admin',
-              onPress: async () => {
-                await exitImpersonation();
-                router.replace('/admin' as any);
-              },
-            },
-          ]
-        );
-        return true;
-      };
-
-      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
-      return () => subscription.remove();
-    }, [isImpersonating, userRole, exitImpersonation, router])
-  );
-
   const renderMemberItem = useCallback(
-    ({ item }: { item: Member }) => (
+    ({ item, index }: { item: Member; index: number }) => (
       <MemberCard
         member={item}
         isPayoutTurn={metrics.currentPayoutBeneficiary?.id === item.id}
-        onPayoutHand={handleInitiatePayout}
+        isFirst={index === 0}
+        isLast={index === members.length - 1}
       />
     ),
-    [metrics.currentPayoutBeneficiary?.id, handleInitiatePayout]
+    [metrics.currentPayoutBeneficiary?.id, members.length]
   );
 
-  const quickActions: { label: string; icon: UiIconName; onPress: () => void; busy?: boolean }[] = [
-    { label: 'Ajouter un enfant', icon: 'plus', onPress: () => router.push('/client/new' as any) },
-    { label: 'Cycle', icon: 'cycle', onPress: () => router.navigate('/(tabs)/sol' as any) },
-    { label: 'Rapport PDF', icon: 'printer', onPress: handleGenerateBusinessReport, busy: isGeneratingReport },
+  const quickActions: { label: string; a11y: string; icon: UiIconName; onPress: () => void }[] = [
+    { label: t('Clôturer'), a11y: t('Ouvrir la clôture de caisse du jour'), icon: 'calendar', onPress: () => router.push('/closure' as any) },
+    { label: t('Inscrire'), a11y: t('Inscrire un nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) },
   ];
 
   return (
@@ -265,25 +201,27 @@ export default function DashboardScreen() {
       padded={false}
       edges={['top', 'left', 'right']}
       header={
-        <Header
-          title={metrics.businessName || 'SOL'}
-          subtitle={`${formatCurrency(metrics.unitAmount)}/main • ${metrics.totalMembersCount} enfants • Fin ${formatDateShort(metrics.endDate)}`}
-          onRefresh={handleRefresh}
-        />
+        <View style={[styles.topBar, isTablet && styles.listContentTablet]}>
+          <View style={styles.flexShrink}>
+            <Text variant="title" numberOfLines={1} accessibilityRole="header">
+              {metrics.businessName || t('SOL')}
+            </Text>
+            <Text variant="caption" tone="muted" numberOfLines={1}>
+              {t('{0} la main · {1} adhérents{2}', formatCurrency(metrics.unitAmount), metrics.totalMembersCount, metrics.endDate ? t(' · fin {0}', formatDateShort(metrics.endDate)) : '')}
+            </Text>
+          </View>
+          <SyncBadge onSyncComplete={handleRefresh} compact />
+          <ActionMenu
+            title={metrics.businessName}
+            items={[
+              { label: t('Rapport PDF du carnet'), icon: 'printer', onPress: handleGenerateBusinessReport, disabled: isGeneratingReport },
+              { label: t('Scanner une carte'), icon: 'scan', onPress: () => router.push('/scan' as any) },
+              { label: t('Gestion du cycle'), icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
+            ]}
+          />
+        </View>
       }
       footerSafeArea={false}
-      footer={
-        !isReadOnly ? (
-          <Button
-            size="lg"
-            fullWidth
-            icon="cash"
-            label="Encaisser une cotisation"
-            haptic
-            onPress={() => router.navigate('/(tabs)/collect' as any)}
-          />
-        ) : undefined
-      }
     >
       <FlatList
         data={members}
@@ -295,7 +233,6 @@ export default function DashboardScreen() {
         removeClippedSubviews={true}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -320,19 +257,15 @@ export default function DashboardScreen() {
 
             <View style={styles.quickActionsRow}>
               {quickActions.map((action) => (
-                <Pressable
+                <Button
                   key={action.label}
+                  variant="secondary"
+                  icon={action.icon}
+                  label={action.label}
+                  accessibilityLabel={action.a11y}
                   onPress={action.onPress}
-                  disabled={action.busy}
-                  accessibilityRole="button"
-                  accessibilityState={{ busy: action.busy }}
-                  style={({ pressed }) => [styles.quickAction, pressed && styles.quickActionPressed]}
-                >
-                  <Icon name={action.icon} size={20} color={theme.colors.primary} />
-                  <Text variant="label" align="center" numberOfLines={2}>
-                    {action.busy ? 'Génération…' : action.label}
-                  </Text>
-                </Pressable>
+                  style={styles.flexOne}
+                />
               ))}
             </View>
 
@@ -350,86 +283,64 @@ export default function DashboardScreen() {
           </View>
         }
         ListEmptyComponent={
+          !loaded ? (
+            <ListSkeleton hero={false} rows={4} />
+          ) : (
           <EmptyState
             icon={searchQuery ? 'search' : 'users'}
-            title="Aucun adhérent trouvé"
+            title={t('Aucun adhérent trouvé')}
             message={
-              searchQuery ? 'Aucun résultat ne correspond à votre recherche.' : 'Ajoutez des enfants pour démarrer la collecte et le cycle.'
+              searchQuery ? t('Aucun résultat ne correspond à votre recherche.') : t('Ajoutez des enfants pour démarrer la collecte et le cycle.')
             }
             action={
               searchQuery || isReadOnly
                 ? undefined
-                : { label: 'Ajouter un enfant', icon: 'plus', onPress: () => router.push('/client/new' as any) }
+                : { label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }
             }
           />
+          )
         }
       />
 
       {/* Payout hand ("Bay Men") */}
-      <Modal visible={isPayoutModalOpen} transparent animationType="fade" onRequestClose={() => setIsPayoutModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Pressable
-              onPress={() => setIsPayoutModalOpen(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Fermer"
-              style={({ pressed }) => [styles.modalClose, pressed && styles.quickActionPressed]}
-            >
-              <Icon name="close" size={22} color={theme.colors.textMuted} />
-            </Pressable>
-
-            <View style={styles.modalHeader}>
-              <View style={styles.modalIcon}>
-                <Icon name="payout" size={28} color={theme.colors.primary} />
-              </View>
-              <Text variant="title" align="center" accessibilityRole="header">
-                Remise de la main
+      <BottomSheet
+        visible={isPayoutModalOpen}
+        onClose={() => setIsPayoutModalOpen(false)}
+        title={t('Remettre la main')}
+        subtitle={t('Cagnotte complète du tour, confirmée par votre code PIN.')}
+        footer={<Button size="lg" fullWidth label={t('Valider avec le PIN')} icon="lock" onPress={handleConfirmPayoutDetails} />}
+      >
+        <AmountText amount={metrics.totalPotAmount} size="hero" align="center" />
+        {payoutTargetMember && (
+          <View style={styles.targetBox}>
+            <Avatar name={payoutTargetMember.fullName} />
+            <View style={styles.flexShrink}>
+              <Text variant="bodyStrong">{payoutTargetMember.fullName}</Text>
+              <Text variant="caption" tone="muted">{t('Main')}{' '}{payoutTargetMember.rankOrder || 1} · {payoutTargetMember.phoneNumber}
               </Text>
-              <Text variant="body" tone="muted" align="center">
-                Cagnotte complète à décaisser
-              </Text>
-              <AmountText amount={metrics.totalPotAmount} size="large" align="center" />
-            </View>
-
-            {payoutTargetMember && (
-              <View style={styles.targetBox}>
-                <Avatar name={payoutTargetMember.fullName} />
-                <View style={styles.flexShrink}>
-                  <Text variant="bodyStrong">{payoutTargetMember.fullName}</Text>
-                  <Text variant="caption" tone="muted">
-                    Main #{payoutTargetMember.rankOrder || 1} · {payoutTargetMember.phoneNumber}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            <View style={styles.inputGroup}>
-              <Text variant="label">Motif / justification</Text>
-              <TextInput
-                style={styles.textArea}
-                value={payoutNote}
-                onChangeText={setPayoutNote}
-                placeholder="Ex : remise de la main, cycle 1"
-                placeholderTextColor={theme.colors.textPlaceholder}
-                multiline
-                numberOfLines={2}
-                accessibilityLabel="Motif de la remise"
-              />
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <Button label="Annuler" variant="secondary" onPress={() => setIsPayoutModalOpen(false)} style={styles.flexOne} />
-              <Button label="Valider avec PIN" icon="lock" onPress={handleConfirmPayoutDetails} style={styles.flexTwo} />
             </View>
           </View>
+        )}
+        <View style={styles.inputGroup}>
+          <Text variant="label">{t('Motif')}</Text>
+          <TextInput
+            style={styles.textArea}
+            value={payoutNote}
+            onChangeText={setPayoutNote}
+            placeholder={t('Ex : remise de la main, cycle 1')}
+            placeholderTextColor={theme.colors.textPlaceholder}
+            multiline
+            numberOfLines={2}
+            accessibilityLabel={t('Motif de la remise')}
+          />
         </View>
-      </Modal>
+      </BottomSheet>
 
       {/* Sensitive PIN Security Modal */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Validation du Décaissement"
-        subtitle={`Saisissez votre code PIN pour confirmer la remise de ${formatCurrency(metrics.totalPotAmount)}.`}
+        title={t('Confirmer la remise')}
+        subtitle={t('{0} pour {1}', formatCurrency(metrics.totalPotAmount), payoutTargetMember?.fullName ?? '')}
         onSuccess={handlePinSuccessPayout}
         onCancel={() => setIsPinModalOpen(false)}
         onLockout={() => {
@@ -437,7 +348,7 @@ export default function DashboardScreen() {
             action: 'LOGIN_FAILURE',
             entityType: 'SYSTEM',
             entityId: payoutTargetMember?.id || 'unknown',
-            reason: `3 tentatives PIN échouées lors de la remise de main pour ${payoutTargetMember?.fullName || 'un adhérent'}.`,
+            reason: t('3 tentatives PIN échouées lors de la remise de main pour {0}.', payoutTargetMember?.fullName || 'un adhérent'),
             userId: 'c011ec70-0000-0000-0000-000000000001', // Fallback local
             userRole: 'MANAGER',
           });
@@ -451,7 +362,6 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
   StyleSheet.create({
     flexShrink: { flex: 1, minWidth: 0 },
     flexOne: { flexGrow: 1, flexBasis: 0 },
-    flexTwo: { flexGrow: 2, flexBasis: 0 },
 
     listContent: {
       paddingHorizontal: layout.gutter,
@@ -462,66 +372,21 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
       maxWidth: layout.maxContentWidth,
       alignSelf: 'center',
     },
-    separator: { height: spacing.sm },
     dashboardHeader: {
       paddingTop: spacing.lg,
       paddingBottom: spacing.md,
-      gap: spacing.md,
+      gap: spacing.lg,
     },
 
     quickActionsRow: { flexDirection: 'row', gap: spacing.sm },
-    quickAction: {
-      flex: 1,
-      minHeight: layout.actionHeight + spacing.lg,
+    topBar: {
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.xs,
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.xs,
-      borderRadius: radius.md,
-      borderCurve: 'continuous',
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-    },
-    quickActionPressed: { backgroundColor: colors.surfacePressed },
-
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: colors.overlay,
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: layout.gutter,
-    },
-    modalCard: {
-      width: '100%',
-      maxWidth: 420,
-      backgroundColor: colors.surface,
-      borderRadius: radius.lg,
-      borderCurve: 'continuous',
-      padding: spacing.xl,
-      gap: spacing.lg,
-    },
-    modalClose: {
-      position: 'absolute',
-      top: spacing.sm,
-      right: spacing.sm,
-      zIndex: 1,
-      width: layout.touchTarget,
-      height: layout.touchTarget,
-      borderRadius: radius.pill,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    modalHeader: { alignItems: 'center', gap: spacing.xs },
-    modalIcon: {
-      width: spacing.xxxl + spacing.lg,
-      height: spacing.xxxl + spacing.lg,
-      borderRadius: radius.pill,
-      backgroundColor: colors.primarySoft,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: spacing.sm,
+      gap: spacing.sm,
+      paddingLeft: layout.gutter,
+      paddingRight: spacing.sm,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.xs,
     },
     targetBox: {
       flexDirection: 'row',
@@ -543,5 +408,4 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
       ...typography.body,
       textAlignVertical: 'top',
     },
-    modalBtnRow: { flexDirection: 'row', gap: spacing.sm },
   });

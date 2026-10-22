@@ -14,6 +14,7 @@ import { useAuth } from '@/context/AuthContext';
 import { generateCashClosureReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function CashClosureScreen() {
   const theme = useTheme();
@@ -82,7 +83,7 @@ export default function CashClosureScreen() {
       await sharePdfFile(pdfUri, `Bordereau Clôture - ${closure.closureDate}`);
     } catch (err: any) {
       console.error('Failed to generate closure PDF:', err);
-      Alert.alert('Erreur', 'Impossible de générer le bordereau PDF.');
+      Alert.alert(t('Erreur'), t('Impossible de générer le bordereau PDF.'));
     } finally {
       setIsExportingPdf(false);
     }
@@ -90,15 +91,15 @@ export default function CashClosureScreen() {
 
   const handleOpenPinValidation = () => {
     if (isNaN(numDeclared) || numDeclared < 0) {
-      Alert.alert('Montant invalide', 'Veuillez saisir un montant réel constaté positif.');
+      Alert.alert(t('Montant invalide'), t('Veuillez saisir un montant réel constaté positif.'));
       return;
     }
 
     if (hasDiscrepancy && !discrepancyNote.trim()) {
       triggerErrorFeedback();
       Alert.alert(
-        'Justification Obligatoire',
-        `Un écart de caisse de ${formatCurrency(discrepancy)} a été constaté. Vous devez obligatoirement expliquer la cause de cet écart avant de clôturer.`
+        t('Justification Obligatoire'),
+        t('Un écart de caisse de {0} a été constaté. Vous devez obligatoirement expliquer la cause de cet écart avant de clôturer.', formatCurrency(discrepancy))
       );
       return;
     }
@@ -119,12 +120,12 @@ export default function CashClosureScreen() {
 
       triggerSuccessFeedback();
       Alert.alert(
-        'Clôture Enregistrée avec Succès !',
-        `La journée a été clôturée avec un solde physique déclaré de ${formatCurrency(numDeclared)}.`,
+        t('Clôture Enregistrée avec Succès !'),
+        t('La journée a été clôturée avec un solde physique déclaré de {0}.', formatCurrency(numDeclared)),
         [
-          { text: 'OK', style: 'default' },
+          { text: t('OK'), style: 'default' },
           {
-            text: '📄 Bordereau PDF',
+            text: t('Bordereau PDF'),
             onPress: () => handleShareClosurePdf(createdClosure),
           },
         ]
@@ -132,7 +133,7 @@ export default function CashClosureScreen() {
       setDiscrepancyNote('');
       loadData();
     } catch (err: any) {
-      Alert.alert('Erreur', err?.message || 'Échec de la clôture de caisse.');
+      Alert.alert(t('Erreur'), err?.message || t('Échec de la clôture de caisse.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -144,10 +145,9 @@ export default function CashClosureScreen() {
         edges={['top', 'left', 'right', 'bottom']}
         header={
           <Header
-            title="Clôture de caisse"
-            subtitle="Arrêté du jour et contrôle des espèces"
+            title={t('Clôture de caisse')}
+            subtitle={t('Arrêté du jour')}
             showBack={true}
-            showProfile={false}
             showScanner={false}
             fallbackBackRoute="/(tabs)"
           />
@@ -158,40 +158,29 @@ export default function CashClosureScreen() {
             size="lg"
             fullWidth
             icon="lock"
-            label={isSubmitting ? 'Enregistrement…' : 'Valider la clôture (PIN)'}
+            label={isSubmitting ? t('Enregistrement…') : t('Valider la clôture')}
             loading={isSubmitting}
             onPress={handleOpenPinValidation}
           />
         }
       >
         {/* Theoretical summary */}
-        <Card style={styles.cardGap}>
-          <Text variant="subheading" accessibilityRole="header">
-            Situation théorique du jour
-          </Text>
-          <View style={styles.summaryRow}>
-            <Text variant="body" tone="muted" style={styles.flexShrink}>
-              Encaissements (cotisations)
-            </Text>
+        <Card tone="hero" padding="lg" style={styles.cardGap}>
+          <Text variant="caption" tone="muted">{t('Solde théorique en caisse aujourd\'hui')}</Text>
+          <AmountText amount={theoreticalBalance} size="hero" />
+          <View style={[styles.summaryRow, styles.totalRow]}>
+            <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Cotisations encaissées')}</Text>
             <AmountText amount={todayStats.sabotayDepositsToday} size="small" sign="credit" tone="success" />
           </View>
           <View style={styles.summaryRow}>
-            <Text variant="body" tone="muted" style={styles.flexShrink}>
-              Décaissements (mains remises)
-            </Text>
+            <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Mains remises')}</Text>
             <AmountText amount={todayStats.withdrawalsToday} size="small" sign="debit" tone="danger" />
-          </View>
-          <View style={[styles.summaryRow, styles.totalRow]}>
-            <Text variant="bodyStrong" style={styles.flexShrink}>
-              Solde théorique en caisse
-            </Text>
-            <AmountText amount={theoreticalBalance} size="large" tone="primary" />
           </View>
         </Card>
 
         {/* Declared cash */}
         <Card style={styles.cardGap}>
-          <Text variant="label">Montant constaté en caisse (HTG)</Text>
+          <Text variant="label">{t('Montant constaté en caisse (HTG)')}</Text>
           <View style={styles.cashInputBox}>
             <Icon name="cash" size={24} color={theme.colors.textMuted} />
             <TextInput
@@ -201,12 +190,10 @@ export default function CashClosureScreen() {
               keyboardType="numeric"
               value={declaredCash}
               onChangeText={setDeclaredCash}
-              accessibilityLabel="Montant réel constaté en espèces, en gourdes"
+              accessibilityLabel={t('Montant réel constaté en espèces, en gourdes')}
               selectTextOnFocus
             />
-            <Text variant="heading" tone="muted">
-              HTG
-            </Text>
+            <Text variant="heading" tone="muted">{t('HTG')}</Text>
           </View>
         </Card>
 
@@ -222,22 +209,18 @@ export default function CashClosureScreen() {
             <View style={styles.flexShrink}>
               {hasDiscrepancy ? (
                 <View style={styles.discrepancyTitle}>
-                  <Text variant="subheading" tone="danger">
-                    Écart
-                  </Text>
+                  <Text variant="subheading" tone="danger">{t('Écart')}</Text>
                   <AmountText amount={discrepancy} size="medium" tone="danger" sign={discrepancy > 0 ? 'credit' : 'debit'} />
                 </View>
               ) : (
-                <Text variant="subheading" tone="success">
-                  Caisse équilibrée
-                </Text>
+                <Text variant="subheading" tone="success">{t('Caisse équilibrée')}</Text>
               )}
               <Text variant="body" tone={hasDiscrepancy ? 'danger' : 'success'}>
                 {hasDiscrepancy
                   ? discrepancy > 0
-                    ? 'Excédent par rapport au calcul du système.'
-                    : 'Déficit par rapport au calcul du système.'
-                  : 'Le montant en caisse correspond aux enregistrements.'}
+                    ? t('Excédent par rapport au calcul du système.')
+                    : t('Déficit par rapport au calcul du système.')
+                  : t('Le montant en caisse correspond aux enregistrements.')}
               </Text>
             </View>
           </View>
@@ -245,20 +228,20 @@ export default function CashClosureScreen() {
 
         {hasDiscrepancy && (
           <TextField
-            label="Justification obligatoire de l'écart"
+            label={t('Justification obligatoire de l\'écart')}
             multiline
             numberOfLines={3}
-            placeholder="Ex : erreur de rendu de monnaie lors de la dernière tournée"
+            placeholder={t('Ex : erreur de rendu de monnaie lors de la dernière tournée')}
             value={discrepancyNote}
             onChangeText={setDiscrepancyNote}
           />
         )}
 
         {/* Recent closures */}
-        <SectionHeader title="Clôtures récentes" count={closureHistory.length} />
+        <SectionHeader title={t('Clôtures récentes')} count={closureHistory.length} />
         {closureHistory.length === 0 ? (
           <Card padding="none">
-            <EmptyState icon="history" title="Aucune clôture enregistrée" message="Vos arrêtés de caisse quotidiens apparaîtront ici." />
+            <EmptyState icon="history" title={t('Aucune clôture enregistrée')} message={t('Vos arrêtés de caisse quotidiens apparaîtront ici.')} />
           </Card>
         ) : (
           closureHistory.map((item) => {
@@ -266,8 +249,7 @@ export default function CashClosureScreen() {
             return (
               <Card key={item.id} style={styles.cardGap}>
                 <View style={styles.summaryRow}>
-                  <Text variant="bodyStrong" style={styles.flexShrink}>
-                    Clôture du {formatDateShort(item.closureDate)}
+                  <Text variant="bodyStrong" style={styles.flexShrink}>{t('Clôture du {0}', formatDateShort(item.closureDate))}
                   </Text>
                   <View style={styles.statusChip}>
                     <Text variant="label" tone="muted">
@@ -276,32 +258,25 @@ export default function CashClosureScreen() {
                   </View>
                 </View>
                 <View style={styles.summaryRow}>
-                  <Text variant="caption" tone="muted">
-                    Déclaré
-                  </Text>
+                  <Text variant="caption" tone="muted">{t('Déclaré')}</Text>
                   <AmountText amount={item.totalCashDeclared} size="small" />
                 </View>
                 <View style={styles.summaryRow}>
-                  <Text variant="caption" tone="muted">
-                    Théorique
-                  </Text>
+                  <Text variant="caption" tone="muted">{t('Théorique')}</Text>
                   <AmountText amount={item.totalSystemCalculated} size="small" />
                 </View>
                 {Math.abs(diff) > 0.01 && (
                   <View style={styles.summaryRow}>
-                    <Text variant="caption" tone="danger">
-                      Écart
-                    </Text>
+                    <Text variant="caption" tone="danger">{t('Écart')}</Text>
                     <AmountText amount={diff} size="small" tone="danger" sign={diff > 0 ? 'credit' : 'debit'} />
                   </View>
                 )}
                 {item.discrepancyReason && (
-                  <Text variant="caption" tone="muted">
-                    Motif : {item.discrepancyReason}
+                  <Text variant="caption" tone="muted">{t('Motif : {0}', item.discrepancyReason)}
                   </Text>
                 )}
                 <Button
-                  label="Bordereau PDF"
+                  label={t('Bordereau PDF')}
                   icon="printer"
                   variant="secondary"
                   fullWidth
@@ -316,8 +291,8 @@ export default function CashClosureScreen() {
         {/* 4-Digit PIN Verification Modal */}
         <PinVerificationModal
           visible={isPinModalOpen}
-          title="Confirmation de la Clôture"
-          subtitle={`Veuillez saisir votre code PIN pour verrouiller la journée et enregistrer le solde déclaré de ${formatCurrency(numDeclared)}.`}
+          title={t('Confirmation de la Clôture')}
+          subtitle={t('Veuillez saisir votre code PIN pour verrouiller la journée et enregistrer le solde déclaré de {0}.', formatCurrency(numDeclared))}
           onSuccess={handlePinSuccessSubmit}
           onCancel={() => setIsPinModalOpen(false)}
         />

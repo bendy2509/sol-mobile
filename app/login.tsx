@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { View, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
@@ -9,22 +10,46 @@ import { Button, Card, Icon, PinDots, PinPad, Text } from '@/components/ui';
 import { triggerLightImpact, triggerMediumImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 export default function LoginScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { loginWithPin } = useAuth();
+  const { loginWithPin, loginWithBiometrics, biometricAvailable, biometricPhone } = useAuth();
   const { isSmallScreen, isVerySmallScreen, horizontalPadding, height } = useResponsive();
   const isCompactHeight = height < 700;
 
   const [activeField, setActiveField] = useState<'PHONE' | 'PIN'>('PHONE');
-  const [phoneDigits, setPhoneDigits] = useState('37123456');
+  const [phoneDigits, setPhoneDigits] = useState('');
   const [pin, setPin] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fullPhone = `+509${phoneDigits}`;
+
+  // Pre-fill the last phone number used on this device
+  useEffect(() => {
+    AsyncStorage.getItem('SOL_LAST_PHONE').then((last) => {
+      const digits = (last || '').replace(/\D/g, '').replace(/^509/, '').slice(0, 8);
+      if (digits.length === 8) {
+        setPhoneDigits(digits);
+        setActiveField('PIN');
+      }
+    });
+  }, []);
+
+  const goToCarnet = async () => {
+    const business = await getActiveBusinessConfig();
+    router.replace((business ? '/(tabs)' : '/setup-business') as any);
+  };
+
+  const handleBiometric = async () => {
+    setErrorMessage(null);
+    const res = await loginWithBiometrics();
+    if (res.success) await goToCarnet();
+    else if (res.error) setErrorMessage(res.error);
+  };
 
   const formatPhoneDisplay = (digits: string) => {
     if (!digits) return '';
@@ -38,14 +63,14 @@ export default function LoginScreen() {
   const executeLogin = async (phoneToUse: string, currentPin: string) => {
     if (!phoneToUse || phoneToUse.length < 8) {
       triggerErrorFeedback();
-      setErrorMessage('Veuillez saisir votre numéro de téléphone (8 chiffres).');
+      setErrorMessage(t('Veuillez saisir votre numéro de téléphone (8 chiffres).'));
       setActiveField('PHONE');
       return;
     }
 
     if (currentPin.length !== 4) {
       triggerErrorFeedback();
-      setErrorMessage('Veuillez saisir les 4 chiffres de votre code PIN.');
+      setErrorMessage(t('Veuillez saisir les 4 chiffres de votre code PIN.'));
       setActiveField('PIN');
       return;
     }
@@ -58,23 +83,10 @@ export default function LoginScreen() {
 
     if (res.success) {
       triggerSuccessFeedback();
-      if (res.role === 'ADMIN') {
-        router.replace('/admin' as any);
-      } else if (res.status === 'SUSPENDED') {
-        router.replace('/suspended' as any);
-      } else if (res.status === 'PENDING_APPROVAL') {
-        router.replace('/pending-approval' as any);
-      } else {
-        const business = await getActiveBusinessConfig();
-        if (!business) {
-          router.replace('/setup-business' as any);
-        } else {
-          router.replace('/(tabs)' as any);
-        }
-      }
+      await goToCarnet();
     } else {
       triggerErrorFeedback();
-      setErrorMessage(res.error || 'Numéro de téléphone ou code PIN incorrect.');
+      setErrorMessage(res.error || t('Numéro de téléphone ou code PIN incorrect.'));
       setPin('');
       setActiveField('PIN');
     }
@@ -162,16 +174,12 @@ export default function LoginScreen() {
             <View style={styles.flagBlue} />
             <View style={styles.flagRed} />
           </View>
-          <Text variant="title" accessibilityRole="header">
-            SOL Mobile
-          </Text>
-          <Text variant="body" tone="muted" align="center">
-            Tontine et épargne sécurisées en Haïti
-          </Text>
+          <Text variant="title" accessibilityRole="header">{t('SOL Mobile')}</Text>
+          <Text variant="body" tone="muted" align="center">{t('Tontine et épargne sécurisées en Haïti')}</Text>
         </View>
 
         {/* Fields */}
-        <Card style={styles.fieldsCard}>
+        <View style={styles.fieldsCard}>
           <Pressable
             onPress={() => {
               triggerLightImpact();
@@ -179,14 +187,12 @@ export default function LoginScreen() {
             }}
             accessibilityRole="button"
             accessibilityState={{ selected: activeField === 'PHONE' }}
-            accessibilityLabel={`Numéro de téléphone : ${phoneDigits ? formatPhoneDisplay(phoneDigits) : 'vide'}`}
+            accessibilityLabel={t('Numéro de téléphone : {0}', phoneDigits ? formatPhoneDisplay(phoneDigits) : 'vide')}
             style={[styles.field, activeField === 'PHONE' && styles.fieldActive]}
           >
             <View style={styles.fieldLabelRow}>
               <Icon name="phone" size={16} color={activeField === 'PHONE' ? theme.colors.primary : theme.colors.textMuted} />
-              <Text variant="label" tone={activeField === 'PHONE' ? 'primary' : 'muted'}>
-                Numéro de téléphone
-              </Text>
+              <Text variant="label" tone={activeField === 'PHONE' ? 'primary' : 'muted'}>{t('Numéro de téléphone')}</Text>
             </View>
             <View style={styles.phoneRow}>
               <View style={styles.countryChip}>
@@ -206,14 +212,12 @@ export default function LoginScreen() {
             }}
             accessibilityRole="button"
             accessibilityState={{ selected: activeField === 'PIN' }}
-            accessibilityLabel="Code PIN personnel, 4 chiffres"
+            accessibilityLabel={t('Code PIN personnel, 4 chiffres')}
             style={[styles.field, activeField === 'PIN' && styles.fieldActive]}
           >
             <View style={styles.fieldLabelRow}>
               <Icon name="lock" size={16} color={activeField === 'PIN' ? theme.colors.primary : theme.colors.textMuted} />
-              <Text variant="label" tone={activeField === 'PIN' ? 'primary' : 'muted'}>
-                Code PIN personnel (4 chiffres)
-              </Text>
+              <Text variant="label" tone={activeField === 'PIN' ? 'primary' : 'muted'}>{t('Code PIN personnel (4 chiffres)')}</Text>
             </View>
             <View style={styles.pinRow}>
               <PinDots filled={pin.length} active={activeField === 'PIN'} error={!!errorMessage} size="md" />
@@ -221,9 +225,7 @@ export default function LoginScreen() {
             {isSubmitting && (
               <View style={styles.submittingRow}>
                 <ActivityIndicator size="small" color={theme.colors.primary} />
-                <Text variant="label" tone="primary">
-                  Vérification du code PIN…
-                </Text>
+                <Text variant="label" tone="primary">{t('Vérification du code PIN…')}</Text>
               </View>
             )}
           </Pressable>
@@ -238,7 +240,7 @@ export default function LoginScreen() {
               </View>
             </Card>
           )}
-        </Card>
+        </View>
 
         {/* Keypad + main action (thumb zone) */}
         <View style={styles.keypadBlock}>
@@ -249,13 +251,13 @@ export default function LoginScreen() {
             loading={isSubmitting}
             icon={activeField === 'PHONE' ? 'arrow-right' : 'lock'}
             iconPosition={activeField === 'PHONE' ? 'right' : 'left'}
-            label={activeField === 'PHONE' ? 'Continuer vers le code PIN' : 'Se connecter'}
+            label={activeField === 'PHONE' ? t('Continuer') : t('Se connecter')}
             onPress={() => {
               if (activeField === 'PHONE') {
                 if (phoneDigits.length >= 8) {
                   setActiveField('PIN');
                 } else {
-                  setErrorMessage('Veuillez saisir un numéro de 8 chiffres.');
+                  setErrorMessage(t('Veuillez saisir un numéro de 8 chiffres.'));
                 }
               } else {
                 executeLogin(fullPhone, pin);
@@ -264,18 +266,28 @@ export default function LoginScreen() {
           />
         </View>
 
+        {biometricAvailable && !!biometricPhone && (
+          <Button variant="secondary" fullWidth icon="fingerprint" label={t('Déverrouiller avec la biométrie')} onPress={handleBiometric} />
+        )}
+
+        <View style={styles.helpLinks}>
+          <Button
+            variant="ghost"
+            label={t('Code PIN oublié ?')}
+            onPress={() => router.push({ pathname: '/recover-pin', params: { phone: phoneDigits } } as any)}
+          />
+          <Button variant="ghost" label={t('Restaurer une sauvegarde')} onPress={() => router.push('/restore-backup' as any)} />
+        </View>
+
         {/* Register link */}
         <Pressable
           onPress={() => router.push('/register' as any)}
           accessibilityRole="link"
-          accessibilityLabel="Nouveau carnet ? Inscrire un gestionnaire"
+          accessibilityLabel={t('Nouveau carnet ? Inscrire un gestionnaire')}
           style={({ pressed }) => [styles.registerLink, pressed && styles.pressedLink]}
         >
-          <Text variant="body" tone="muted" align="center">
-            Nouveau carnet ?{' '}
-            <Text variant="bodyStrong" tone="primary">
-              Inscrire un gestionnaire
-            </Text>
+          <Text variant="body" tone="muted" align="center">{t('Nouveau carnet ?')}{' '}
+            <Text variant="bodyStrong" tone="primary">{t('Inscrire un gestionnaire')}</Text>
           </Text>
         </Pressable>
       </ScrollView>
@@ -299,16 +311,16 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
 
     brand: { alignItems: 'center', gap: spacing.xs },
     logo: {
-      width: spacing.xxxl + spacing.lg,
-      height: spacing.xxxl + spacing.lg,
-      borderRadius: radius.lg,
+      width: spacing.xxxl,
+      height: spacing.xxxl,
+      borderRadius: radius.md,
       borderCurve: 'continuous',
       backgroundColor: brand.haitiBlue,
       alignItems: 'center',
       justifyContent: 'center',
     },
     logoLetter: { color: brand.white },
-    flagRule: { flexDirection: 'row', width: spacing.xxxl + spacing.lg, height: spacing.xs, marginBottom: spacing.sm, marginTop: spacing.xs },
+    flagRule: { flexDirection: 'row', width: spacing.xxxl, height: spacing.xs, marginBottom: spacing.sm, marginTop: spacing.xs },
     flagBlue: { flex: 1, backgroundColor: brand.haitiBlue },
     flagRed: { flex: 1, backgroundColor: brand.haitiRed },
 
@@ -318,10 +330,10 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
       padding: spacing.md,
       borderRadius: radius.md,
       borderWidth: 1,
-      borderColor: colors.border,
+      borderColor: colors.surfaceAlt,
       backgroundColor: colors.surfaceAlt,
     },
-    fieldActive: { borderWidth: 2, borderColor: colors.primary, backgroundColor: colors.surface },
+    fieldActive: { borderColor: colors.primary, backgroundColor: colors.surface },
     fieldLabelRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     phoneRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     countryChip: {
@@ -329,8 +341,6 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
       justifyContent: 'center',
       paddingHorizontal: spacing.md,
       borderRadius: radius.sm,
-      borderWidth: 1,
-      borderColor: colors.border,
       backgroundColor: colors.surface,
     },
     cursor: { width: 2, height: spacing.xl + spacing.xs, backgroundColor: colors.primary },
@@ -339,6 +349,7 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
     errorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
 
     keypadBlock: { gap: spacing.md },
+    helpLinks: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: spacing.xs },
     registerLink: { minHeight: layout.touchTarget, justifyContent: 'center', borderRadius: radius.md },
     pressedLink: { backgroundColor: colors.surfacePressed },
   });

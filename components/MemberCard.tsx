@@ -1,25 +1,36 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Member } from '@/types';
-import { AmountText, Avatar, Button, Card, ListItem, ProgressBar, StatusBadge, Text } from '@/components/ui';
+import { Avatar, Icon, StatusBadge, Text } from '@/components/ui';
 import { triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface MemberCardProps {
   member: Member;
   isPayoutTurn?: boolean;
+  /** Position in the grouped ledger: rounds the outer corners, hides the last rule. */
+  isFirst?: boolean;
+  isLast?: boolean;
   onQuickCollect?: (member: Member) => void;
-  onPayoutHand?: (member: Member) => void;
 }
 
 /**
- * Member ledger card: rank · name · status · amount, then the two field actions.
- * The payout button is primary only for the member whose turn it is.
+ * Member ledger row: rank · name, status underneath, one collect action (the paid total
+ * lives in the member file: at 360px it would push the status out of the row).
+ * Rows are grouped into one ruled sheet. The member whose turn it is gets a filled
+ * rank; the payout itself lives once, in the hero band (and in the file / SOL tab).
  */
-const MemberCardComponent: React.FC<MemberCardProps> = ({ member, isPayoutTurn = false, onQuickCollect, onPayoutHand }) => {
+const MemberCardComponent: React.FC<MemberCardProps> = ({
+  member,
+  isPayoutTurn = false,
+  isFirst = false,
+  isLast = false,
+  onQuickCollect,
+}) => {
   const router = useRouter();
-  const { colors, spacing } = useTheme();
+  const { colors, spacing, radius, layout } = useTheme();
 
   const handleCardPress = () => {
     triggerLightImpact();
@@ -38,13 +49,6 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({ member, isPayoutTurn =
     }
   };
 
-  const handlePayoutPress = () => {
-    triggerMediumImpact();
-    if (onPayoutHand) {
-      onPayoutHand(member);
-    }
-  };
-
   const isCovered = member.paymentStatusToday === 'PAID_TODAY' || member.paymentStatusToday === 'PAID_IN_ADVANCE';
   const isMultiHands = (member.handsCount || 1) > 1;
   const isCurrentTurn = isPayoutTurn && !member.hasReceivedHand;
@@ -53,64 +57,85 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({ member, isPayoutTurn =
     member.paymentStatusToday === 'PAID_IN_ADVANCE'
       ? `+${member.handsCoveredAhead || 1}`
       : member.paymentStatusToday === 'OVERDUE' && member.overdueRoundsCount > 0
-      ? `${member.overdueRoundsCount} tour${member.overdueRoundsCount > 1 ? 's' : ''}`
+      ? t('{0} tour{1}', member.overdueRoundsCount, member.overdueRoundsCount > 1 ? 's' : '')
       : undefined;
 
-  const receivedPct = isMultiHands ? (member.receivedHandsCount || 0) / (member.handsCount || 1) : 0;
+  const handsNote = isMultiHands
+    ? t('{0}/{1} mains reçues', member.receivedHandsCount || 0, member.handsCount)
+    : member.hasReceivedHand
+    ? t('Main reçue')
+    : null;
 
   return (
-    <Card padding="none" style={[{ overflow: 'hidden' }, isCurrentTurn && { borderColor: colors.primary, borderWidth: 2 }]}>
-      <ListItem
-        onPress={handleCardPress}
-        divider={false}
-        accessibilityLabel={`Ouvrir la fiche de ${member.fullName}`}
-        leading={<Avatar rank={member.rankOrder || member.payoutRank || undefined} name={member.fullName} highlighted={isCurrentTurn} />}
-        title={member.fullName}
-        subtitle={isMultiHands ? `${member.handsCount} mains · rangs ${member.payoutRanks || member.payoutRank}` : member.phoneNumber}
-        meta={
-          <View style={{ gap: spacing.xs }}>
-            <StatusBadge status={member.paymentStatusToday} detail={statusDetail} appearance="inline" />
-            {isMultiHands && (
-              <View style={{ gap: spacing.xs }}>
-                <Text variant="caption" tone="muted">
-                  Mains reçues : {member.receivedHandsCount || 0} / {member.handsCount}
+    <View
+      style={{
+        backgroundColor: colors.surface,
+        borderTopLeftRadius: isFirst ? radius.md : 0,
+        borderTopRightRadius: isFirst ? radius.md : 0,
+        borderBottomLeftRadius: isLast ? radius.md : 0,
+        borderBottomRightRadius: isLast ? radius.md : 0,
+        borderCurve: 'continuous',
+        overflow: 'hidden',
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Pressable
+          onPress={handleCardPress}
+          accessibilityRole="button"
+          accessibilityLabel={t('Ouvrir la fiche de {0}', member.fullName)}
+          style={({ pressed }) => ({
+            flex: 1,
+            minWidth: 0,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: spacing.md,
+            minHeight: layout.rowHeight + spacing.sm,
+            paddingVertical: spacing.md,
+            paddingLeft: spacing.md,
+            paddingRight: spacing.sm,
+            backgroundColor: pressed ? colors.surfacePressed : 'transparent',
+          })}
+        >
+          <Avatar rank={member.rankOrder || member.payoutRank || undefined} name={member.fullName} highlighted={isCurrentTurn} />
+          <View style={{ flex: 1, minWidth: 0, gap: spacing.xs }}>
+            <Text variant="bodyStrong" numberOfLines={1}>
+              {member.fullName}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: spacing.sm, rowGap: spacing.xs }}>
+              <StatusBadge status={member.paymentStatusToday} detail={statusDetail} appearance="inline" />
+              {handsNote ? (
+                <Text variant="caption" tone="muted" numberOfLines={1}>
+                  {handsNote}
                 </Text>
-                <ProgressBar value={receivedPct} size="sm" tone="success" />
-              </View>
-            )}
+              ) : null}
+            </View>
           </View>
-        }
-        trailing={<AmountText amount={member.totalPaidAmount || member.currentBalance || 0} size="small" />}
-      />
+        </Pressable>
 
-      <View style={{ flexDirection: 'row', gap: spacing.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.md }}>
-        <Button
-          variant="secondary"
-          icon={isCovered ? 'plus' : 'cash'}
-          label={isCovered ? 'Avance' : isMultiHands ? `Encaisser (${member.handsCount}m)` : 'Encaisser'}
+        <Pressable
           onPress={handleCollectPress}
-          accessibilityLabel={`${isCovered ? 'Ajouter une avance' : 'Encaisser'} pour ${member.fullName}`}
-          style={{ flex: 1 }}
-        />
-        {member.hasReceivedHand ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <StatusBadge
-              status="HAND_RECEIVED"
-              label={isMultiHands ? `${member.handsCount}/${member.handsCount} perçues` : 'Main remise'}
-            />
-          </View>
-        ) : (
-          <Button
-            variant={isCurrentTurn ? 'primary' : 'secondary'}
-            icon="payout"
-            label={isMultiHands ? `Remettre (${(member.receivedHandsCount || 0) + 1}/${member.handsCount})` : 'Remettre'}
-            onPress={handlePayoutPress}
-            accessibilityLabel={`Remettre la main à ${member.fullName}`}
-            style={{ flex: 1 }}
-          />
-        )}
+          accessibilityRole="button"
+          accessibilityLabel={t('{0} pour {1}', isCovered ? 'Ajouter une avance' : 'Encaisser', member.fullName)}
+          hitSlop={4}
+          style={({ pressed }) => ({
+            width: layout.touchTarget,
+            height: layout.touchTarget,
+            marginRight: spacing.sm,
+            borderRadius: radius.pill,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: pressed ? colors.surfacePressed : isCovered ? colors.surfaceAlt : colors.primarySoft,
+          })}
+        >
+          <Icon name={isCovered ? 'plus' : 'cash'} size={20} color={isCovered ? colors.textMuted : colors.onPrimarySoft} />
+        </Pressable>
       </View>
-    </Card>
+
+
+      {!isLast ? (
+        <View style={{ height: 1, marginLeft: spacing.md + spacing.xxxl - spacing.sm + spacing.md, backgroundColor: colors.divider }} />
+      ) : null}
+    </View>
   );
 };
 

@@ -26,11 +26,11 @@ assert(isBcryptHash(hash), 'hashPin generates a valid $2a$/$2b$ bcrypt hash');
 assert(verifyPinHash('1234', hash), 'verifyPinHash accepts correct PIN with bcrypt');
 assert(!verifyPinHash('0000', hash), 'verifyPinHash rejects wrong PIN with bcrypt');
 
-// 2. Admin PIN test
-const adminPin = '9999';
+// 2. Second PIN test
+const adminPin = '5823';
 const adminHash = hashPin(adminPin);
-assert(verifyPinHash('9999', adminHash), 'Admin PIN 9999 verified with bcrypt');
-assert(!verifyPinHash('9998', adminHash), 'Admin PIN wrong value rejected with bcrypt');
+assert(verifyPinHash('5823', adminHash), 'Second PIN 5823 verified with bcrypt');
+assert(!verifyPinHash('5824', adminHash), 'Second PIN wrong value rejected with bcrypt');
 
 // 3. Backward Compatibility: Plaintext legacy PINs
 assert(verifyPinHash('1234', '1234'), 'Legacy plaintext PIN 1234 verified for smooth migration');

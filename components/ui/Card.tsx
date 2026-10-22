@@ -3,7 +3,7 @@ import { Pressable, StyleProp, View, ViewStyle } from 'react-native';
 
 import { useTheme } from '@/theme';
 
-export type CardTone = 'default' | 'sunken' | 'hero' | 'success' | 'warning' | 'danger' | 'locked' | 'supervisor';
+export type CardTone = 'default' | 'sunken' | 'hero' | 'success' | 'warning' | 'danger' | 'locked';
 export type CardPadding = 'none' | 'sm' | 'md' | 'lg';
 
 export interface CardProps {
@@ -15,19 +15,18 @@ export interface CardProps {
   style?: StyleProp<ViewStyle>;
 }
 
-/** Surface container. `hero` is the blue cagnotte band; status tones tint the card. */
+/** Surface container. `hero` holds the screen's single hero amount; status tones tint the card. */
 export function Card({ children, tone = 'default', padding = 'md', onPress, accessibilityLabel, style }: CardProps) {
   const { colors, radius, spacing, shadows } = useTheme();
 
   const toneStyle: Record<CardTone, ViewStyle> = {
-    default: { backgroundColor: colors.surface, borderColor: colors.border, ...shadows.card },
+    default: { backgroundColor: colors.surface, borderColor: 'transparent', ...shadows.card },
     sunken: { backgroundColor: colors.surfaceAlt, borderColor: colors.surfaceAlt },
-    hero: { backgroundColor: colors.hero, borderColor: colors.hero },
-    success: { backgroundColor: colors.successSoft, borderColor: colors.successLine },
-    warning: { backgroundColor: colors.warningSoft, borderColor: colors.warningLine },
-    danger: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerLine },
+    hero: { backgroundColor: colors.hero, borderColor: 'transparent', ...shadows.card },
+    success: { backgroundColor: colors.successSoft, borderColor: colors.successSoft },
+    warning: { backgroundColor: colors.warningSoft, borderColor: colors.warningSoft },
+    danger: { backgroundColor: colors.dangerSoft, borderColor: colors.dangerSoft },
     locked: { backgroundColor: colors.lockedSoft, borderColor: colors.lockedLine, borderStyle: 'dashed' },
-    supervisor: { backgroundColor: colors.supervisorSoft, borderColor: colors.supervisor },
   };
   const pad = { none: 0, sm: spacing.md, md: spacing.lg, lg: spacing.xl }[padding];
 

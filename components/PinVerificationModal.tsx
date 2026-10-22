@@ -6,6 +6,7 @@ import { Card, Icon, PinDots, PinPad, Text } from '@/components/ui';
 import { triggerLightImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 const MAX_ATTEMPTS = 3;
 
@@ -21,15 +22,15 @@ interface PinVerificationModalProps {
 
 export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   visible,
-  title = 'Confirmation de Sécurité',
-  subtitle = 'Veuillez saisir votre code PIN à 4 chiffres pour valider cette opération.',
+  title = t('Confirmation de Sécurité'),
+  subtitle = t('Veuillez saisir votre code PIN à 4 chiffres pour valider cette opération.'),
   onSuccess,
   onCancel,
   onLockout,
 }) => {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { verifyPin } = useAuth();
+  const { verifyPin, getPinLockMessage } = useAuth();
   const { isSmallScreen, isTablet, height } = useResponsive();
   const isShortScreen = height < 680;
   const [pin, setPin] = useState('');
@@ -62,6 +63,13 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
       setIsLocked(false);
       setIsVerifying(false);
       shakeAnim.setValue(0);
+      // Progressive lockout is global (login + every sensitive action): show it right away
+      getPinLockMessage().then((lock) => {
+        if (lock) {
+          setIsLocked(true);
+          setErrorMessage(lock);
+        }
+      });
     }
   }, [visible]);
 
@@ -87,13 +95,20 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             triggerShake();
             setPin('');
 
+            const lock = await getPinLockMessage();
+            if (lock) {
+              setIsLocked(true);
+              setErrorMessage(lock);
+              return;
+            }
+
             const nextFailures = failureCount + 1;
             setFailureCount(nextFailures);
 
             if (nextFailures >= MAX_ATTEMPTS) {
               setIsLocked(true);
               setErrorMessage(
-                `Accès verrouillé — ${MAX_ATTEMPTS} tentatives incorrectes. Opération annulée par sécurité.`
+                t('Accès verrouillé — {0} tentatives incorrectes. Opération annulée par sécurité.', MAX_ATTEMPTS)
               );
               // Fermeture automatique après 2 secondes
               setTimeout(() => {
@@ -103,7 +118,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
             } else {
               const remaining = MAX_ATTEMPTS - nextFailures;
               setErrorMessage(
-                `Code PIN incorrect — ${remaining} tentative${remaining > 1 ? 's' : ''} restante${remaining > 1 ? 's' : ''}.`
+                t('Code PIN incorrect — {0} tentative{1} restante{2}.', remaining, remaining > 1 ? 's' : '', remaining > 1 ? 's' : '')
               );
             }
           }
@@ -140,34 +155,31 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   const compact = isSmallScreen || isShortScreen;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={isLocked ? undefined : onCancel}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={[styles.overlay, isTablet && styles.overlayTablet]}>
         <View style={[styles.sheet, isTablet && styles.sheetTablet, !isTablet && { paddingBottom: insets.bottom + theme.spacing.lg }]}>
+          {!isTablet && <View style={styles.handle} />}
           <View style={styles.headerRow}>
-            <View style={[styles.iconCircle, isLocked && styles.iconCircleLocked]}>
-              <Icon name={isLocked ? 'alert' : 'lock'} size={24} color={isLocked ? theme.colors.danger : theme.colors.primary} />
-            </View>
             <View style={styles.flexShrink}>
               <Text variant="heading" accessibilityRole="header">
-                {isLocked ? 'Accès verrouillé' : title}
+                {isLocked ? t('Accès verrouillé') : title}
               </Text>
-              <Text variant={compact ? 'caption' : 'body'} tone="muted">
-                {isLocked ? 'Trop de tentatives incorrectes. Cette opération a été annulée par sécurité.' : subtitle}
+              <Text variant="caption" tone={isLocked ? 'danger' : 'muted'}>
+                {isLocked ? t('Saisie du code PIN suspendue pour votre sécurité.') : subtitle}
               </Text>
             </View>
             <Pressable
-              onPress={isLocked ? undefined : onCancel}
-              disabled={isLocked}
+              onPress={onCancel}
               accessibilityRole="button"
-              accessibilityLabel="Fermer"
+              accessibilityLabel={t('Fermer')}
               style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
             >
-              <Icon name="close" size={22} color={isLocked ? theme.colors.borderStrong : theme.colors.textMuted} />
+              <Icon name="close" size={22} color={theme.colors.textMuted} />
             </Pressable>
           </View>
 
           {failureCount > 0 && (
-            <View style={styles.attemptsRow} accessible accessibilityLabel={`${failureCount} tentative(s) incorrecte(s) sur ${MAX_ATTEMPTS}`}>
+            <View style={styles.attemptsRow} accessible accessibilityLabel={t('{0} tentative(s) incorrecte(s) sur {1}', failureCount, MAX_ATTEMPTS)}>
               {[1, 2, 3].map((n) => (
                 <View key={n} style={[styles.attemptDot, n <= failureCount && styles.attemptDotFailed]} />
               ))}
@@ -183,9 +195,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
           {isVerifying && (
             <View style={styles.verifyingRow}>
               <ActivityIndicator size="small" color={theme.colors.primary} />
-              <Text variant="label" tone="primary">
-                Vérification…
-              </Text>
+              <Text variant="label" tone="primary">{t('Vérification…')}</Text>
             </View>
           )}
 
@@ -217,24 +227,17 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
     sheet: {
       width: '100%',
       gap: spacing.lg,
-      paddingTop: spacing.xl,
+      paddingTop: spacing.sm,
       paddingHorizontal: layout.gutter,
       backgroundColor: colors.surface,
-      borderTopLeftRadius: radius.lg,
-      borderTopRightRadius: radius.lg,
+      borderTopLeftRadius: radius.xl,
+      borderTopRightRadius: radius.xl,
+      borderCurve: 'continuous',
     },
+    handle: { alignSelf: 'center', width: spacing.xxl, height: spacing.xs, borderRadius: radius.pill, backgroundColor: colors.borderStrong },
     sheetTablet: { maxWidth: 440, borderRadius: radius.lg, padding: spacing.xl },
 
     headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
-    iconCircle: {
-      width: layout.touchTarget,
-      height: layout.touchTarget,
-      borderRadius: radius.pill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.primarySoft,
-    },
-    iconCircleLocked: { backgroundColor: colors.dangerSoft },
     closeBtn: {
       width: layout.touchTarget,
       height: layout.touchTarget,
@@ -246,7 +249,7 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
     },
 
     attemptsRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.sm },
-    attemptDot: { width: spacing.md, height: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt },
+    attemptDot: { width: spacing.sm, height: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt },
     attemptDotFailed: { backgroundColor: colors.danger },
     dotsBox: { paddingVertical: spacing.sm },
     verifyingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },

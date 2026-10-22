@@ -1,13 +1,15 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, TextInput, Pressable, StyleSheet, Alert, Modal, RefreshControl } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { View, TextInput, Pressable, StyleSheet, Alert, RefreshControl } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 
-import { Header } from '@/components/Header';
+import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import {
+  ActionMenu,
   AmountText,
   Avatar,
+  BottomSheet,
   Button,
   Card,
   EmptyState,
@@ -24,11 +26,10 @@ import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { getFrequencyLabel } from '@/lib/dateCalculations';
 import { calculatePot, calculateCycleTotalHands } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
-import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 /** Segmented track (one segment per hand) is readable up to this many hands. */
 const MAX_SEGMENTS = 12;
@@ -36,8 +37,9 @@ const MAX_SEGMENTS = 12;
 export default function SolMatrixScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { activeCollector, userRole } = useAuth();
-  const { width, isSmallScreen, isTablet, horizontalPadding } = useResponsive();
+  const router = useRouter();
+  const { userRole } = useAuth();
+  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -96,6 +98,10 @@ export default function SolMatrixScreen() {
   };
 
   const handleInitiatePayout = (member: Member) => {
+    if (isReadOnly) {
+      Alert.alert(t('Accès en lecture seule'), t('La remise de la main est réservée aux gestionnaires.'));
+      return;
+    }
     triggerMediumImpact();
     setPayoutTargetMember(member);
     const hands = Math.max(1, member.handsCount || 1);
@@ -106,7 +112,7 @@ export default function SolMatrixScreen() {
 
   const handleConfirmPayoutDetails = () => {
     if (!payoutNote.trim()) {
-      Alert.alert('Justification requise', 'Veuillez saisir une note ou motif pour le déblocage de la main.');
+      Alert.alert(t('Justification requise'), t('Veuillez saisir une note ou motif pour le déblocage de la main.'));
       return;
     }
     setIsPayoutModalOpen(false);
@@ -133,12 +139,12 @@ export default function SolMatrixScreen() {
       );
       triggerSuccessFeedback();
       Alert.alert(
-        'Main Remise avec Succès !',
-        `La cagnotte complète de ${formatCurrency(potValue)} a été décaissée pour ${payoutTargetMember.fullName}.\n\nRappel : Cet enfant reste actif et doit continuer ses cotisations restantes jusqu'à la fin du cycle.`
+        t('Main remise'),
+        t('{0} remis à {1}. Ses cotisations continuent jusqu\'à la fin du cycle.', formatCurrency(potValue), payoutTargetMember.fullName)
       );
       loadData();
     } catch (err: any) {
-      Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
+      Alert.alert(t('Erreur'), err?.message || t('Échec du décaissement.'));
     } finally {
       setPayoutTargetMember(null);
     }
@@ -158,7 +164,22 @@ export default function SolMatrixScreen() {
     <Screen
       edges={['top', 'left', 'right']}
       header={
-        <Header title={business?.name || 'Sol (ROSCA)'} subtitle="Ordre de passage des mains" onRefresh={handleRefresh} />
+        <View style={styles.topBar}>
+          <View style={styles.flexShrink}>
+            <Text variant="title" accessibilityRole="header">{t('Sol')}</Text>
+            <Text variant="caption" tone="muted" numberOfLines={1}>
+              {business?.name ? t('{0} · ordre de passage', business.name) : t('Ordre de passage')}
+            </Text>
+          </View>
+          <SyncBadge onSyncComplete={handleRefresh} compact />
+          <ActionMenu
+            title={t('Cycle')}
+            items={[
+              { label: t('Gestion du cycle'), description: t('Clôturer, renouveler, bilans PDF'), icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
+              { label: t('Clôtures de caisse'), icon: 'calendar', onPress: () => router.push('/closure' as any) },
+            ]}
+          />
+        </View>
       }
       refreshControl={
         <RefreshControl
@@ -171,20 +192,9 @@ export default function SolMatrixScreen() {
     >
       {/* Cycle hero */}
       <Card tone="hero" padding="lg" style={styles.heroCard}>
-        <Text variant="label" tone="onHeroMuted">
-          Cycle en cours · {getFrequencyLabel(business?.frequency || 'DAILY')}
-        </Text>
-        <Text variant="heading" tone="onHero" numberOfLines={2}>
-          {business?.name || 'Groupe Sol'}
-        </Text>
-
         <View style={styles.heroPot}>
-          <Text variant="caption" tone="onHeroMuted">
-            Cagnotte par tour
-          </Text>
           <AmountText amount={potValue} size="hero" tone="onHero" />
-          <Text variant="body" tone="onHeroMuted">
-            {totalHandsCount} mains × {formatCurrency(business?.contributionAmount || 250)}
+          <Text variant="body" tone="onHeroMuted">{t('Cagnotte du tour · {0} mains × {1}', totalHandsCount, formatCurrency(business?.contributionAmount || 250))}
           </Text>
         </View>
 
@@ -193,7 +203,7 @@ export default function SolMatrixScreen() {
             <View
               accessible
               accessibilityRole="progressbar"
-              accessibilityLabel={`${totalHandsTouched} main(s) remise(s) sur ${totalHandsCount}`}
+              accessibilityLabel={t('{0} main(s) remise(s) sur {1}', totalHandsTouched, totalHandsCount)}
               style={styles.segments}
             >
               {Array.from({ length: totalHandsCount }).map((_, i) => (
@@ -201,14 +211,12 @@ export default function SolMatrixScreen() {
               ))}
             </View>
           ) : (
-            <ProgressBar value={progressRatio} tone="onHero" accessibilityLabel="Mains remises" />
+            <ProgressBar value={progressRatio} accessibilityLabel={t('Mains remises')} />
           )}
           <View style={styles.heroProgressRow}>
             <Text variant="label" tone="onHero">
-              {totalHandsTouched} / {totalHandsCount} mains remises
-            </Text>
-            <Text variant="label" tone="onHero">
-              {Math.round(progressRatio * 100)} %
+              {totalHandsTouched} / {totalHandsCount}{' '}{t('mains remises')}</Text>
+            <Text variant="caption" tone="onHeroMuted">{t('Tour {0} sur {1}', currentRound, totalHandsCount)}
             </Text>
           </View>
         </View>
@@ -219,145 +227,123 @@ export default function SolMatrixScreen() {
           <View style={styles.noticeRow}>
             <Icon name="check" size={22} color={theme.colors.success} strokeWidth={2.5} />
             <View style={styles.flexShrink}>
-              <Text variant="subheading" tone="success">
-                Cycle terminé
-              </Text>
-              <Text variant="body" tone="success">
-                Les {totalHandsCount} mains de ce cycle ont été remises.
-              </Text>
+              <Text variant="subheading" tone="success">{t('Cycle terminé')}</Text>
+              <Text variant="body" tone="success">{t('Les {0} mains de ce cycle ont été remises.', totalHandsCount)}</Text>
             </View>
           </View>
         </Card>
       )}
 
-      <SectionHeader title="Ordre de passage" count={members.length} />
+      <SectionHeader title={t('Adhérents')} count={members.length} />
 
       {members.length === 0 ? (
         <Card padding="none">
-          <EmptyState icon="users" title="Aucun adhérent dans ce cycle" message="Inscrivez les enfants du sol pour établir l'ordre de passage." />
+          <EmptyState icon="users" title={t('Aucun adhérent dans ce cycle')} message={t('Inscrivez les enfants du sol pour établir l\'ordre de passage.')} />
         </Card>
       ) : (
-        members.map((member, index) => {
-          const memberHandsCount = Math.max(1, member.handsCount || 1);
-          const receivedCount = Number(member.receivedHandsCount || 0);
-          const hasReceived = receivedCount >= memberHandsCount || Boolean(member.hasReceivedHand || member.hasReceivedPayout);
+        <Card padding="none" style={styles.ledger}>
+          {members.map((member, index) => {
+            const memberHandsCount = Math.max(1, member.handsCount || 1);
+            const receivedCount = Number(member.receivedHandsCount || 0);
+            const hasReceived = receivedCount >= memberHandsCount || Boolean(member.hasReceivedHand || member.hasReceivedPayout);
 
-          const ranksList = (member.payoutRanks ? String(member.payoutRanks).split(',') : [String(member.payoutRank || '')])
-            .map((r) => Number(r.trim()))
-            .filter((n) => !isNaN(n) && n > 0);
-          const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
-          const isMulti = memberHandsCount > 1;
+            const ranksList = (member.payoutRanks ? String(member.payoutRanks).split(',') : [String(member.payoutRank || '')])
+              .map((r) => Number(r.trim()))
+              .filter((n) => !isNaN(n) && n > 0);
+            const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
+            const isMulti = memberHandsCount > 1;
+            const isLast = index === members.length - 1;
+            const payoutLabel = isMulti ? t('Remettre la main {0}/{1}', receivedCount + 1, memberHandsCount) : t('Remettre la main');
 
-          return (
-            <Card
-              key={`${member.id}-${index}`}
-              padding="none"
-              style={[styles.rankCard, isNextTurn && styles.rankCardCurrent, hasReceived && styles.rankCardDone]}
-            >
-              <ListItem
-                divider={false}
-                leading={<Avatar rank={member.rankOrder || member.payoutRank || index + 1} highlighted={isNextTurn} />}
-                title={member.fullName}
-                subtitle={member.phoneNumber}
-                meta={
-                  <View style={styles.meta}>
-                    {isNextTurn && <StatusBadge status="UPCOMING_PAYOUT" appearance="inline" />}
-                    {hasReceived && (
-                      <StatusBadge
-                        status="HAND_RECEIVED"
-                        appearance="inline"
-                        label={isMulti ? `${memberHandsCount}/${memberHandsCount} mains reçues` : 'Main reçue'}
-                        detail={!isMulti && member.handReceivedDate ? formatDateShort(member.handReceivedDate) : undefined}
+            return (
+              <View key={`${member.id}-${index}`} style={isNextTurn && styles.rowCurrent}>
+                <ListItem
+                  divider={false}
+                  leading={<Avatar rank={member.rankOrder || member.payoutRank || index + 1} highlighted={isNextTurn} />}
+                  title={member.fullName}
+                  meta={
+                    <View style={styles.meta}>
+                      {isNextTurn && <StatusBadge status="UPCOMING_PAYOUT" appearance="inline" />}
+                      {hasReceived && (
+                        <StatusBadge
+                          status="HAND_RECEIVED"
+                          appearance="inline"
+                          label={isMulti ? t('{0}/{1} mains reçues', memberHandsCount, memberHandsCount) : t('Main reçue')}
+                          detail={!isMulti && member.handReceivedDate ? formatDateShort(member.handReceivedDate) : undefined}
+                        />
+                      )}
+                      {isMulti && !hasReceived && (
+                        <>
+                          <Text variant="caption" tone="muted">
+                            {receivedCount}/{memberHandsCount}{' '}{t('mains reçues · rangs')}{' '}{member.payoutRanks || member.payoutRank}
+                          </Text>
+                        </>
+                      )}
+                      {!isNextTurn && !hasReceived && !isMulti && (
+                        <Text variant="caption" tone="muted">{t('En attente de son tour')}</Text>
+                      )}
+                    </View>
+                  }
+                  trailing={
+                    isNextTurn ? (
+                      <Button
+                        label={t('Remettre')}
+                        onPress={() => handleInitiatePayout(member)}
+                        accessibilityLabel={`${payoutLabel} à ${member.fullName}`}
                       />
-                    )}
-                    {isMulti && !hasReceived && (
-                      <>
-                        <Text variant="caption" tone="muted">
-                          {receivedCount}/{memberHandsCount} mains reçues · rangs {member.payoutRanks || member.payoutRank}
-                        </Text>
-                        <ProgressBar value={receivedCount / memberHandsCount} size="sm" tone="success" />
-                      </>
-                    )}
-                  </View>
-                }
-              />
-              {!hasReceived && (
-                <View style={styles.rankAction}>
-                  <Button
-                    variant={isNextTurn ? 'primary' : 'secondary'}
-                    icon="payout"
-                    fullWidth
-                    label={isMulti ? `Remettre la main (${receivedCount + 1}/${memberHandsCount})` : 'Remettre la main'}
-                    onPress={() => handleInitiatePayout(member)}
-                    accessibilityLabel={`Remettre la main à ${member.fullName}`}
-                  />
-                </View>
-              )}
-            </Card>
-          );
-        })
+                    ) : !hasReceived ? (
+                      <Pressable
+                        onPress={() => handleInitiatePayout(member)}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('{0} à {1} (hors tour)', payoutLabel, member.fullName)}
+                        hitSlop={4}
+                        style={({ pressed }) => [styles.roundAction, pressed && styles.pressed]}
+                      >
+                        <Icon name="payout" size={20} color={theme.colors.textMuted} />
+                      </Pressable>
+                    ) : undefined
+                  }
+                />
+                {!isLast && <View style={styles.rule} />}
+              </View>
+            );
+          })}
+        </Card>
       )}
 
       {/* Payout justification */}
-      <Modal visible={isPayoutModalOpen} transparent animationType="fade" onRequestClose={() => setIsPayoutModalOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxWidth: Math.min(420, width - theme.spacing.xxl) }]}>
-            <Pressable
-              onPress={() => setIsPayoutModalOpen(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Fermer"
-              style={({ pressed }) => [styles.modalClose, pressed && styles.pressed]}
-            >
-              <Icon name="close" size={22} color={theme.colors.textMuted} />
-            </Pressable>
-
-            <View style={styles.modalHeader}>
-              <View style={styles.modalIcon}>
-                <Icon name="payout" size={28} color={theme.colors.primary} />
-              </View>
-              <Text variant="title" align="center" accessibilityRole="header">
-                Remise de la main
-              </Text>
-              <AmountText amount={potValue} size="large" align="center" />
-              <Text variant="body" tone="muted" align="center">
-                pour {payoutTargetMember?.fullName} (main #{payoutTargetMember?.rankOrder || payoutTargetMember?.payoutRank || 1})
-              </Text>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text variant="label">Justification du décaissement (obligatoire)</Text>
-              <TextInput
-                style={styles.textArea}
-                multiline
-                numberOfLines={3}
-                placeholder="Ex : remise effectuée en mains propres au marché"
-                placeholderTextColor={theme.colors.textPlaceholder}
-                value={payoutNote}
-                onChangeText={setPayoutNote}
-                accessibilityLabel="Justification du décaissement"
-              />
-            </View>
-
-            <View style={styles.infoBox}>
-              <Icon name="info" size={18} color={theme.colors.info} />
-              <Text variant="caption" style={[styles.flexShrink, { color: theme.colors.info }]}>
-                L'adhérent reste dans le carnet et doit continuer ses cotisations restantes.
-              </Text>
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <Button label="Annuler" variant="secondary" onPress={() => setIsPayoutModalOpen(false)} style={styles.flexOne} />
-              <Button label="Valider avec PIN" icon="lock" onPress={handleConfirmPayoutDetails} style={styles.flexTwo} />
-            </View>
-          </View>
+      <BottomSheet
+        visible={isPayoutModalOpen}
+        onClose={() => setIsPayoutModalOpen(false)}
+        title={t('Remettre la main')}
+        subtitle={t('{0} · rang {1}', payoutTargetMember?.fullName ?? '', payoutTargetMember?.rankOrder || payoutTargetMember?.payoutRank || 1)}
+        footer={<Button size="lg" fullWidth label={t('Valider avec le PIN')} icon="lock" onPress={handleConfirmPayoutDetails} />}
+      >
+        <AmountText amount={potValue} size="hero" align="center" />
+        <View style={styles.inputGroup}>
+          <Text variant="label">{t('Motif')}</Text>
+          <TextInput
+            style={styles.textArea}
+            multiline
+            numberOfLines={3}
+            placeholder={t('Ex : remise effectuée en mains propres au marché')}
+            placeholderTextColor={theme.colors.textPlaceholder}
+            value={payoutNote}
+            onChangeText={setPayoutNote}
+            accessibilityLabel={t('Motif de la remise')}
+          />
         </View>
-      </Modal>
+        <View style={styles.noticeRow}>
+          <Icon name="info" size={16} color={theme.colors.textMuted} />
+          <Text variant="caption" tone="muted" style={styles.flexShrink}>{t('L\'adhérent reste dans le carnet et continue ses cotisations jusqu\'à la fin du cycle.')}</Text>
+        </View>
+      </BottomSheet>
 
       {/* 4-Digit PIN Security Modal for Payout */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Validation Sécurisée de la Main"
-        subtitle={`Saisissez votre code PIN gestionnaire pour autoriser le décaissement de ${formatCurrency(potValue)}.`}
+        title={t('Confirmer la remise')}
+        subtitle={t('{0} pour {1}', formatCurrency(potValue), payoutTargetMember?.fullName ?? '')}
         onSuccess={handlePinSuccessPayout}
         onCancel={() => setIsPinModalOpen(false)}
       />
@@ -368,62 +354,40 @@ export default function SolMatrixScreen() {
 const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
   StyleSheet.create({
     flexShrink: { flex: 1, minWidth: 0 },
-    flexOne: { flexGrow: 1, flexBasis: 0 },
-    flexTwo: { flexGrow: 2, flexBasis: 0 },
     pressed: { backgroundColor: colors.surfacePressed },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingLeft: layout.gutter,
+      paddingRight: spacing.sm,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.xs,
+    },
 
-    heroCard: { gap: spacing.xs },
-    heroPot: { marginTop: spacing.md },
-    heroProgress: { marginTop: spacing.md, gap: spacing.sm },
+    heroCard: { gap: spacing.lg },
+    heroPot: { gap: spacing.xs },
+    heroProgress: { gap: spacing.sm },
     heroProgressRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
     segments: { flexDirection: 'row', gap: spacing.xs },
-    segment: { flex: 1, height: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.heroTrack },
+    segment: { flex: 1, height: spacing.xs, borderRadius: radius.pill, backgroundColor: colors.heroTrack },
     segmentDone: { backgroundColor: colors.heroTrackActive },
 
     noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
 
-    rankCard: { overflow: 'hidden' },
-    rankCardCurrent: { borderColor: colors.primary, borderWidth: 2 },
-    rankCardDone: { backgroundColor: colors.surfaceAlt },
+    ledger: { overflow: 'hidden' },
+    rowCurrent: { backgroundColor: colors.primarySoft },
+    rule: { height: 1, marginLeft: spacing.md + spacing.xxxl - spacing.sm + spacing.md, backgroundColor: colors.divider },
     meta: { gap: spacing.xs },
-    rankAction: { paddingHorizontal: spacing.md, paddingBottom: spacing.md },
-
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: colors.overlay,
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: layout.gutter,
-    },
-    modalCard: {
-      width: '100%',
-      backgroundColor: colors.surface,
-      borderRadius: radius.lg,
-      borderCurve: 'continuous',
-      padding: spacing.xl,
-      gap: spacing.lg,
-    },
-    modalClose: {
-      position: 'absolute',
-      top: spacing.sm,
-      right: spacing.sm,
-      zIndex: 1,
+    roundAction: {
       width: layout.touchTarget,
       height: layout.touchTarget,
       borderRadius: radius.pill,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: colors.surfaceAlt,
     },
-    modalHeader: { alignItems: 'center', gap: spacing.xs },
-    modalIcon: {
-      width: spacing.xxxl + spacing.lg,
-      height: spacing.xxxl + spacing.lg,
-      borderRadius: radius.pill,
-      backgroundColor: colors.primarySoft,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: spacing.sm,
-    },
+
     inputGroup: { gap: spacing.sm },
     textArea: {
       minHeight: layout.actionHeight + spacing.xl,
@@ -436,15 +400,4 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
       ...typography.body,
       textAlignVertical: 'top',
     },
-    infoBox: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: spacing.sm,
-      padding: spacing.md,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.infoLine,
-      backgroundColor: colors.infoSoft,
-    },
-    modalBtnRow: { flexDirection: 'row', gap: spacing.sm },
   });

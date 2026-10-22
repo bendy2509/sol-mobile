@@ -285,14 +285,14 @@ export function calculateCoverageDate(params: {
 export const calculateNextCoverage = calculateCoverageDate;
 
 /**
- * Official lock notice shown when a manager tries to reverse a transaction from a closed cycle.
+ * Notice shown before reversing a transaction from a closed cycle.
  */
-export const CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE =
-  "Action d'un cycle clôturé - Seul l'administrateur peut l'annuler sur demande";
+export const CLOSED_CYCLE_REVERSAL_NOTICE =
+  "Opération d'un cycle clôturé : l'annulation est archivée et ne modifie pas le cycle en cours. Code PIN et motif obligatoires.";
 
 /**
  * Returns true when a transaction was recorded before the current cycle boundary
- * (i.e. it belongs to a closed / archived cycle and is immutable for managers).
+ * (i.e. it belongs to a closed / archived cycle: its reversal is archival only).
  */
 export function isTransactionFromClosedCycle(
   createdAtLocal: string | null | undefined,

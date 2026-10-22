@@ -10,7 +10,6 @@ import {
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { getActiveBusinessConfig, getCurrentCycleBoundary } from './businessRepository';
 import {
-  CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE,
   isTransactionFromClosedCycle,
   calculateCoverageDate,
   calculateHandsCount,
@@ -481,14 +480,13 @@ export async function reverseTransaction(params: {
   reason: string;
   collectorId?: string;
   userRole?: UserRole;
-  adminId?: string;
 }): Promise<Transaction> {
   const { transactionId, reason } = params;
 
   // Security Guard: read-only profiles can never reverse transactions
   if (params.userRole === 'READ_ONLY' || params.userRole === 'USER') {
     throw new Error(
-      "Accès refusé : Votre profil est en consultation seule. Contactez votre gestionnaire ou l'administrateur SOL."
+      'Accès refusé : votre profil est en consultation seule. Seul le gestionnaire du carnet peut annuler une opération.'
     );
   }
 
@@ -526,13 +524,11 @@ export async function reverseTransaction(params: {
     throw new Error("Impossible d'annuler une opération d'annulation.");
   }
 
-  // Closed-cycle Guard: past-cycle entries are immutable for managers, only ADMIN may reverse them on request
+  // Closed-cycle entries: the manager may reverse them (PIN verified by the UI + mandatory reason above);
+  // the reversal is archival only and never touches current-cycle counters (see step 3).
   const ownerCollectorId = original.collector_id || collectorId;
   const cycleBoundary = await getCurrentCycleBoundary(ownerCollectorId);
   const isClosedCycleTx = isTransactionFromClosedCycle(original.created_at_local, cycleBoundary);
-  if (isClosedCycleTx && params.userRole !== 'ADMIN') {
-    throw new Error(`${CLOSED_CYCLE_REVERSAL_LOCK_MESSAGE}.`);
-  }
 
   const activeBusiness = await getActiveBusinessConfig(ownerCollectorId);
 
@@ -560,7 +556,7 @@ export async function reverseTransaction(params: {
     handsCount,
   });
 
-  const actorLabel = params.userRole === 'ADMIN' ? 'ADMIN' : 'GESTIONNAIRE';
+  const actorLabel = isClosedCycleTx ? 'CYCLE CLÔTURÉ' : 'GESTIONNAIRE';
   const reversalNote = `ANNULATION ${actorLabel} [Réf #${original.id.slice(0, 8)}] : ${reason.trim()}`;
 
   await db.withTransactionAsync(async () => {
@@ -579,7 +575,7 @@ export async function reverseTransaction(params: {
       [
         reversalId,
         original.client_id,
-        params.adminId || collectorId,
+        collectorId,
         original.sol_group_id,
         original.business_id,
         original.amount,
@@ -613,7 +609,7 @@ export async function reverseTransaction(params: {
 
   // 4. Record to Audit Logs
   await recordAuditLog({
-    userId: params.adminId || params.collectorId || collectorId,
+    userId: params.collectorId || collectorId,
     userRole: params.userRole || 'MANAGER',
     action: 'REVERSE_TRANSACTION',
     entityType: 'TRANSACTION',
@@ -632,7 +628,7 @@ export async function reverseTransaction(params: {
     id: reversalId,
     clientId: original.client_id,
     memberId: original.client_id,
-    collectorId: params.adminId || collectorId,
+    collectorId,
     businessId: original.business_id || undefined,
     solGroupId: original.sol_group_id || undefined,
     amount: original.amount,
