@@ -127,6 +127,13 @@ Le schéma Prisma (`prisma/schema.prisma`) et la base du téléphone ont diverg�
 
 ## Point 5 — Ce que je change dans l'application (PR 2, à mon niveau)
 
+**Fait sur `fix/supabase-securite` :**
+- **L'interrupteur `CLOUD_SYNC_ENABLED` (`lib/supabase.ts`) est à `false`,** et tous les appels Supabase le vérifient. Il ne faut le remettre à `true` que derrière un serveur qui identifie chaque gestionnaire.
+- **Point 1, fait :** la connexion de secours est retirée. Le compte vit sur le téléphone, et un nouvel appareil s'installe depuis la sauvegarde chiffrée.
+- **Point 2, fait :** le moteur de synchro ne démarre plus. La pastille et la ligne « Synchronisation » sont masquées.
+- **Point 3, fait :** plus d'effacement d'adhérents ni d'opérations à distance, et plus d'envoi du journal d'audit.
+- **Point 4, sans objet tant que la synchro est coupée :** les filtres `.or()` restants ne sont plus appelés, et ils ne reçoivent que des identifiants internes. Ils seront à revoir si la synchro revient.
+
 1. **Connexion de secours :** elle ne lit plus `pin_hash` depuis Supabase, et l'acceptation d'un champ `pin` en clair disparaît. Avec l'option A, cette connexion est retirée ; la récupération passe par le code de récupération et la sauvegarde chiffrée.
 2. **Synchronisation :** elle est désactivée par un réglage tant que l'option B ou C n'est pas en place, au lieu d'échouer en silence toutes les 30 secondes.
 3. **Effacements distants :** l'application n'efface plus d'opérations à distance.

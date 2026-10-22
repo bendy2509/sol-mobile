@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { SyncState } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { markClientsSynced, markTransactionsSynced } from './transactionRepo';
@@ -73,6 +73,8 @@ class SyncEngine {
 
   public startAutoSync(intervalMs = 30000) {
     if (this.timer) clearInterval(this.timer);
+    // Nothing to send while cloud sync is off (no 30-second silent failures)
+    if (!isCloudSyncActive) return;
     this.timer = setInterval(() => {
       this.syncAll().catch(() => {});
     }, intervalMs);
@@ -95,7 +97,7 @@ class SyncEngine {
     this.notify();
 
     try {
-      if (!isSupabaseConfigured) {
+      if (!isCloudSyncActive) {
         await this.refreshPendingCount();
         this.state.isSyncing = false;
         this.state.isOnline = false;
