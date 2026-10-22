@@ -23,6 +23,15 @@ export function setDateLanguage(language: 'fr' | 'ht'): void {
   dateLanguage = language;
 }
 
+/**
+ * A date-only value ('2026-10-23') is a calendar day, not an instant: new Date() would read
+ * it as midnight UTC and show the previous day in Haiti (UTC−4/−5). Read it as local midnight.
+ */
+function parseDisplayDate(value: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+}
+
 const HT_MONTHS = ['jan', 'fev', 'mas', 'avr', 'me', 'jen', 'jiy', 'out', 'sep', 'okt', 'nov', 'des'];
 
 function formatKreyolDate(date: Date, withYear: boolean, withTime: boolean): string {
@@ -34,7 +43,7 @@ function formatKreyolDate(date: Date, withYear: boolean, withTime: boolean): str
 export function formatDate(isoString: string): string {
   if (!isoString) return '';
   try {
-    const date = new Date(isoString);
+    const date = parseDisplayDate(isoString);
     if (dateLanguage === 'ht') return formatKreyolDate(date, true, true);
     return date.toLocaleDateString('fr-FR', {
       day: '2-digit',
@@ -51,7 +60,7 @@ export function formatDate(isoString: string): string {
 export function formatDateShort(isoString: string): string {
   if (!isoString) return '';
   try {
-    const date = new Date(isoString);
+    const date = parseDisplayDate(isoString);
     if (dateLanguage === 'ht') return formatKreyolDate(date, true, false);
     return date.toLocaleDateString('fr-FR', {
       day: '2-digit',
@@ -66,7 +75,7 @@ export function formatDateShort(isoString: string): string {
 export function formatDayMonth(isoString: string): string {
   if (!isoString) return '';
   try {
-    const date = new Date(isoString);
+    const date = parseDisplayDate(isoString);
     if (dateLanguage === 'ht') return formatKreyolDate(date, false, false);
     return date.toLocaleDateString('fr-FR', {
       day: '2-digit',
