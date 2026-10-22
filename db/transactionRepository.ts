@@ -5,10 +5,23 @@ import {
   SyncStatus,
   Transaction,
   TransactionType,
+  UserRole,
 } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
-import { getActiveBusinessConfig } from './businessRepository';
-import { calculateCoverageDate, calculateHandsCount } from '@/services/financialService';
+import { getActiveBusinessConfig, getCurrentCycleBoundary } from './businessRepository';
+import {
+  isTransactionFromClosedCycle,
+  calculateCoverageDate,
+  calculateHandsCount,
+  calculateCycleContributionLimits,
+  calculateCycleTotalHands,
+  reconstructClientFinancialTimeline,
+} from '@/services/financialService';
+import { recordAuditLog } from '@/services/auditService';
+import { localDateString } from '@/lib/dates';
+
+// In-memory Mutex to prevent double-submit collisions even during lag or double-clicking
+const inFlightTransactions = new Set<string>();
 
 export async function createTransaction(data: {
   clientId: string;
@@ -20,140 +33,240 @@ export async function createTransaction(data: {
   paymentMethod?: string;
   handsCovered?: number;
   note?: string;
+  idempotencyKey?: string;
 }): Promise<Transaction> {
-  const db = await getDatabase();
-  const collectorId = data.collectorId || (await getActiveCollectorId());
-  const activeBusiness = await getActiveBusinessConfig();
-  const businessId = data.businessId !== undefined ? data.businessId : activeBusiness?.id || null;
-  const id = uuidv4();
-  const now = new Date().toISOString();
-  const todayStr = now.split('T')[0];
-  const paymentMethod = data.paymentMethod || 'CASH';
+  const { clientId, amount } = data;
 
-  // Fetch current client record
-  const client = await db.getFirstAsync<{
-    current_balance: number;
-    total_paid_amount: number;
-    paid_hands_count: number;
-    paid_until_date: string | null;
-    full_name: string;
-    phone_number: string;
-  }>(
-    `SELECT current_balance, total_paid_amount, paid_hands_count, paid_until_date, full_name, phone_number 
-     FROM clients WHERE id = ?`,
-    [data.clientId]
-  );
-
-  if (!client) {
-    throw new Error(`Adhérent introuvable dans le système local.`);
+  // Domain Validation 1: Positive Amount
+  if (!amount || amount <= 0 || isNaN(amount)) {
+    throw new Error('Le montant de la transaction doit être strictement supérieur à 0 HTG.');
   }
 
-  const unitAmount = activeBusiness?.contributionAmount || 250;
-  const isContribution =
-    data.type === 'CONTRIBUTION' ||
-    data.type === 'SABOTAY_DEPOSIT' ||
-    data.type === 'SOL_CONTRIBUTION';
-
-  const isPayout =
-    data.type === 'HAND_PAYOUT' ||
-    data.type === 'SOL_PAYOUT' ||
-    data.type === 'WITHDRAWAL';
-
-  const calculatedHandsCovered =
-    data.handsCovered ||
-    (isContribution ? calculateHandsCount(data.amount, unitAmount) : 1);
-
-  const currentBalance = Number(client.current_balance || 0);
-  const currentTotalPaid = Number(client.total_paid_amount || currentBalance);
-  const currentPaidHands = Number(client.paid_hands_count || 0);
-
-  let newBalance = currentBalance;
-  let newTotalPaid = currentTotalPaid;
-  let newPaidHands = currentPaidHands;
-  let newPaidUntilDate = client.paid_until_date || todayStr;
-
-  if (isContribution) {
-    newBalance = currentBalance + data.amount;
-    newTotalPaid = currentTotalPaid + data.amount;
-    newPaidHands = currentPaidHands + calculatedHandsCovered;
-
-    // Calculate exact coverage date using central financial service
-    const coverage = calculateCoverageDate({
-      todayStr,
-      handsCovered: calculatedHandsCovered,
-      frequency: activeBusiness?.frequency || 'DAILY',
-      currentPaidUntilDate: client.paid_until_date,
-    });
-    newPaidUntilDate = coverage.paidUntilDate;
-  } else if (isPayout) {
-    newBalance = Math.max(0, currentBalance - data.amount);
+  // Domain Validation 2: In-flight Mutex Lock
+  const lockKey = data.idempotencyKey || `${clientId}_${data.type}_${amount}`;
+  if (inFlightTransactions.has(lockKey)) {
+    throw new Error('Une opération identique est déjà en cours de traitement. Veuillez patienter.');
   }
 
-  let persistedType: TransactionType = 'SOL_CONTRIBUTION';
-  if (data.type === 'SABOTAY_DEPOSIT') persistedType = 'SABOTAY_DEPOSIT';
-  else if (data.type === 'SOL_CONTRIBUTION' || data.type === 'CONTRIBUTION') persistedType = 'SOL_CONTRIBUTION';
-  else if (data.type === 'HAND_PAYOUT' || data.type === 'SOL_PAYOUT') persistedType = 'SOL_PAYOUT';
-  else if (data.type === 'WITHDRAWAL') persistedType = 'WITHDRAWAL';
+  inFlightTransactions.add(lockKey);
 
-  // Atomic database transaction
-  await db.withTransactionAsync(async () => {
-    // 1. Insert transaction record
-    await db.runAsync(
-      `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-      [
-        id,
-        data.clientId,
-        collectorId,
-        data.solGroupId || null,
-        businessId,
-        data.amount,
-        calculatedHandsCovered,
-        persistedType,
-        paymentMethod,
-        data.note || null,
-        now,
-      ]
+  try {
+    const db = await getDatabase();
+    const collectorId = data.collectorId || (await getActiveCollectorId());
+    const activeBusiness = await getActiveBusinessConfig();
+    const businessId = data.businessId !== undefined ? data.businessId : activeBusiness?.id || null;
+    const now = new Date().toISOString();
+    const todayStr = localDateString();
+    const paymentMethod = data.paymentMethod || 'CASH';
+    const idempotencyKey = data.idempotencyKey || uuidv4();
+
+    // Check if transaction with this idempotency key already exists (Idempotent Guard)
+    if (data.idempotencyKey) {
+      const existing = await db.getFirstAsync<{ id: string }>(
+        `SELECT id FROM transactions WHERE idempotency_key = ?`,
+        [data.idempotencyKey]
+      );
+      if (existing) {
+        const fullExisting = await getTransactions({ clientId, limit: 1 });
+        if (fullExisting.length > 0) return fullExisting[0];
+      }
+    }
+
+    // Fetch current client record
+    const client = await db.getFirstAsync<{
+      current_balance: number;
+      total_paid_amount: number;
+      paid_hands_count: number;
+      paid_until_date: string | null;
+      full_name: string;
+      phone_number: string;
+      hands_count?: number;
+      received_hands_count?: number;
+      has_received_hand?: number;
+      has_received_payout?: number;
+    }>(
+      `SELECT current_balance, total_paid_amount, paid_hands_count, paid_until_date, full_name, phone_number, hands_count, received_hands_count, has_received_hand, has_received_payout 
+       FROM clients WHERE id = ?`,
+      [clientId]
     );
 
-    // 2. Update client financial state & coverage date
-    await db.runAsync(
-      `UPDATE clients 
-       SET current_balance = ?, total_paid_amount = ?, paid_hands_count = ?, paid_until_date = ?, sync_status = 'PENDING' 
-       WHERE id = ?`,
-      [newBalance, newTotalPaid, newPaidHands, newPaidUntilDate, data.clientId]
+    if (!client) {
+      throw new Error(`Adhérent introuvable dans le système local.`);
+    }
+
+    const unitAmount = activeBusiness?.contributionAmount || 250;
+    const isContribution =
+      data.type === 'CONTRIBUTION' ||
+      data.type === 'SABOTAY_DEPOSIT' ||
+      data.type === 'SOL_CONTRIBUTION';
+
+    const isPayout =
+      data.type === 'HAND_PAYOUT' ||
+      data.type === 'SOL_PAYOUT' ||
+      data.type === 'WITHDRAWAL';
+
+    const calculatedHandsCovered =
+      data.handsCovered && data.handsCovered > 0
+        ? data.handsCovered
+        : isContribution
+        ? calculateHandsCount(amount, unitAmount)
+        : 1;
+
+    const currentBalance = Number(client.current_balance || 0);
+    const currentTotalPaid = Number(client.total_paid_amount || currentBalance);
+    const currentPaidHands = Number(client.paid_hands_count || 0);
+    const memberHandsCount = Math.max(1, Number(client.hands_count || 1));
+    const currentReceivedHands = Number(
+      client.received_hands_count !== null && client.received_hands_count !== undefined
+        ? client.received_hands_count
+        : client.has_received_hand || client.has_received_payout
+        ? memberHandsCount
+        : 0
     );
 
-    // 3. If payout, flag hand as received but KEEP client in cycle
-    if (data.type === 'HAND_PAYOUT' || data.type === 'SOL_PAYOUT') {
+    let newBalance = currentBalance;
+    let newTotalPaid = currentTotalPaid;
+    let newPaidHands = currentPaidHands;
+    let newPaidUntilDate = client.paid_until_date || todayStr;
+    let newReceivedHands = currentReceivedHands;
+    let isFullyReceived = currentReceivedHands >= memberHandsCount ? 1 : 0;
+
+    if (isContribution) {
+      const allClientsRows = await db.getAllAsync<{ hands_count: number | null }>(
+        `SELECT hands_count FROM clients WHERE collector_id = ?`,
+        [collectorId]
+      );
+      const totalCycleHands = calculateCycleTotalHands(allClientsRows) || (activeBusiness?.totalSlots || 10);
+
+      const limits = calculateCycleContributionLimits({
+        currentPaidHands,
+        totalCycleHands,
+        memberHandsCount,
+        unitAmount,
+      });
+
+      if (limits.isCycleCompleted) {
+        throw new Error(
+          `Plafond du cycle atteint. ${client.full_name} a déjà complété toutes ses cotisations (${currentPaidHands}/${limits.maxAllowedHands} mains - ${limits.maxPotAmount} HTG).`
+        );
+      }
+
+      if (calculatedHandsCovered > limits.remainingHands) {
+        throw new Error(
+          `Dépassement du montant total du cycle. ${client.full_name} a déjà cotisé ${currentPaidHands}/${limits.maxAllowedHands} mains. Il ne peut cotiser que ${limits.remainingHands} main(s) restante(s) maximum (${limits.remainingAmount} HTG).`
+        );
+      }
+
+      newBalance = currentBalance + amount;
+      newTotalPaid = currentTotalPaid + amount;
+      newPaidHands = currentPaidHands + calculatedHandsCovered;
+
+      // Calculate exact coverage date using central financial service
+      const coverage = calculateCoverageDate({
+        todayStr,
+        handsCovered: calculatedHandsCovered,
+        frequency: activeBusiness?.frequency || 'DAILY',
+        currentPaidUntilDate: client.paid_until_date,
+      });
+      newPaidUntilDate = coverage.paidUntilDate;
+    } else if (isPayout) {
+      if (currentReceivedHands >= memberHandsCount) {
+        throw new Error(
+          `Action interdite : L'adhérent ${client.full_name} a déjà reçu l'intégralité de ses mains (${currentReceivedHands}/${memberHandsCount}) pour ce cycle.`
+        );
+      }
+      newBalance = Math.max(0, currentBalance - amount);
+      newReceivedHands = currentReceivedHands + 1;
+      isFullyReceived = newReceivedHands >= memberHandsCount ? 1 : 0;
+    }
+
+    let persistedType: TransactionType = 'SOL_CONTRIBUTION';
+    if (data.type === 'SABOTAY_DEPOSIT') persistedType = 'SABOTAY_DEPOSIT';
+    else if (data.type === 'SOL_CONTRIBUTION' || data.type === 'CONTRIBUTION') persistedType = 'SOL_CONTRIBUTION';
+    else if (data.type === 'HAND_PAYOUT' || data.type === 'SOL_PAYOUT') persistedType = 'SOL_PAYOUT';
+    else if (data.type === 'WITHDRAWAL') persistedType = 'WITHDRAWAL';
+
+    const id = uuidv4();
+
+    // Atomic database transaction
+    await db.withTransactionAsync(async () => {
+      // 1. Insert transaction record
+      await db.runAsync(
+        `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status, idempotency_key, is_reversed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 0)`,
+        [
+          id,
+          clientId,
+          collectorId,
+          data.solGroupId || null,
+          businessId,
+          amount,
+          calculatedHandsCovered,
+          persistedType,
+          paymentMethod,
+          data.note || null,
+          now,
+          idempotencyKey,
+        ]
+      );
+
+      // 2. Update client financial state & coverage date
       await db.runAsync(
         `UPDATE clients 
-         SET has_received_hand = 1, has_received_payout = 1, hand_received_date = ?, sync_status = 'PENDING' 
+         SET current_balance = ?, total_paid_amount = ?, paid_hands_count = ?, paid_until_date = ?, sync_status = 'PENDING' 
          WHERE id = ?`,
-        [todayStr, data.clientId]
+        [newBalance, newTotalPaid, newPaidHands, newPaidUntilDate, clientId]
       );
-    }
-  });
 
-  return {
-    id,
-    memberId: data.clientId,
-    clientId: data.clientId,
-    collectorId,
-    solGroupId: data.solGroupId || null,
-    businessId,
-    amount: data.amount,
-    handsCovered: calculatedHandsCovered,
-    type: data.type,
-    paymentMethod,
-    note: data.note,
-    createdAtLocal: now,
-    syncStatus: 'PENDING',
-    clientName: client.full_name,
-    memberName: client.full_name,
-    clientPhone: client.phone_number,
-    memberPhone: client.phone_number,
-  };
+      // 3. If payout, update received hands count
+      if (isPayout) {
+        await db.runAsync(
+          `UPDATE clients 
+           SET received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, sync_status = 'PENDING' 
+           WHERE id = ?`,
+          [newReceivedHands, isFullyReceived, isFullyReceived, todayStr, clientId]
+        );
+      }
+    });
+
+    // Record internal audit log
+    recordAuditLog({
+      userId: collectorId,
+      userRole: 'COLLECTOR',
+      action: isContribution ? 'CREATE_CONTRIBUTION' : 'CREATE_PAYOUT',
+      entityType: 'TRANSACTION',
+      entityId: id,
+      oldData: { balance: currentBalance, paidUntil: client.paid_until_date },
+      newData: { amount, handsCovered: calculatedHandsCovered, newBalance, newPaidUntilDate },
+      reason: data.note || undefined,
+    }).catch(() => {});
+
+    return {
+      id,
+      memberId: clientId,
+      clientId,
+      collectorId,
+      solGroupId: data.solGroupId || null,
+      businessId,
+      amount,
+      handsCovered: calculatedHandsCovered,
+      type: data.type,
+      paymentMethod,
+      note: data.note,
+      createdAtLocal: now,
+      syncStatus: 'PENDING',
+      clientName: client.full_name,
+      memberName: client.full_name,
+      clientPhone: client.phone_number,
+      memberPhone: client.phone_number,
+      idempotencyKey,
+    };
+  } finally {
+    // Release lock with brief debounce buffer
+    setTimeout(() => {
+      inFlightTransactions.delete(lockKey);
+    }, 500);
+  }
 }
 
 export async function getTransactions(options?: {
@@ -163,9 +276,11 @@ export async function getTransactions(options?: {
   type?: TransactionType;
   syncStatus?: SyncStatus;
   limit?: number;
+  allCollectors?: boolean;
 }): Promise<Transaction[]> {
   const db = await getDatabase();
-  const collectorId = options?.collectorId || (await getActiveCollectorId());
+  const activeCollectorId = await getActiveCollectorId();
+  const targetCollectorId = options?.collectorId || (options?.allCollectors ? undefined : activeCollectorId);
 
   let query = `
     SELECT 
@@ -182,13 +297,22 @@ export async function getTransactions(options?: {
       t.created_at_local,
       t.synced_at,
       t.sync_status,
+      t.idempotency_key,
+      t.is_reversed,
+      t.reversal_id,
+      t.reversed_at,
       c.full_name as client_name,
       c.phone_number as client_phone
     FROM transactions t
     LEFT JOIN clients c ON t.client_id = c.id
-    WHERE t.collector_id = ?
+    WHERE 1=1
   `;
-  const params: (string | number)[] = [collectorId];
+  const params: (string | number)[] = [];
+
+  if (targetCollectorId) {
+    query += ` AND t.collector_id = ?`;
+    params.push(targetCollectorId);
+  }
 
   if (options?.clientId) {
     query += ` AND t.client_id = ?`;
@@ -231,6 +355,10 @@ export async function getTransactions(options?: {
     created_at_local: string;
     synced_at: string | null;
     sync_status: SyncStatus;
+    idempotency_key: string | null;
+    is_reversed: number | null;
+    reversal_id: string | null;
+    reversed_at: string | null;
     client_name: string | null;
     client_phone: string | null;
   }>(query, params);
@@ -250,6 +378,10 @@ export async function getTransactions(options?: {
     createdAtLocal: r.created_at_local,
     syncedAt: r.synced_at,
     syncStatus: r.sync_status,
+    idempotencyKey: r.idempotency_key || undefined,
+    isReversed: Boolean(r.is_reversed),
+    reversalId: r.reversal_id || undefined,
+    reversedAt: r.reversed_at || undefined,
     clientName: r.client_name || 'Adhérent inconnu',
     memberName: r.client_name || 'Adhérent inconnu',
     clientPhone: r.client_phone || '',
@@ -271,17 +403,19 @@ export async function getTodayStats(collectorIdParam?: string): Promise<Dashboar
   startOfDay.setHours(0, 0, 0, 0);
   const startOfDayIso = startOfDay.toISOString();
 
-  // Contribution deposits
+  // Contribution deposits (excluding reversals)
   const inRow = await db.getFirstAsync<{ total: number }>(
     `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
-     WHERE collector_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
+     WHERE collector_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
+       AND is_reversed = 0 AND created_at_local >= ?`,
     [collectorId, startOfDayIso]
   );
 
   // Payouts & withdrawals
   const outRow = await db.getFirstAsync<{ total: number }>(
     `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
-     WHERE collector_id = ? AND type IN ('HAND_PAYOUT', 'SOL_PAYOUT', 'WITHDRAWAL') AND created_at_local >= ?`,
+     WHERE collector_id = ? AND type IN ('HAND_PAYOUT', 'SOL_PAYOUT', 'WITHDRAWAL') 
+       AND is_reversed = 0 AND created_at_local >= ?`,
     [collectorId, startOfDayIso]
   );
 
@@ -338,12 +472,29 @@ export async function markClientsSynced(clientIds: string[]): Promise<void> {
   );
 }
 
+/**
+ * Reverses an erroneous financial transaction with atomic audit trail
+ * and exact timeline recalculation from remaining valid transactions.
+ */
 export async function reverseTransaction(params: {
   transactionId: string;
   reason: string;
   collectorId?: string;
+  userRole?: UserRole;
 }): Promise<Transaction> {
   const { transactionId, reason } = params;
+
+  // Security Guard: read-only profiles can never reverse transactions
+  if (params.userRole === 'READ_ONLY' || params.userRole === 'USER') {
+    throw new Error(
+      'Accès refusé : votre profil est en consultation seule. Seul le gestionnaire du carnet peut annuler une opération.'
+    );
+  }
+
+  if (!reason || reason.trim().length === 0) {
+    throw new Error("Une justification est obligatoire pour effectuer l'annulation d'une transaction.");
+  }
+
   const db = await getDatabase();
   const collectorId = params.collectorId || (await getActiveCollectorId());
   const now = new Date().toISOString();
@@ -358,47 +509,70 @@ export async function reverseTransaction(params: {
     amount: number;
     hands_covered: number;
     type: string;
+    is_reversed: number;
+    created_at_local: string;
   }>(`SELECT * FROM transactions WHERE id = ?`, [transactionId]);
 
   if (!original) {
     throw new Error('Transaction originale introuvable.');
   }
 
-  const client = await db.getFirstAsync<{
-    id: string;
-    current_balance: number;
-    total_paid_amount: number;
-    paid_hands_count: number;
-  }>(`SELECT current_balance, total_paid_amount, paid_hands_count FROM clients WHERE id = ?`, [
-    original.client_id,
-  ]);
-
-  if (!client) {
-    throw new Error('Adhérent introuvable pour cette transaction.');
+  if (original.is_reversed) {
+    throw new Error('Cette transaction a déjà été annulée précédemment.');
   }
 
-  const isOriginalContribution =
-    original.type === 'CONTRIBUTION' ||
-    original.type === 'SOL_CONTRIBUTION' ||
-    original.type === 'SABOTAY_DEPOSIT';
+  if (original.type === 'REVERSAL') {
+    throw new Error("Impossible d'annuler une opération d'annulation.");
+  }
 
-  const newBalance = isOriginalContribution
-    ? Math.max(0, Number(client.current_balance || 0) - original.amount)
-    : Number(client.current_balance || 0) + original.amount;
+  // Closed-cycle entries: the manager may reverse them (PIN verified by the UI + mandatory reason above);
+  // the reversal is archival only and never touches current-cycle counters (see step 3).
+  const ownerCollectorId = original.collector_id || collectorId;
+  const cycleBoundary = await getCurrentCycleBoundary(ownerCollectorId);
+  const isClosedCycleTx = isTransactionFromClosedCycle(original.created_at_local, cycleBoundary);
 
-  const newTotalPaid = isOriginalContribution
-    ? Math.max(0, Number(client.total_paid_amount || 0) - original.amount)
-    : Number(client.total_paid_amount || 0);
+  const activeBusiness = await getActiveBusinessConfig(ownerCollectorId);
 
-  const newPaidHands = isOriginalContribution
-    ? Math.max(0, Number(client.paid_hands_count || 0) - Number(original.hands_covered || 1))
-    : Number(client.paid_hands_count || 0);
+  // Fetch all transactions for this client to reconstruct financial timeline accurately
+  const allClientTxs = await getTransactions({ clientId: original.client_id });
+
+  // Keep only current-cycle entries (counters are reset at each renewal) and mark original as reversed
+  const updatedTxsList = allClientTxs
+    .filter((t) => !isTransactionFromClosedCycle(t.createdAtLocal, cycleBoundary))
+    .map((t) => (t.id === original.id ? { ...t, isReversed: true } : t));
+
+  // Fetch client details for hands_count
+  const clientRow = await db.getFirstAsync<{ hands_count: number | null }>(
+    `SELECT hands_count FROM clients WHERE id = ?`,
+    [original.client_id]
+  );
+  const handsCount = Math.max(1, Number(clientRow?.hands_count || 1));
+
+  // Compute exact reconstructed timeline
+  const reconstructed = reconstructClientFinancialTimeline({
+    transactions: updatedTxsList,
+    unitAmount: activeBusiness?.contributionAmount || 250,
+    frequency: activeBusiness?.frequency || 'DAILY',
+    cycleStartDate: activeBusiness?.startDate || localDateString(),
+    handsCount,
+  });
+
+  const actorLabel = isClosedCycleTx ? 'CYCLE CLÔTURÉ' : 'GESTIONNAIRE';
+  const reversalNote = `ANNULATION ${actorLabel} [Réf #${original.id.slice(0, 8)}] : ${reason.trim()}`;
 
   await db.withTransactionAsync(async () => {
-    // 1. Insert Reversal Transaction (Immutable Audit Log)
+    // 1. Mark original transaction as reversed
     await db.runAsync(
-      `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'REVERSAL', 'CASH', ?, ?, 'PENDING')`,
+      `UPDATE transactions 
+       SET is_reversed = 1, reversal_id = ?, reversed_at = ?, sync_status = 'PENDING' 
+       WHERE id = ?`,
+      [reversalId, now, original.id]
+    );
+
+    // 2. Insert Reversal Transaction (Immutable Append-Only Audit Entry)
+    await db.runAsync(
+      `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status, is_reversed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'REVERSAL', 'CASH', ?, ?, 'PENDING', 0)`,
       [
         reversalId,
         original.client_id,
@@ -407,19 +581,49 @@ export async function reverseTransaction(params: {
         original.business_id,
         original.amount,
         original.hands_covered || 1,
-        `ANNULATION [Réf #${original.id.slice(0, 8)}] : ${reason}`,
+        reversalNote,
         now,
       ]
     );
 
-    // 2. Adjust Client Balance
-    await db.runAsync(
+    // 3. Update Client with exact reconstructed timeline values
+    // (a closed-cycle reversal is archival only: current-cycle counters stay untouched)
+    if (!isClosedCycleTx) await db.runAsync(
       `UPDATE clients 
-       SET current_balance = ?, total_paid_amount = ?, paid_hands_count = ?, sync_status = 'PENDING' 
+       SET current_balance = ?, total_paid_amount = ?, paid_hands_count = ?, 
+           received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, 
+           paid_until_date = ?, sync_status = 'PENDING' 
        WHERE id = ?`,
-      [newBalance, newTotalPaid, newPaidHands, original.client_id]
+      [
+        reconstructed.currentBalance,
+        reconstructed.totalPaidAmount,
+        reconstructed.paidHandsCount,
+        reconstructed.receivedHandsCount,
+        reconstructed.hasReceivedHand ? 1 : 0,
+        reconstructed.hasReceivedHand ? 1 : 0,
+        reconstructed.handReceivedDate,
+        reconstructed.paidUntilDate,
+        original.client_id,
+      ]
     );
   });
+
+  // 4. Record to Audit Logs
+  await recordAuditLog({
+    userId: params.collectorId || collectorId,
+    userRole: params.userRole || 'MANAGER',
+    action: 'REVERSE_TRANSACTION',
+    entityType: 'TRANSACTION',
+    entityId: reversalId,
+    oldData: { originalId: original.id, amount: original.amount, type: original.type },
+    newData: {
+      reconstructed: isClosedCycleTx ? null : reconstructed,
+      reversalId,
+      cancelledTxId: original.id,
+      closedCycle: isClosedCycleTx,
+    },
+    reason: reason.trim(),
+  }).catch(() => {});
 
   return {
     id: reversalId,
@@ -432,7 +636,7 @@ export async function reverseTransaction(params: {
     handsCovered: original.hands_covered || 1,
     type: 'REVERSAL',
     paymentMethod: 'CASH',
-    note: `ANNULATION [Réf #${original.id.slice(0, 8)}] : ${reason}`,
+    note: reversalNote,
     createdAtLocal: now,
     syncStatus: 'PENDING',
   };

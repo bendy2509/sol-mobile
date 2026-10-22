@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "sol-mobile",
-    "slug": "sol-mobile",
+    "name": "SOL Mobile",
+    "slug": "projet-sol",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "solmobile",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -14,6 +14,8 @@
       }
     },
     "android": {
+      "package": "com.servilus.projetsol",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -22,7 +24,9 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "CAMERA"
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -37,7 +41,11 @@
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "image": "./assets/images/splash-icon.png",
+            "backgroundColor": "#0E1322"
+          }
         }
       ],
       "expo-sqlite",
@@ -46,10 +54,28 @@
         {
           "cameraPermission": "SOL bezwen aksè ak kamera a pou li ka eskane kòd QR kliyan yo sou mache a."
         }
+      ],
+      "expo-font",
+      "expo-sharing",
+      "expo-status-bar",
+      "expo-web-browser",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "SOL Mobile utilise Face ID pour déverrouiller l'application à la place du code PIN."
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3ab48ab6-970c-4641-a9c3-f08e5e02cdf0"
+      }
+    },
+    "owner": "servilus2509s-team"
   }
 }

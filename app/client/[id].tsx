@@ -1,56 +1,91 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  Modal,
-  Share,
-  TextInput,
-  Linking,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Pressable, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getClientById, updateClientDetails, deleteClient, getAllClients } from '@/db/clientRepository';
-import { getTransactionsByClient } from '@/db/transactionRepository';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getTransactionsByClient, reverseTransaction } from '@/db/transactionRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
+import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { payoutMemberHand } from '@/db/memberRepository';
 import { useAuth } from '@/context/AuthContext';
-import { Badge } from '@/components/Badge';
-import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
+import {
+  ActionMenu,
+  AmountText,
+  Avatar,
+  BottomSheet,
+  Button,
+  Card,
+  EmptyState,
+  Icon,
+  ListItem,
+  MetricTile,
+  ProgressBar,
+  Screen,
+  SectionHeader,
+  StatusBadge,
+  Text,
+  TextField,
+  UiIconName,
+  StatStrip,
+} from '@/components/ui';
 import { BusinessConfig, Client, Transaction } from '@/types';
-import { formatCurrency, formatDate, formatDateShort, formatShortId, getInitials } from '@/lib/formatters';
+import { formatCurrency, formatDate, formatDateShort } from '@/lib/formatters';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
+import { recordAuditLog } from '@/services/auditService';
+import {
+  calculateCycleContributionLimits,
+  calculateCycleTotalHands,
+  isTransactionFromClosedCycle,
+} from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
+import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
+import { localDateString, localDayOf } from '@/lib/dates';
+
+/** Display label of a ledger entry (presentation only). */
+function getTxTypeLabel(tx: Transaction): string {
+  if (tx.type === 'REVERSAL' || tx.isReversed) return t('Annulation');
+  if (tx.type === 'SABOTAY_DEPOSIT') return t('Dépôt Sabotay');
+  if (tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION') return t('Cotisation Sol');
+  return t('Remise de la main (bay men)');
+}
 
 export default function ClientDetailScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { activeCollector } = useAuth();
+  const { activeCollector, userRole } = useAuth();
+  const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
+  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [client, setClient] = useState<Client | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
-  const [allClientsCount, setAllClientsCount] = useState<number>(0);
-  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [allClients, setAllClients] = useState<Client[]>([]);
+  const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
-  // Edit Client Modal State
+  // Modals & form state
+  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false);
+  const [selectedTxForReversal, setSelectedTxForReversal] = useState<Transaction | null>(null);
+  const [reversalReason, setReversalReason] = useState('');
+  const [cycleBoundary, setCycleBoundary] = useState<string | null>(null);
   const [editFullName, setEditFullName] = useState('');
   const [editPhoneNumber, setEditPhoneNumber] = useState('');
   const [editRank, setEditRank] = useState('');
-
-  // Payout ("Bay Men") State
-  const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
+  const [editHandsCount, setEditHandsCount] = useState<number>(1);
+  const [editMultiRanks, setEditMultiRanks] = useState<string>('');
   const [payoutNote, setPayoutNote] = useState('');
 
-  // Sensitive PIN Action State
+  // 4-Digit PIN Security State
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [pendingActionTitle, setPendingActionTitle] = useState('');
   const [pendingActionSubtitle, setPendingActionSubtitle] = useState('');
@@ -58,21 +93,45 @@ export default function ClientDetailScreen() {
 
   const loadClientData = async () => {
     if (!id) return;
-    const [data, txs, activeBiz, clientList] = await Promise.all([
+    const [data, txs, activeBiz, clientList, boundary] = await Promise.all([
       getClientById(id),
       getTransactionsByClient(id),
       getActiveBusinessConfig(),
       getAllClients(),
+      getCurrentCycleBoundary(),
     ]);
     setClient(data);
+    setCycleBoundary(boundary);
     setTransactions(txs);
     setBusiness(activeBiz);
-    setAllClientsCount(clientList.length);
+    setAllClients(clientList);
+
+    // Direct SQL SUM of all active clients for guaranteed accuracy
+    try {
+      const db = await getDatabase();
+      const collectorId = await getActiveCollectorId();
+      const row = await db.getFirstAsync<{ total: number }>(
+        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
+        [collectorId]
+      );
+      const totalFromSql = Number(row?.total || 0);
+      const totalFromClients = calculateCycleTotalHands(clientList);
+      setDbTotalHands(Math.max(1, totalFromClients, totalFromSql));
+    } catch {
+      setDbTotalHands(Math.max(1, calculateCycleTotalHands(clientList)));
+    }
 
     if (data) {
       setEditFullName(data.fullName);
       setEditPhoneNumber(data.phoneNumber);
       setEditRank(data.payoutRank ? data.payoutRank.toString() : '1');
+      setEditHandsCount(Math.max(1, data.handsCount || 1));
+      const ranksStr = Array.isArray(data.payoutRanks)
+        ? data.payoutRanks.join(', ')
+        : data.payoutRanks
+        ? String(data.payoutRanks)
+        : (data.payoutRank ? data.payoutRank.toString() : '1');
+      setEditMultiRanks(ranksStr);
       setPayoutNote(`Remise de la main #${data.payoutRank || 1} - ${data.fullName}`);
     }
   };
@@ -81,10 +140,53 @@ export default function ClientDetailScreen() {
     loadClientData();
   }, [id]);
 
-  // Exact pot calculation: exactly registered children * unit amount
   const unitAmount = client?.dailyAmount || business?.contributionAmount || 250;
-  const registeredCount = allClientsCount > 0 ? allClientsCount : (business?.totalSlots || 10);
-  const totalPotAmount = registeredCount * unitAmount;
+  const memberHandsCount = Math.max(1, client?.handsCount || 1);
+  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
+  const totalPotAmount = totalCycleHands * unitAmount;
+
+
+  const limits = calculateCycleContributionLimits({
+    currentPaidHands: client?.paidHandsCount || 0,
+    totalCycleHands,
+    memberHandsCount,
+    unitAmount,
+  });
+
+  const remainingHands = limits.remainingHands;
+  const remainingAmount = limits.remainingAmount;
+  const maxAllowedHands = limits.maxAllowedHands;
+
+  // Direct count of payout transactions to guarantee 100% coherence with transaction timeline
+  const clientPayoutTxsCount = transactions.filter(
+    (t) => !t.isReversed && (t.type === 'HAND_PAYOUT' || t.type === 'SOL_PAYOUT')
+  ).length;
+
+  const rawReceived = Number(client?.receivedHandsCount || 0);
+  const hasPayoutFlag = Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
+  const currentReceivedHands = Math.max(
+    rawReceived,
+    clientPayoutTxsCount,
+    hasPayoutFlag ? (rawReceived > 0 ? rawReceived : memberHandsCount) : 0
+  );
+  const isFullyReceived = currentReceivedHands >= memberHandsCount || hasPayoutFlag;
+
+  const totalHandsTouched = allClients.reduce((sum, m) => {
+    const rawRec = Number(m.receivedHandsCount || 0);
+    const flag = Boolean(m.hasReceivedHand || m.hasReceivedPayout);
+    const hands = Math.max(1, Number(m.handsCount || 1));
+    return sum + Math.max(rawRec, flag ? (rawRec > 0 ? rawRec : hands) : 0);
+  }, 0);
+  const effectiveTotalHandsTouched = Math.max(totalHandsTouched, currentReceivedHands);
+  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((effectiveTotalHandsTouched / totalCycleHands) * 100)) : 0;
+  const memberPayoutProgressPct = memberHandsCount > 0 ? Math.min(100, Math.round((currentReceivedHands / memberHandsCount) * 100)) : 0;
+  const memberContributionProgressPct = maxAllowedHands > 0 ? Math.min(100, Math.round(((client?.paidHandsCount || 0) / maxAllowedHands) * 100)) : 0;
+
+  const pendingRankClients = allClients
+    .filter((c) => !c.hasReceivedHand && !c.hasReceivedPayout && c.payoutRank)
+    .sort((a, b) => (a.payoutRank || 999) - (b.payoutRank || 999));
+  const expectedNextRank = pendingRankClients.length > 0 ? pendingRankClients[0].payoutRank || 1 : 1;
+  const isOutOfOrder = Boolean(client?.payoutRank && client.payoutRank !== expectedNextRank);
 
   const requirePinForAction = (title: string, subtitle: string, action: () => Promise<void>) => {
     setPendingActionTitle(title);
@@ -102,60 +204,104 @@ export default function ClientDetailScreen() {
   };
 
   const handleOpenEditModal = () => {
+    if (isReadOnly) {
+      triggerErrorFeedback();
+      Alert.alert(t('Accès Lecture Seule'), t('La modification est réservée aux gestionnaires.'));
+      return;
+    }
     triggerLightImpact();
     if (!client) return;
     setEditFullName(client.fullName);
     setEditPhoneNumber(client.phoneNumber);
     setEditRank(client.payoutRank ? client.payoutRank.toString() : '1');
+    setEditHandsCount(Math.max(1, client.handsCount || 1));
+    const ranksStr = Array.isArray(client.payoutRanks)
+      ? client.payoutRanks.join(', ')
+      : client.payoutRanks
+      ? String(client.payoutRanks)
+      : (client.payoutRank ? client.payoutRank.toString() : '1');
+    setEditMultiRanks(ranksStr);
     setIsEditModalOpen(true);
   };
 
   const handleSaveEdit = () => {
+    if (isReadOnly) {
+      triggerErrorFeedback();
+      Alert.alert(t('Accès Lecture Seule'), t('La modification est réservée aux gestionnaires.'));
+      return;
+    }
     if (!client) return;
     if (!editFullName.trim()) {
-      Alert.alert('Erreur', "Le nom de l'adhérent ne peut pas être vide.");
+      Alert.alert(t('Erreur'), t('Le nom de l\'adhérent ne peut pas être vide.'));
       return;
     }
 
+    const validHands = Math.max(1, Number(editHandsCount) || 1);
+    const parsedRank = parseInt(editRank, 10) || client.payoutRank || 1;
+    let finalRanks = editMultiRanks.trim();
+    if (!finalRanks) {
+      const rList = [];
+      for (let i = 0; i < validHands; i++) {
+        rList.push(parsedRank + i);
+      }
+      finalRanks = rList.join(', ');
+    }
+
     requirePinForAction(
-      "Modifier l'Adhérent",
-      `Saisissez votre code PIN gestionnaire (4 chiffres) pour valider la mise à jour des coordonnées de ${editFullName}.`,
+      t('Modifier l\'Adhérent'),
+      t('Saisissez votre code PIN gestionnaire (4 chiffres) pour valider la mise à jour de {0} ({1} main(s)).', editFullName, validHands),
       async () => {
         try {
           const normPhone = normalizePhoneNumber(editPhoneNumber);
-          const parsedRank = parseInt(editRank, 10) || client.payoutRank || 1;
           await updateClientDetails(client.id, {
             fullName: editFullName.trim(),
             phoneNumber: normPhone,
             payoutRank: parsedRank,
+            payoutRanks: finalRanks,
+            handsCount: validHands,
           });
 
           triggerSuccessFeedback();
-          Alert.alert('Succès', 'Les coordonnées ont été mises à jour.');
+          Alert.alert(t('Succès'), t('L\'adhérent a été mis à jour avec {0} main(s) (Rangs: #{1}).', validHands, finalRanks));
           setIsEditModalOpen(false);
-          loadClientData();
+          await loadClientData();
         } catch (err: any) {
           triggerErrorFeedback();
-          Alert.alert('Erreur', err?.message || 'Échec de la modification.');
+          Alert.alert(t('Erreur'), err?.message || t('Échec de la modification.'));
         }
       }
     );
   };
 
   const handleInitiatePayout = () => {
+    if (isReadOnly) {
+      triggerErrorFeedback();
+      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement est réservé aux gestionnaires.'));
+      return;
+    }
     triggerMediumImpact();
     if (!client) return;
+    if (client.hasReceivedHand || client.hasReceivedPayout) {
+      Alert.alert(
+        t('Main Déjà Remise'),
+        t('{0} a déjà touché sa main pour ce cycle de SOL. Une deuxième remise nécessite une procédure exceptionnelle.', client.fullName)
+      );
+    }
     setPayoutNote(`Remise de la main #${client.payoutRank || 1} - ${client.fullName}`);
     setIsPayoutModalOpen(true);
   };
 
   const handleConfirmPayout = () => {
     if (!client) return;
+    if (isOutOfOrder && !payoutNote.trim()) {
+      Alert.alert(t('Justification requise'), t('Pour une remise hors ordre normal du SOL, veuillez obligatoirement saisir une justification.'));
+      return;
+    }
     setIsPayoutModalOpen(false);
 
     requirePinForAction(
-      'Validation du Décaissement',
-      `Saisissez votre code PIN pour décaisser la cagnotte de ${formatCurrency(totalPotAmount)} (${registeredCount} enfants × ${formatCurrency(unitAmount)}) à ${client.fullName}.`,
+      t('Validation du Décaissement'),
+      t('Saisissez votre code PIN pour décaisser la cagnotte de {0} ({1} mains × {2}) à {3}.', formatCurrency(totalPotAmount), totalCycleHands, formatCurrency(unitAmount), client.fullName),
       async () => {
         try {
           const tx = await payoutMemberHand(
@@ -165,13 +311,24 @@ export default function ClientDetailScreen() {
             business?.id
           );
 
+          if (isOutOfOrder) {
+            await recordAuditLog({
+              userId: activeCollector?.id || 'collector',
+              userRole: 'COLLECTOR',
+              action: 'PAYOUT_OUT_OF_ORDER',
+              entityType: 'TRANSACTION',
+              entityId: tx.id,
+              reason: payoutNote.trim() || t('Remise au rang #{0} au lieu du rang attendu #{1}', client.payoutRank, expectedNextRank),
+            });
+          }
+
           triggerSuccessFeedback();
           Alert.alert(
-            'Main Remise avec Succès !',
-            `La main de ${formatCurrency(totalPotAmount)} a été décaissée pour ${client.fullName}.\n\nCalculée sur la base des ${registeredCount} enfants actuellement inscrits.`,
+            t('Main Remise avec Succès !'),
+            t('La main de {0} a été décaissée pour {1}.\n\nCalculée sur la base des {2} mains effectives du cycle.', formatCurrency(totalPotAmount), client.fullName, totalCycleHands),
             [
               {
-                text: 'Télécharger Reçu PDF',
+                text: t('Télécharger Reçu PDF'),
                 onPress: async () => {
                   try {
                     const pdfUri = await generatePayoutReceiptPdf({
@@ -184,58 +341,69 @@ export default function ClientDetailScreen() {
                       clientPhone: client.phoneNumber,
                       payoutRank: client.payoutRank || undefined,
                       totalPotAmount,
-                      registeredChildrenCount: registeredCount,
+                      registeredChildrenCount: totalCycleHands,
                       unitAmount,
                       note: payoutNote.trim(),
                       createdAt: new Date().toISOString(),
                     });
                     await sharePdfFile(pdfUri, `Recu_Decaissement_${client.fullName.replace(/\s+/g, '_')}.pdf`);
                   } catch {
-                    Alert.alert('Erreur', 'Impossible de générer le reçu PDF.');
+                    Alert.alert(t('Erreur'), t('Impossible de générer le reçu PDF.'));
                   }
                 },
               },
-              { text: 'Fermer', style: 'cancel' },
+              { text: t('Fermer'), style: 'cancel' },
             ]
           );
           loadClientData();
         } catch (err: any) {
           triggerErrorFeedback();
-          Alert.alert('Erreur', err?.message || 'Échec du décaissement de la main.');
+          Alert.alert(t('Erreur'), err?.message || t('Échec du décaissement de la main.'));
         }
       }
     );
   };
 
   const handleDeleteClient = () => {
+    if (isReadOnly) {
+      triggerErrorFeedback();
+      Alert.alert(t('Accès Lecture Seule'), t('La suppression est réservée aux gestionnaires.'));
+      return;
+    }
     if (!client) return;
     triggerMediumImpact();
 
     Alert.alert(
-      "Supprimer l'Adhérent",
-      `Êtes-vous sûr de vouloir supprimer définitivement le dossier de ${client.fullName} ? Cette action est irréversible.`,
+      t('Supprimer l\'Adhérent'),
+      t('Êtes-vous sûr de vouloir supprimer définitivement le dossier de {0} ? Cette action est irréversible.', client.fullName),
       [
-        { text: 'Annuler', style: 'cancel' },
+        { text: t('Annuler'), style: 'cancel' },
         {
-          text: 'Supprimer',
+          text: t('Supprimer'),
           style: 'destructive',
           onPress: () => {
             requirePinForAction(
-              'Confirmation de Suppression',
-              `Saisissez votre code PIN pour supprimer définitivement le dossier de ${client.fullName}.`,
+              t('Confirmation de Suppression'),
+              t('Saisissez votre code PIN pour supprimer définitivement le dossier de {0}.', client.fullName),
               async () => {
                 try {
                   await deleteClient(client.id);
                   triggerSuccessFeedback();
-                  Alert.alert('Supprimé', "Le dossier de l'adhérent a été supprimé.", [
+                  Alert.alert(t('Supprimé'), t('Le dossier de l\'adhérent a été supprimé.'), [
                     {
-                      text: 'OK',
-                      onPress: () => router.replace('/(tabs)' as any),
+                      text: t('OK'),
+                      onPress: () => {
+                        if (router.canGoBack()) {
+                          router.back();
+                        } else {
+                          router.replace('/(tabs)' as any);
+                        }
+                      },
                     },
                   ]);
                 } catch (err: any) {
                   triggerErrorFeedback();
-                  Alert.alert('Erreur', err?.message || 'Échec de la suppression.');
+                  Alert.alert(t('Erreur'), err?.message || t('Échec de la suppression.'));
                 }
               }
             );
@@ -250,39 +418,32 @@ export default function ClientDetailScreen() {
     if (!client) return;
 
     Alert.alert(
-      `Fiche & Reçu : ${client.fullName}`,
-      'Comment souhaitez-vous transmettre le document officiel à l\'adhérent ?',
+      t('Fiche & Reçu : {0}', client.fullName),
+      t('Comment souhaitez-vous transmettre le document officiel à l\'adhérent ?'),
       [
         {
-          text: 'Envoyer par WhatsApp',
+          text: t('Envoyer par WhatsApp'),
           onPress: () => {
             const digitsOnly = client.phoneNumber.replace(/[^0-9]/g, '');
-            const message = `Bonjour ${client.fullName}, voici l'état certifié de votre compte SOL (${business?.name || 'SOL Mobile'}) :
-- Position : Main #${client.payoutRank || 1}
-- Solde Cotisé : ${formatCurrency(client.currentBalance)}
-- Cagnotte de la main : ${formatCurrency(totalPotAmount)} (${registeredCount} enfants inscrits)
-- Statut Main : ${client.hasReceivedPayout ? 'Main déjà perçue' : 'En attente de perception'}
-
-Merci de votre fidélité sur SOL Mobile !`;
-
+            const message = t('Bonjour {0}, voici l\'état certifié de votre compte SOL ({1}) :\n- Total Cotisé : {2}\n- Nombre de Mains : {3} main(s)\n- Rang attribué : Main #{4}\n- Couvert jusqu\'au : {5}\n- Main reçue : {6}\n\nDocument sécurisé et certifié par SOL Mobile.', client.fullName, business?.name || 'SOL Mobile', formatCurrency(client.totalPaidAmount || client.currentBalance), client.paidHandsCount || 0, client.payoutRank || 1, formatDate(client.paidUntilDate || new Date().toISOString()), client.hasReceivedHand || client.hasReceivedPayout ? 'OUI' : 'NON');
             const encoded = encodeURIComponent(message);
             const url = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
             Linking.openURL(url).catch(() => {
-              Alert.alert('WhatsApp', 'Impossible d\'ouvrir WhatsApp.');
+              Alert.alert(t('WhatsApp'), t('Impossible d\'ouvrir WhatsApp.'));
             });
           },
         },
         {
-          text: 'Télécharger Fiche / Reçu PDF',
+          text: t('Télécharger PDF'),
           onPress: async () => {
             try {
-              const latestTx = transactions[0];
-              const unitVal = unitAmount > 0 ? unitAmount : 250;
-              const hands = latestTx ? (latestTx.handsCovered || 1) : 1;
-              const totalVal = latestTx ? latestTx.amount : client.currentBalance;
+              const latestTx = transactions.length > 0 ? transactions[0] : null;
+              const unitVal = client.dailyAmount || business?.contributionAmount || 250;
+              const hands = client.paidHandsCount || 1;
+              const totalVal = client.totalPaidAmount || client.currentBalance;
 
               const pdfUri = await generateContributionReceiptPdf({
-                transactionId: latestTx ? latestTx.id : client.id,
+                transactionId: latestTx ? latestTx.id : 'LIVRET-INDIVIDUEL',
                 businessName: business?.name || 'SOL Mobile',
                 collectorName: activeCollector?.fullName || 'Agent SOL',
                 collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
@@ -294,908 +455,602 @@ Merci de votre fidélité sur SOL Mobile !`;
                 unitAmount: unitVal,
                 handsCount: hands,
                 totalAmount: totalVal,
-                coverageStartDate: new Date().toISOString().split('T')[0],
-                coverageEndDate: new Date().toISOString().split('T')[0],
+                coverageStartDate: localDateString(),
+                coverageEndDate: client.paidUntilDate || localDateString(),
                 createdAt: latestTx ? latestTx.createdAtLocal : new Date().toISOString(),
               });
 
               await sharePdfFile(pdfUri, `Fiche_SOL_${client.fullName.replace(/\s+/g, '_')}.pdf`);
             } catch (err: any) {
-              Alert.alert('Erreur', 'Impossible de générer le document PDF.');
+              Alert.alert(t('Erreur'), t('Impossible de générer le document PDF.'));
             }
           },
         },
-        { text: 'Annuler', style: 'cancel' },
+        { text: t('Annuler'), style: 'cancel' },
       ]
     );
   };
 
   const handleTransactionPress = (tx: Transaction) => {
     triggerLightImpact();
-    if (!client) return;
+    setSelectedTx(tx);
+    setIsDetailModalOpen(true);
+  };
 
-    Alert.alert(
-      `Opération #${tx.id.slice(0, 8)}`,
-      `Montant : ${formatCurrency(tx.amount)} (${tx.handsCovered || 1} main(s))\nDate : ${formatDate(tx.createdAtLocal)}`,
-      [
-        {
-          text: 'Envoyer par WhatsApp',
-          onPress: () => {
-            const digitsOnly = client.phoneNumber.replace(/[^0-9]/g, '');
-            const message = `Bonjour ${client.fullName}, voici votre reçu SOL :
-- Opération : #${tx.id.slice(0, 8)}
-- Type : ${tx.type}
-- Montant : ${formatCurrency(tx.amount)}
-- Date : ${formatDate(tx.createdAtLocal)}
+  const handleShareReceipt = async () => {
+    if (!selectedTx || !client) return;
+    try {
+      const isPayout = selectedTx.type === 'SOL_PAYOUT' || selectedTx.type === 'HAND_PAYOUT' || selectedTx.type === 'WITHDRAWAL';
+      let fileUri: string;
+      if (isPayout) {
+        fileUri = await generatePayoutReceiptPdf({
+          transactionId: selectedTx.id,
+          businessName: business?.name || 'SOL Mobile',
+          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
+          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorZone: activeCollector?.zone,
+          clientName: client.fullName,
+          clientPhone: client.phoneNumber,
+          payoutRank: client.payoutRank || undefined,
+          totalPotAmount: selectedTx.amount,
+          registeredChildrenCount: totalCycleHands,
+          unitAmount: unitAmount,
+          note: selectedTx.note,
+          createdAt: selectedTx.createdAtLocal,
+        });
+      } else {
+        const uAmount = unitAmount || Math.round(selectedTx.amount / (selectedTx.handsCovered || 1));
+        fileUri = await generateContributionReceiptPdf({
+          transactionId: selectedTx.id,
+          businessName: business?.name || 'SOL Mobile',
+          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
+          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorZone: activeCollector?.zone,
+          clientName: client.fullName,
+          clientPhone: client.phoneNumber,
+          payoutRank: client.payoutRank || undefined,
+          qrCodeToken: client.qrCodeToken || `SOL-${selectedTx.id.slice(0, 6)}`,
+          unitAmount: uAmount,
+          handsCount: selectedTx.handsCovered || 1,
+          totalAmount: selectedTx.amount,
+          coverageStartDate: localDayOf(selectedTx.createdAtLocal),
+          coverageEndDate: localDayOf(selectedTx.createdAtLocal),
+          createdAt: selectedTx.createdAtLocal,
+        });
+      }
+      await sharePdfFile(fileUri, `recu_operation_${selectedTx.id.slice(0, 8)}.pdf`);
+    } catch (err: any) {
+      Alert.alert(t('Erreur'), err?.message || t('Impossible de générer le reçu.'));
+    }
+  };
 
-Reçu archivé avec succès sur SOL Mobile.`;
-            const encoded = encodeURIComponent(message);
-            const url = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
-            Linking.openURL(url).catch(() => {
-              Alert.alert('WhatsApp', 'Impossible d\'ouvrir WhatsApp.');
-            });
-          },
-        },
-        {
-          text: 'Télécharger Reçu PDF',
-          onPress: async () => {
-            try {
-              const isPayout = tx.type === 'SOL_PAYOUT' || tx.type === 'HAND_PAYOUT' || tx.type === 'WITHDRAWAL';
-              let pdfUri: string;
-              if (isPayout) {
-                pdfUri = await generatePayoutReceiptPdf({
-                  transactionId: tx.id,
-                  businessName: business?.name || 'SOL Mobile',
-                  collectorName: activeCollector?.fullName || 'Agent SOL',
-                  collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
-                  collectorZone: activeCollector?.zone,
-                  clientName: client.fullName,
-                  clientPhone: client.phoneNumber,
-                  payoutRank: client.payoutRank || undefined,
-                  totalPotAmount: tx.amount,
-                  registeredChildrenCount: registeredCount,
-                  unitAmount,
-                  note: tx.note,
-                  createdAt: tx.createdAtLocal,
-                });
-              } else {
-                pdfUri = await generateContributionReceiptPdf({
-                  transactionId: tx.id,
-                  businessName: business?.name || 'SOL Mobile',
-                  collectorName: activeCollector?.fullName || 'Agent SOL',
-                  collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
-                  collectorZone: activeCollector?.zone,
-                  clientName: client.fullName,
-                  clientPhone: client.phoneNumber,
-                  payoutRank: client.payoutRank || undefined,
-                  qrCodeToken: client.qrCodeToken,
-                  unitAmount,
-                  handsCount: tx.handsCovered || 1,
-                  totalAmount: tx.amount,
-                  coverageStartDate: tx.createdAtLocal.split('T')[0],
-                  coverageEndDate: tx.createdAtLocal.split('T')[0],
-                  createdAt: tx.createdAtLocal,
-                });
-              }
-              await sharePdfFile(pdfUri, `Recu_SOL_${client.fullName.replace(/\s+/g, '_')}.pdf`);
-            } catch {
-              Alert.alert('Erreur', 'Impossible de générer le reçu PDF.');
-            }
-          },
-        },
-        { text: 'Fermer', style: 'cancel' },
-      ]
+  const handleWhatsAppShare = () => {
+    if (!selectedTx || !client) return;
+    const digitsOnly = normalizePhoneNumber(client.phoneNumber);
+    const typeLabel = selectedTx.type === 'SABOTAY_DEPOSIT'
+      ? t('Dépôt Sabotay')
+      : selectedTx.type === 'SOL_CONTRIBUTION' || selectedTx.type === 'CONTRIBUTION'
+      ? t('Cotisation Sol')
+      : selectedTx.type === 'REVERSAL' || selectedTx.isReversed
+      ? t('Annulation')
+      : t('Décaissement Main ("Bay Men")');
+
+    const message = t('*SOL MOBILE - RÉCÉPISSÉ CERTIFIÉ*\nAdhérent : {0}\nOpération : #{1}\nType : {2}\nMontant : {3}\nDate : {4}\n\nReçu archivé avec succès sur SOL Mobile.', client.fullName, selectedTx.id.slice(0, 8), typeLabel, formatCurrency(selectedTx.amount), formatDate(selectedTx.createdAtLocal));
+    const encoded = encodeURIComponent(message);
+    const url = digitsOnly ? `https://wa.me/${digitsOnly}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
+    Linking.openURL(url).catch(() => {
+      Alert.alert(t('WhatsApp'), t('Impossible d\'ouvrir WhatsApp.'));
+    });
+  };
+
+  const isSelectedTxFromClosedCycle = !!selectedTx && isTransactionFromClosedCycle(selectedTx.createdAtLocal, cycleBoundary);
+
+  const handleInitiateCancel = () => {
+    if (!selectedTx) return;
+    setIsDetailModalOpen(false);
+    setSelectedTxForReversal(selectedTx);
+    setReversalReason('');
+    setIsReversalModalOpen(true);
+  };
+
+  const handleConfirmReversal = () => {
+    if (!selectedTxForReversal) return;
+    if (!reversalReason.trim()) {
+      Alert.alert(t('Motif obligatoire'), t('Veuillez saisir la raison de l\'annulation.'));
+      return;
+    }
+    setIsReversalModalOpen(false);
+
+    requirePinForAction(
+      t('Annulation de Transaction'),
+      t('Saisissez votre code PIN pour valider l\'annulation de l\'opération #{0} ({1}).', selectedTxForReversal.id.slice(0, 8), formatCurrency(selectedTxForReversal.amount)),
+      async () => {
+        try {
+          await reverseTransaction({
+            transactionId: selectedTxForReversal.id,
+            reason: reversalReason.trim(),
+            userRole: userRole || 'MANAGER',
+            collectorId: activeCollector?.id,
+          });
+          triggerSuccessFeedback();
+          Alert.alert(t('Opération Rectifiée'), t('L\'opération a été annulée et le solde/échéance de l\'adhérent a été recalculé.'));
+          loadClientData();
+        } catch (err: any) {
+          triggerErrorFeedback();
+          Alert.alert(t('Erreur'), err?.message || t('Échec de l\'annulation.'));
+        } finally {
+          setSelectedTxForReversal(null);
+        }
+      }
     );
   };
 
   if (!client) {
     return (
-      <SafeAreaView style={styles.centerContainer}>
-        <Text style={styles.loadingText}>Chargement du dossier adhérent...</Text>
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text variant="bodyStrong">{t('Chargement du dossier adhérent…')}</Text>
+        </View>
+      </Screen>
     );
   }
 
+  const isMulti = memberHandsCount > 1;
+  const detailRows: { label: string; value: string; tone?: 'success' | 'primary' }[] = [
+    { label: t('Montant par main'), value: formatCurrency(unitAmount) },
+    { label: t('Cagnotte d\'un tirage'), value: formatCurrency(totalPotAmount) },
+    { label: t('Total à cotiser sur le cycle'), value: t('{0} ({1} cotisations)', formatCurrency(limits.maxPotAmount), limits.maxAllowedHands) },
+    {
+      label: t('Total à recevoir'),
+      value: t('{0} ({1} tirage{2})', formatCurrency(totalPotAmount * memberHandsCount), memberHandsCount, memberHandsCount > 1 ? 's' : ''),
+    },
+    { label: t('Tirages perçus'), value: `${currentReceivedHands} / ${memberHandsCount}` },
+  ];
+
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Profile Card */}
-        <View style={styles.profileCard}>
-          <View style={styles.profileTop}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{getInitials(client.fullName)}</Text>
-            </View>
-
-            <View style={styles.profileInfo}>
-              <Text style={styles.fullName}>{client.fullName}</Text>
-              <Text style={styles.phoneNumber}>{client.phoneNumber}</Text>
-              <View style={styles.badgesRow}>
-                <Badge type={client.type} />
-                {client.payoutRank && (
-                  <View style={styles.rankBadge}>
-                    <Icon name="crown" size={11} color="#1D4ED8" style={{ marginRight: 3 }} />
-                    <Text style={styles.rankBadgeText}>Main #{client.payoutRank}</Text>
-                  </View>
-                )}
-                {client.hasReceivedPayout ? (
-                  <View style={styles.paidOutBadge}>
-                    <Icon name="check" size={11} color="#15803D" style={{ marginRight: 3 }} />
-                    <Text style={styles.paidOutBadgeText}>Main Décaissée</Text>
-                  </View>
-                ) : (
-                  <View style={styles.pendingPayoutBadge}>
-                    <Text style={styles.pendingPayoutBadgeText}>Main en Attente</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          </View>
-
-          {/* QR Code & ID Info Box */}
-          <View style={styles.qrBox}>
-            <View style={styles.qrLeft}>
-              <Icon name="scan" size={24} color={SOL_COLORS.secondary} />
-              <View style={{ marginLeft: 10 }}>
-                <Text style={styles.qrLabel}>KÒD ID ADHÉRENT</Text>
-                <Text style={styles.qrToken}>{client.qrCodeToken}</Text>
-              </View>
-            </View>
-            <Text style={styles.idSub}>ID: {formatShortId(client.id)}</Text>
-          </View>
-        </View>
-
-        {/* Financial Summary */}
-        <View style={styles.balanceSection}>
-          <View style={styles.balanceCard}>
-            <Text style={styles.balanceLabel}>SOLDE COTISÉ</Text>
-            <Text style={styles.balanceAmount}>
-              {formatCurrency(client.currentBalance)}
-            </Text>
-          </View>
-
-          <View style={styles.dailyCard}>
-            <Text style={styles.dailyLabel}>VALEUR DE LA MAIN ({registeredCount} enf.)</Text>
-            <Text style={styles.dailyAmount}>
-              {formatCurrency(totalPotAmount)}
-            </Text>
-          </View>
-        </View>
-
-        {/* Primary Action: Disburse Hand (Bay Men) & Collect */}
-        <View style={styles.payoutActionBanner}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.payoutBannerTitle}>
-              {client.hasReceivedPayout ? 'Main déjà décaissée' : 'Décaisser la main ("Bay Men")'}
-            </Text>
-            <Text style={styles.payoutBannerSub}>
-              Cagnotte : {formatCurrency(totalPotAmount)} ({registeredCount} enfants inscrits × {formatCurrency(unitAmount)})
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleInitiatePayout}
-            style={[
-              styles.payoutBannerBtn,
-              client.hasReceivedPayout && styles.payoutBannerBtnCompleted,
-            ]}
-          >
-            <Icon name="shield" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.payoutBannerBtnText}>
-              {client.hasReceivedPayout ? 'Re-décaisser' : 'Bay Men'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Secondary Action Buttons Row */}
-        <View style={styles.actionButtonsRow}>
-          <TouchableOpacity
-            activeOpacity={0.8}
+    <Screen
+      footer={
+        !isReadOnly ? (
+          <Button
+            size="lg"
+            fullWidth
+            icon="cash"
+            label={t('Encaisser une cotisation')}
             onPress={() => {
               triggerLightImpact();
-              router.push({
-                pathname: '/(tabs)/collect',
-                params: { clientId: client.id },
-              } as any);
+              router.navigate({ pathname: '/(tabs)/collect', params: { clientId: client.id } } as any);
             }}
-            style={styles.actionBtnPrimary}
-          >
-            <Icon name="collect" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.actionBtnPrimaryText}>Encaisser</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleOpenEditModal}
-            style={styles.actionBtnSecondary}
-          >
-            <Text style={styles.actionBtnSecondaryText}>Modifier</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handlePrintOrShare}
-            style={styles.actionBtnSecondary}
-          >
-            <Icon name="print" size={16} color={SOL_COLORS.textPrimary} style={{ marginRight: 4 }} />
-            <Text style={styles.actionBtnSecondaryText}>Fiche</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={handleDeleteClient}
-            style={styles.actionBtnDanger}
-          >
-            <Icon name="close" size={14} color="#DC2626" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Individual Passbook Ledger */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            HISTORIQUE DES VERSEMENTS ({transactions.length})
-          </Text>
-        </View>
-
-        {transactions.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Icon name="history" size={28} color="#94A3B8" />
-            <Text style={styles.emptyText}>Aucun versement enregistré pour cet adhérent.</Text>
-          </View>
-        ) : (
-          transactions.map((tx) => {
-            const isDeposit =
-              tx.type === 'SABOTAY_DEPOSIT' || tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION';
-            return (
-              <TouchableOpacity
-                key={tx.id}
-                activeOpacity={0.7}
-                onPress={() => handleTransactionPress(tx)}
-                style={styles.txRow}
-              >
-                <View style={styles.txLeft}>
-                  <View
-                    style={[
-                      styles.txIcon,
-                      isDeposit ? styles.txIconDeposit : styles.txIconWithdraw,
-                    ]}
-                  >
-                    <Icon
-                      name={isDeposit ? 'arrow-right' : 'arrow-left'}
-                      size={14}
-                      color={isDeposit ? '#059669' : '#DC2626'}
-                    />
-                  </View>
-                  <View>
-                    <Text style={styles.txTypeName}>
-                      {tx.type === 'SABOTAY_DEPOSIT'
-                        ? 'Dépôt Sabotay'
-                        : tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION'
-                        ? 'Cotisation Sol'
-                        : tx.type === 'SOL_PAYOUT' || tx.type === 'HAND_PAYOUT'
-                        ? 'Décaissement Main ("Bay Men")'
-                        : 'Retrait'}
-                    </Text>
-                    <Text style={styles.txDate}>{formatDate(tx.createdAtLocal)}</Text>
-                  </View>
-                </View>
-
-                <View style={styles.txRight}>
-                  <Text
-                    style={[
-                      styles.txAmount,
-                      isDeposit ? styles.txAmountDeposit : styles.txAmountWithdraw,
-                    ]}
-                  >
-                    {isDeposit ? '+' : '-'} {formatCurrency(tx.amount)}
-                  </Text>
-                  <Badge syncStatus={tx.syncStatus} style={{ marginTop: 2 }} />
-                </View>
-              </TouchableOpacity>
-            );
-          })
-        )}
-      </ScrollView>
-
-      {/* Payout ("Bay Men") Modal */}
-      <Modal
-        visible={isPayoutModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsPayoutModalOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Remise de la Main ("Bay Men")</Text>
-            <Text style={styles.modalSub}>
-              Le gestionnaire peut donner la main à tout moment à cet adhérent.
-            </Text>
-
-            <View style={styles.payoutDetailCard}>
-              <Text style={styles.payoutDetailLabel}>BÉNÉFICIAIRE :</Text>
-              <Text style={styles.payoutDetailName}>{client.fullName} ({client.phoneNumber})</Text>
-
-              <Text style={[styles.payoutDetailLabel, { marginTop: 8 }]}>MONTANT TOTAL CALCULÉ :</Text>
-              <Text style={styles.payoutDetailAmount}>{formatCurrency(totalPotAmount)}</Text>
-              <Text style={styles.payoutDetailFormula}>
-                Basé sur {registeredCount} enfants inscrits × {formatCurrency(unitAmount)}
-              </Text>
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>MOTIF / NOTE DU DÉCAISSEMENT</Text>
-              <TextInput
-                style={styles.formInput}
-                value={payoutNote}
-                onChangeText={setPayoutNote}
-                placeholder="Ex: Main de Février remise en main propre"
+          />
+        ) : undefined
+      }
+    >
+      <Stack.Screen
+        options={{
+          headerRight: () =>
+            isReadOnly ? null : (
+              <ActionMenu
+                title={client.fullName}
+                items={[
+                  { label: t('Modifier l\'adhérent'), icon: 'edit', onPress: handleOpenEditModal },
+                  { label: t('Fiche et reçu PDF'), icon: 'printer', onPress: handlePrintOrShare },
+                  { label: t('Supprimer l\'adhérent'), icon: 'trash', destructive: true, onPress: handleDeleteClient },
+                ]}
               />
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                onPress={() => setIsPayoutModalOpen(false)}
-                style={styles.modalCancelBtn}
-              >
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={handleConfirmPayout}
-                style={styles.modalPayoutConfirmBtn}
-              >
-                <Icon name="shield" size={14} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.modalPayoutConfirmBtnText}>Valider PIN (Bay Men)</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Edit Client Modal */}
-      <Modal
-        visible={isEditModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsEditModalOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Modifier l'Adhérent</Text>
-            <Text style={styles.modalSub}>
-              Ajustez le nom, le numéro de téléphone ou le numéro de main attribué.
-            </Text>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NOM COMPLET DE L'ADHÉRENT</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editFullName}
-                onChangeText={setEditFullName}
-                placeholder="Nom complet"
-              />
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>NUMÉRO DE TÉLÉPHONE (+509...)</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editPhoneNumber}
-                onChangeText={setEditPhoneNumber}
-                placeholder="+509 XX XX XXXX"
-                keyboardType="phone-pad"
-              />
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>POSITION / RANG DE MAIN</Text>
-              <TextInput
-                style={styles.formInput}
-                value={editRank}
-                onChangeText={setEditRank}
-                placeholder="1"
-                keyboardType="numeric"
-              />
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                onPress={() => setIsEditModalOpen(false)}
-                style={styles.modalCancelBtn}
-              >
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={handleSaveEdit}
-                style={styles.modalSaveBtn}
-              >
-                <Text style={styles.modalSaveBtnText}>Enregistrer</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Universal 4-Digit PIN Security Modal */}
-      <PinVerificationModal
-        visible={isPinModalOpen}
-        title={pendingActionTitle || 'Validation Requise'}
-        subtitle={pendingActionSubtitle || 'Veuillez saisir votre code PIN gestionnaire (4 chiffres) pour confirmer cette opération.'}
-        onSuccess={handlePinSuccess}
-        onCancel={() => {
-          setIsPinModalOpen(false);
-          setPendingActionCallback(null);
+            ),
         }}
       />
-    </SafeAreaView>
+      {/* Identity, on the page itself (no card) */}
+      <View style={styles.cardGap}>
+        <View style={styles.identityRow}>
+          <Avatar name={client.fullName} size="lg" />
+          <View style={styles.flexShrink}>
+            <Text variant="title" numberOfLines={2} selectable>
+              {client.fullName}
+            </Text>
+            <Text variant="body" tone="muted" selectable>
+              {client.phoneNumber}
+            </Text>
+          </View>
+        </View>
+
+        <Text variant="caption" tone="muted">
+          {isMulti ? t('{0} mains · rangs {1}', memberHandsCount, client.payoutRanks || client.payoutRank) : t('Rang {0}', client.payoutRank || 1)} ·{' '}
+          {client.type === 'SABOTAY' ? t('Sabotay') : client.type === 'SOL' ? t('Sol') : client.type}
+        </Text>
+        {isFullyReceived ? (
+          <StatusBadge status="HAND_RECEIVED" appearance="inline" label={isMulti ? t('Toutes les mains reçues ({0}/{1})', memberHandsCount, memberHandsCount) : t('Main reçue')} />
+        ) : isMulti && currentReceivedHands > 0 ? (
+          <StatusBadge status="HAND_RECEIVED" appearance="inline" label={t('{0}/{1} mains reçues', currentReceivedHands, memberHandsCount)} />
+        ) : null}
+      </View>
+
+      <StatStrip
+        cells={[
+          { label: t('Total cotisé'), children: <AmountText amount={client.totalPaidAmount || client.currentBalance} size="medium" /> },
+          remainingHands === 0
+            ? { label: t('Reste à verser'), value: t('Complété'), tone: 'success', hint: t('Toutes mains réglées') }
+            : { label: t('Reste à verser'), tone: 'warning', hint: t('{0} main(s)', remainingHands), children: <AmountText amount={remainingAmount} size="medium" tone="warning" /> },
+        ]}
+      />
+
+      <Card style={styles.cardGap}>
+        <View style={styles.progressBlock}>
+          <View style={styles.rowBetween}>
+            <Text variant="label">{t('Cotisations :')}{' '}{client.paidHandsCount || 0} / {maxAllowedHands}{' '}{t('mains')}</Text>
+            <Text variant="label" tone="muted">
+              {memberContributionProgressPct} %
+            </Text>
+          </View>
+          <ProgressBar value={memberContributionProgressPct / 100} accessibilityLabel={t('Progression des cotisations')} />
+          <View style={styles.coverageRow}>
+            <Icon name="calendar" size={16} color={theme.colors.textMuted} />
+            <Text variant="caption" tone="muted">{t('Couvert jusqu\'au')}
+            </Text>
+            <Text variant="label">{client.paidUntilDate ? formatDateShort(client.paidUntilDate) : t('en attente')}</Text>
+          </View>
+        </View>
+      </Card>
+
+      {/* Payout ("bay men") */}
+      {isFullyReceived ? (
+        <Card tone="success">
+          <View style={styles.noticeRow}>
+            <Icon name="check" size={22} color={theme.colors.success} strokeWidth={2.5} />
+            <View style={styles.flexShrink}>
+              <Text variant="subheading" tone="success">
+                {isMulti ? t('Toutes les mains remises ({0}/{1})', memberHandsCount, memberHandsCount) : t('Main déjà remise')}
+              </Text>
+              <Text variant="body" tone="success">{t('Cagnotte perçue')}{' '}{client.handReceivedDate ? t('le {0}', formatDate(client.handReceivedDate)) : t('pour ce cycle')} ({formatCurrency(totalPotAmount)})
+              </Text>
+            </View>
+          </View>
+        </Card>
+      ) : !isReadOnly ? (
+        <Card style={styles.cardGap}>
+          <View style={styles.rowBetween}>
+            <Text variant="subheading">{t('Remise de la main')}</Text>
+            <AmountText amount={totalPotAmount} size="small" />
+          </View>
+          <Text variant="caption" tone="muted">
+            {t('{0} mains effectives au cycle × {1}', totalCycleHands, formatCurrency(unitAmount))}
+          </Text>
+          <Button
+            icon="payout"
+            fullWidth
+            variant="secondary"
+            label={isMulti ? t('Remettre la main ({0}/{1})', currentReceivedHands + 1, memberHandsCount) : t('Remettre la main')}
+            onPress={handleInitiatePayout}
+          />
+        </Card>
+      ) : null}
+
+      {/* Cycle details */}
+      <Card style={styles.cardGap}>
+        <Text variant="subheading" accessibilityRole="header">
+          {isMulti ? t('Cycle · {0} mains souscrites', memberHandsCount) : t('Cycle')}
+        </Text>
+        {detailRows.map((row) => (
+          <View key={row.label} style={styles.detailRow}>
+            <Text variant="caption" tone="muted" style={styles.detailLabel}>
+              {row.label}
+            </Text>
+            <Text variant="label" style={styles.detailValue}>
+              {row.value}
+            </Text>
+          </View>
+        ))}
+      </Card>
+
+      {/* Passbook */}
+      <SectionHeader title={t('Historique des opérations')} count={transactions.length} />
+      {transactions.length === 0 ? (
+        <Card padding="none">
+          <EmptyState icon="history" title={t('Aucune opération')} message={t('Aucun versement enregistré pour cet adhérent.')} />
+        </Card>
+      ) : (
+        <Card padding="none" style={styles.ledger}>
+          {transactions.map((tx, i) => {
+            const isDeposit = tx.type === 'SABOTAY_DEPOSIT' || tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION';
+            const isReversal = tx.type === 'REVERSAL' || tx.isReversed;
+            const icon: UiIconName = isReversal ? 'alert' : isDeposit ? 'cash' : 'payout';
+            const iconColor = isReversal ? theme.colors.danger : isDeposit ? theme.colors.success : theme.colors.primary;
+            const iconBg = isReversal ? theme.colors.dangerSoft : isDeposit ? theme.colors.successSoft : theme.colors.primarySoft;
+            return (
+              <ListItem
+                key={tx.id}
+                divider={i < transactions.length - 1}
+                onPress={() => handleTransactionPress(tx)}
+                accessibilityLabel={`${getTxTypeLabel(tx)}, ${formatCurrency(tx.amount)}, ${formatDate(tx.createdAtLocal)}`}
+                leading={
+                  <View style={[styles.txIcon, { backgroundColor: iconBg }]}>
+                    <Icon name={icon} size={18} color={iconColor} />
+                  </View>
+                }
+                title={getTxTypeLabel(tx)}
+                subtitle={formatDate(tx.createdAtLocal)}
+                trailing={
+                  <AmountText
+                    amount={tx.amount}
+                    size="small"
+                    sign={isDeposit && !isReversal ? 'credit' : 'debit'}
+                    tone={isReversal ? 'danger' : isDeposit ? 'success' : 'default'}
+                  />
+                }
+              />
+            );
+          })}
+        </Card>
+      )}
+
+      {/* Transaction detail */}
+      <BottomSheet
+        visible={isDetailModalOpen && !!selectedTx}
+        onClose={() => setIsDetailModalOpen(false)}
+        title={selectedTx ? getTxTypeLabel(selectedTx) : t('Détail de l\'opération')}
+        subtitle={selectedTx ? formatDate(selectedTx.createdAtLocal) : undefined}
+      >
+        {selectedTx && (
+          <>
+            <AmountText amount={selectedTx.amount} size="hero" />
+            {[
+              { label: t('Référence'), value: `#${selectedTx.id.slice(0, 8)}` },
+              { label: t('Mains couvertes'), value: t('{0} main(s)', selectedTx.handsCovered || 1) },
+            ].map((row) => (
+              <View key={row.label} style={styles.detailRow}>
+                <Text variant="caption" tone="muted" style={styles.detailLabel}>
+                  {row.label}
+                </Text>
+                <Text variant="label" selectable style={styles.detailValue}>
+                  {row.value}
+                </Text>
+              </View>
+            ))}
+
+            {selectedTx.note && (
+              <View style={styles.noteBox}>
+                <Text variant="caption" tone="muted">{t('Note d\'enregistrement')}</Text>
+                <Text variant="body" selectable>
+                  {selectedTx.note}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.actionsRow}>
+              <Button label={t('Reçu PDF')} icon="printer" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
+              <Button label={t('WhatsApp')} icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
+            </View>
+
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
+
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
+              <Button label={t('Annuler cette opération')} icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
+            )}
+
+
+            {isReadOnly && selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
+              <Card tone="sunken">
+                <View style={styles.noticeRow}>
+                  <Icon name="shield" size={18} color={theme.colors.textMuted} />
+                  <Text variant="caption" tone="muted" style={styles.flexShrink}>{t('Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.')}</Text>
+                </View>
+              </Card>
+            )}
+          </>
+        )}
+      </BottomSheet>
+
+      {/* Edit member */}
+      <BottomSheet
+        visible={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title={t('Modifier l\'adhérent')}
+        subtitle={t('Mise à jour des informations de l\'adhérent.')}
+        footer={
+          <View style={styles.actionsRow}>
+            <Button label={t('Annuler')} variant="secondary" onPress={() => setIsEditModalOpen(false)} style={styles.flexGrow} />
+            <Button label={t('Enregistrer')} onPress={handleSaveEdit} style={styles.flexGrow} />
+          </View>
+        }
+      >
+        <TextField label={t('Nom complet')} value={editFullName} onChangeText={setEditFullName} placeholder={t('Ex : Marie Carmelle Jean')} />
+        <TextField
+          label={t('Numéro de téléphone')}
+          value={editPhoneNumber}
+          onChangeText={setEditPhoneNumber}
+          placeholder={t('+509 XX XX XXXX')}
+          keyboardType="phone-pad"
+        />
+
+        <View style={styles.cardGap}>
+          <View style={styles.rowBetween}>
+            <Text variant="label">{t('Mains souscrites')}</Text>
+            <Text variant="label" tone="primary">
+              {t('{0} / tour', formatCurrency(editHandsCount * unitAmount))}</Text>
+          </View>
+          <View style={styles.stepperRow}>
+            <Pressable
+              onPress={() => {
+                const next = Math.max(1, editHandsCount - 1);
+                setEditHandsCount(next);
+                triggerLightImpact();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('Retirer une main')}
+              style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
+            >
+              <Icon name="minus" size={22} color={theme.colors.text} />
+            </Pressable>
+            <View style={styles.stepperValue}>
+              <Text variant="amountLarge" align="center">
+                {editHandsCount}
+              </Text>
+              <Text variant="caption" tone="muted" align="center">{t('main{0}', editHandsCount > 1 ? 's' : '')}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => {
+                const next = editHandsCount + 1;
+                setEditHandsCount(next);
+                triggerLightImpact();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('Ajouter une main')}
+              style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed]}
+            >
+              <Icon name="plus" size={22} color={theme.colors.text} />
+            </Pressable>
+          </View>
+          <Text variant="caption" tone="muted">{t('Ajouter une main à cet enfant augmente automatiquement la cagnotte du sol.')}</Text>
+        </View>
+
+        <TextField
+          label={t('Rang(s) de tirage')}
+          value={editMultiRanks}
+          onChangeText={setEditMultiRanks}
+          placeholder={t('Ex : 1 ou 1, 4, 7')}
+          helper={t('Séparez les rangs par des virgules.')}
+        />
+      </BottomSheet>
+
+      {/* Payout ("bay men") */}
+      <BottomSheet
+        visible={isPayoutModalOpen}
+        onClose={() => setIsPayoutModalOpen(false)}
+        title={t('Remise de la main')}
+        subtitle={t('Validation par code PIN gestionnaire.')}
+        footer={
+          <View style={styles.actionsRow}>
+            <Button label={t('Annuler')} variant="secondary" onPress={() => setIsPayoutModalOpen(false)} style={styles.flexGrow} />
+            <Button label={t('Valider avec PIN')} icon="lock" onPress={handleConfirmPayout} style={styles.flexGrow} />
+          </View>
+        }
+      >
+        {isOutOfOrder && (
+          <Card tone="warning">
+            <View style={styles.noticeRow}>
+              <Icon name="alert" size={18} color={theme.colors.warning} />
+              <Text variant="label" tone="warning" style={styles.flexShrink}>{t('Cette remise ne suit pas l\'ordre prévu (rang #{0} attendu). Justification obligatoire.', expectedNextRank)}</Text>
+            </View>
+          </Card>
+        )}
+
+        <Card tone="sunken" style={styles.cardGap}>
+          <Text variant="caption" tone="muted">{t('Bénéficiaire')}</Text>
+          <Text variant="bodyStrong">
+            {client.fullName} · {client.phoneNumber}
+          </Text>
+          <Text variant="caption" tone="muted">{t('Cagnotte calculée')}</Text>
+          <AmountText amount={totalPotAmount} size="large" />
+          <Text variant="caption" tone="muted">
+            {t('{0} mains au total × {1}', totalCycleHands, formatCurrency(unitAmount))}
+          </Text>
+        </Card>
+
+        <TextField
+          label={isOutOfOrder ? t('Justification (obligatoire)') : t('Motif / justification')}
+          value={payoutNote}
+          onChangeText={setPayoutNote}
+          placeholder={t('Ex : remise normale du cycle 1')}
+        />
+      </BottomSheet>
+
+      {/* Reversal */}
+      <BottomSheet
+        visible={isReversalModalOpen}
+        onClose={() => setIsReversalModalOpen(false)}
+        title={t('Annuler une opération')}
+        subtitle={t('Le solde, les mains payées et la couverture de l\'adhérent seront recalculés.')}
+        footer={
+          <View style={styles.actionsRow}>
+            <Button label={t('Retour')} variant="secondary" onPress={() => setIsReversalModalOpen(false)} style={styles.flexGrow} />
+            <Button label={t('Confirmer l\'annulation')} variant="danger" onPress={handleConfirmReversal} style={styles.flexGrow} />
+          </View>
+        }
+      >
+        <TextField
+          label={t('Motif obligatoire')}
+          value={reversalReason}
+          onChangeText={setReversalReason}
+          placeholder={t('Ex : erreur de saisie du montant')}
+        />
+      </BottomSheet>
+
+      {/* Universal Sensitive Action PIN Modal */}
+      <PinVerificationModal
+        visible={isPinModalOpen}
+        onCancel={() => setIsPinModalOpen(false)}
+        onSuccess={handlePinSuccess}
+        title={pendingActionTitle}
+        subtitle={pendingActionSubtitle}
+      />
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  centerContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8FAFC',
-  },
-  loadingText: {
-    fontSize: 14,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  profileCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    marginBottom: 12,
-  },
-  profileTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  avatarText: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  profileInfo: {
-    flex: 1,
-  },
-  fullName: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  phoneNumber: {
-    fontSize: 13,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  badgesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 6,
-  },
-  rankBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  rankBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  paidOutBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  paidOutBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#15803D',
-  },
-  pendingPayoutBadge: {
-    backgroundColor: '#FFFBEB',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  pendingPayoutBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#B45309',
-  },
-  qrBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  qrLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  qrLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  qrToken: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: SOL_COLORS.secondary,
-  },
-  idSub: {
-    fontSize: 10,
-    color: '#94A3B8',
-    fontWeight: '700',
-  },
-  balanceSection: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  balanceCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  balanceLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  balanceAmount: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#059669',
-    marginTop: 2,
-  },
-  dailyCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  dailyLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  dailyAmount: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: SOL_COLORS.primary,
-    marginTop: 2,
-  },
-  payoutActionBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#ECFDF5',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: '#A7F3D0',
-    marginBottom: 12,
-  },
-  payoutBannerTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#065F46',
-  },
-  payoutBannerSub: {
-    fontSize: 11,
-    color: '#047857',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  payoutBannerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#059669',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  payoutBannerBtnCompleted: {
-    backgroundColor: '#0D9488',
-  },
-  payoutBannerBtnText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 16,
-  },
-  actionBtnPrimary: {
-    flex: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    height: 44,
-    borderRadius: 12,
-  },
-  actionBtnPrimaryText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  actionBtnSecondary: {
-    flex: 1.2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  actionBtnSecondaryText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  actionBtnDanger: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FEF2F2',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-  },
-  sectionHeader: {
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  txRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  txLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  txIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  txIconDeposit: {
-    backgroundColor: '#ECFDF5',
-  },
-  txIconWithdraw: {
-    backgroundColor: '#FEF2F2',
-  },
-  txTypeName: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  txDate: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  txRight: {
-    alignItems: 'flex-end',
-  },
-  txAmount: {
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  txAmountDeposit: {
-    color: '#059669',
-  },
-  txAmountWithdraw: {
-    color: '#DC2626',
-  },
-  emptyCard: {
-    padding: 24,
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  emptyText: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 6,
-    fontWeight: '600',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 380,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 18,
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  modalSub: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-    marginBottom: 12,
-  },
-  payoutDetailCard: {
-    backgroundColor: '#ECFDF5',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-    marginBottom: 12,
-  },
-  payoutDetailLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#065F46',
-    letterSpacing: 0.5,
-  },
-  payoutDetailName: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#065F46',
-    marginTop: 1,
-  },
-  payoutDetailAmount: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#059669',
-    marginTop: 2,
-  },
-  payoutDetailFormula: {
-    fontSize: 11,
-    color: '#047857',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  formGroup: {
-    marginBottom: 10,
-  },
-  formLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  formInput: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    height: 42,
-    paddingHorizontal: 10,
-    fontSize: 13,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  modalBtnRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  modalCancelBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#F1F5F9',
-  },
-  modalCancelBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  modalSaveBtn: {
-    flex: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: SOL_COLORS.primary,
-  },
-  modalSaveBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  modalPayoutConfirmBtn: {
-    flex: 1.8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#059669',
-  },
-  modalPayoutConfirmBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+  StyleSheet.create({
+    centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
+    flexShrink: { flex: 1, minWidth: 0 },
+    flexGrow: { flexGrow: 1, flexBasis: 0 },
+    pressed: { backgroundColor: colors.surfacePressed },
+    cardGap: { gap: spacing.sm },
+    rowBetween: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: spacing.sm },
+
+    identityRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    infoChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      minHeight: spacing.xxl,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.pill,
+      backgroundColor: colors.surfaceAlt,
+    },
+    metricsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+    progressBlock: { gap: spacing.sm, marginTop: spacing.xs },
+    coverageRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.xs },
+    noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+
+    detailRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: spacing.md,
+      paddingVertical: spacing.xs,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.divider,
+    },
+    detailLabel: { flex: 1.3 },
+    detailValue: { flex: 1, textAlign: 'right' },
+
+    actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    ledger: { overflow: 'hidden' },
+    txIcon: {
+      width: spacing.xxl + spacing.sm,
+      height: spacing.xxl + spacing.sm,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    noteBox: {
+      gap: spacing.xs,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceAlt,
+    },
+
+    stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xl },
+    stepperBtn: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+    },
+    stepperValue: { minWidth: layout.actionHeight, alignItems: 'center' },
+  });

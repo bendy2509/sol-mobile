@@ -1,7 +1,7 @@
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { SyncState } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
-import { markClientsSynced, markTransactionsSynced } from './transactionRepo';
+import { markClientsSynced, markTransactionsSynced } from './transactionRepository';
 
 type SyncSubscriber = (state: SyncState) => void;
 
@@ -11,6 +11,8 @@ class SyncEngine {
     isOnline: true,
     isSyncing: false,
     pendingCount: 0,
+    syncedCount: 0,
+    failedCount: 0,
     lastSyncedAt: null,
     error: null,
   };
@@ -71,6 +73,8 @@ class SyncEngine {
 
   public startAutoSync(intervalMs = 30000) {
     if (this.timer) clearInterval(this.timer);
+    // Nothing to send while cloud sync is off (no 30-second silent failures)
+    if (!isCloudSyncActive) return;
     this.timer = setInterval(() => {
       this.syncAll().catch(() => {});
     }, intervalMs);
@@ -93,7 +97,7 @@ class SyncEngine {
     this.notify();
 
     try {
-      if (!isSupabaseConfigured) {
+      if (!isCloudSyncActive) {
         await this.refreshPendingCount();
         this.state.isSyncing = false;
         this.state.isOnline = false;
@@ -220,6 +224,31 @@ class SyncEngine {
         }
       }
 
+      // 3.5. Push Pending Client Deletions to Supabase
+      try {
+        const pendingDeletions = await db.getAllAsync<{ id: string; qr_code_token?: string }>(
+          `SELECT id, qr_code_token FROM deleted_clients WHERE sync_status = 'PENDING'`
+        );
+        for (const del of pendingDeletions) {
+          try {
+            await supabase.from('transactions').delete().eq('client_id', del.id);
+            let delError;
+            if (del.qr_code_token) {
+              const res = await supabase.from('clients').delete().or(`id.eq.${del.id},qr_code_token.eq.${del.qr_code_token}`);
+              delError = res.error;
+            } else {
+              const res = await supabase.from('clients').delete().eq('id', del.id);
+              delError = res.error;
+            }
+            if (!delError) {
+              await db.runAsync(`UPDATE deleted_clients SET sync_status = 'SYNCED' WHERE id = ?`, [del.id]);
+            }
+          } catch {}
+        }
+      } catch (delSyncErr) {
+        console.warn('Deleted clients sync notice:', delSyncErr);
+      }
+
       // 4. Push Pending Clients (Reconcile by qr_code_token)
       const pendingClients = await db.getAllAsync<{
         id: string;
@@ -327,6 +356,13 @@ class SyncEngine {
 
       // 6. Pull Remote Clients
       try {
+        const deletedRows = await db.getAllAsync<{ id: string; qr_code_token?: string; phone_number?: string }>(
+          `SELECT id, qr_code_token, phone_number FROM deleted_clients`
+        );
+        const deletedIdsSet = new Set((deletedRows || []).map((d) => d.id).filter(Boolean));
+        const deletedTokensSet = new Set((deletedRows || []).map((d) => d.qr_code_token).filter(Boolean));
+        const deletedPhonesSet = new Set((deletedRows || []).map((d) => d.phone_number).filter(Boolean));
+
         const { data: remoteClients } = await supabase
           .from('clients')
           .select('*')
@@ -335,24 +371,68 @@ class SyncEngine {
 
         if (remoteClients && remoteClients.length > 0) {
           for (const rc of remoteClients) {
-            await db.runAsync(
-              `INSERT OR REPLACE INTO clients (id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance, payout_rank, has_received_payout, qr_code_token, created_at, sync_status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED')`,
-              [
-                rc.id,
-                rc.business_id || null,
-                rc.collector_id,
-                rc.full_name,
-                rc.phone_number,
-                rc.type,
-                Number(rc.daily_amount),
-                Number(rc.current_balance),
-                rc.payout_rank || null,
-                rc.has_received_payout ? 1 : 0,
-                rc.qr_code_token,
-                rc.created_at,
-              ]
-            );
+            // Never re-insert a client that was deleted locally!
+            const isDeleted =
+              deletedIdsSet.has(rc.id) ||
+              (rc.qr_code_token && deletedTokensSet.has(rc.qr_code_token)) ||
+              (rc.phone_number && deletedPhonesSet.has(rc.phone_number));
+
+            if (isDeleted) {
+              try {
+                await supabase.from('transactions').delete().eq('client_id', rc.id);
+                if (rc.qr_code_token) {
+                  await supabase.from('clients').delete().or(`id.eq.${rc.id},qr_code_token.eq.${rc.qr_code_token}`);
+                } else {
+                  await supabase.from('clients').delete().eq('id', rc.id);
+                }
+              } catch {}
+              continue;
+            }
+
+            // Merge remote client with any existing local fields to avoid overwriting local hands_count/received_hands_count/payout_ranks
+            try {
+              const existingLocal = await db.getFirstAsync<{ hands_count?: number; payout_ranks?: string; received_hands_count?: number }>(
+                `SELECT hands_count, payout_ranks, received_hands_count FROM clients WHERE id = ?`,
+                [rc.id]
+              );
+
+              const handsCount = rc.hands_count !== undefined && rc.hands_count !== null
+                ? Number(rc.hands_count)
+                : existingLocal?.hands_count ?? 1;
+
+              const payoutRanks = rc.payout_ranks || existingLocal?.payout_ranks || (rc.payout_rank ? String(rc.payout_rank) : null);
+
+              const receivedHandsCount = rc.received_hands_count !== undefined && rc.received_hands_count !== null
+                ? Number(rc.received_hands_count)
+                : existingLocal?.received_hands_count ?? 0;
+
+              await db.runAsync(
+                `INSERT OR REPLACE INTO clients (
+                  id, business_id, collector_id, full_name, phone_number, type, daily_amount, current_balance,
+                  payout_rank, payout_ranks, hands_count, received_hands_count, has_received_payout, qr_code_token, created_at, sync_status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED')`,
+                [
+                  rc.id,
+                  rc.business_id || null,
+                  rc.collector_id,
+                  rc.full_name,
+                  rc.phone_number,
+                  rc.type,
+                  Number(rc.daily_amount),
+                  Number(rc.current_balance),
+                  rc.payout_rank || null,
+                  payoutRanks,
+                  handsCount,
+                  receivedHandsCount,
+                  rc.has_received_payout ? 1 : 0,
+                  rc.qr_code_token,
+                  rc.created_at,
+                ]
+              );
+            } catch (pullInsertErr) {
+              console.warn('Remote client merge notice:', pullInsertErr);
+            }
           }
         }
       } catch (pullErr) {
@@ -393,3 +473,7 @@ class SyncEngine {
 }
 
 export const syncEngine = SyncEngine.getInstance();
+
+export async function syncPendingData() {
+  return syncEngine.syncAll();
+}

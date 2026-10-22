@@ -1,124 +1,59 @@
 import React from 'react';
 import { Tabs, Redirect } from 'expo-router';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/AuthContext';
-import { Icon } from '@/components/Icon';
-import { SOL_COLORS } from '@/constants/Colors';
+import { Icon, UiIconName } from '@/components/ui';
+import { t } from '@/i18n';
+import { typography as fixedTypography, useTheme } from '@/theme';
 
 export default function TabLayout() {
-  const { isAuthenticated, isPendingApproval, isLoading, userRole } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
+  const { colors, spacing, layout } = useTheme();
+  const insets = useSafeAreaInsets();
 
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={SOL_COLORS.primary} />
+      <View style={{ flex: 1, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
-  }
-
-  if (isPendingApproval) {
-    return <Redirect href="/pending-approval" />;
   }
 
   if (!isAuthenticated) {
     return <Redirect href="/login" />;
   }
 
+  const renderIcon = (name: UiIconName) =>
+    function TabIcon({ color, focused }: { color: ColorValue; focused: boolean }) {
+      return <Icon name={name} size={22} color={color} strokeWidth={focused ? 2.4 : 1.8} />;
+    };
+
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: SOL_COLORS.primary,
-        tabBarInactiveTintColor: '#94A3B8',
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textMuted,
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopWidth: 1.5,
-          borderTopColor: '#E2E8F0',
-          height: 64,
-          paddingBottom: 8,
-          paddingTop: 8,
+          backgroundColor: colors.surface,
+          borderTopWidth: 1,
+          borderTopColor: colors.border,
+          height: layout.rowHeight + spacing.sm + Math.max(insets.bottom, spacing.sm),
+          paddingTop: spacing.sm,
+          paddingBottom: Math.max(insets.bottom, spacing.sm),
         },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '800',
-          letterSpacing: 0.2,
-        },
+        // Fixed size: five labels must fit at 360px whatever the text-size preference
+        tabBarLabelStyle: fixedTypography.tab,
+        tabBarAllowFontScaling: false,
         headerShown: false,
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Tableau de bord',
-          tabBarIcon: ({ color, focused }) => (
-            <Icon
-              name="dashboard"
-              size={20}
-              color={color}
-              style={focused ? styles.iconActive : undefined}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="collect"
-        options={{
-          title: 'Collecte',
-          tabBarIcon: ({ color, focused }) => (
-            <Icon
-              name="collect"
-              size={20}
-              color={color}
-              style={focused ? styles.iconActive : undefined}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="sol"
-        options={{
-          title: 'Sol (ROSCA)',
-          tabBarIcon: ({ color, focused }) => (
-            <Icon
-              name="sol"
-              size={20}
-              color={color}
-              style={focused ? styles.iconActive : undefined}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: 'Historique',
-          tabBarIcon: ({ color, focused }) => (
-            <Icon
-              name="history"
-              size={20}
-              color={color}
-              style={focused ? styles.iconActive : undefined}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="two"
-        options={{
-          href: null,
-        }}
-      />
+      <Tabs.Screen name="index" options={{ title: t('tabs.home'), tabBarIcon: renderIcon('home') }} />
+      <Tabs.Screen name="collect" options={{ title: t('tabs.collect'), tabBarIcon: renderIcon('cash') }} />
+      <Tabs.Screen name="sol" options={{ title: t('tabs.sol'), tabBarIcon: renderIcon('cycle') }} />
+      <Tabs.Screen name="history" options={{ title: t('tabs.history'), tabBarIcon: renderIcon('history') }} />
+      <Tabs.Screen name="settings" options={{ title: t('tabs.settings'), tabBarIcon: renderIcon('settings') }} />
+      <Tabs.Screen name="two" options={{ href: null }} />
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  iconActive: {
-    transform: [{ scale: 1.1 }],
-  },
-});

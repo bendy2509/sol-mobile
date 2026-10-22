@@ -1,32 +1,45 @@
-import React, { useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  Modal,
-  RefreshControl,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import React, { useState, useCallback, useMemo } from 'react';
+import { View, TextInput, Pressable, StyleSheet, Alert, RefreshControl } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 
-import { Header } from '@/components/Header';
-import { Badge } from '@/components/Badge';
-import { Icon } from '@/components/Icon';
+import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import {
+  ActionMenu,
+  AmountText,
+  Avatar,
+  BottomSheet,
+  Button,
+  Card,
+  EmptyState,
+  Icon,
+  ListItem,
+  ProgressBar,
+  Screen,
+  SectionHeader,
+  StatusBadge,
+  Text,
+} from '@/components/ui';
+import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { getFrequencyLabel } from '@/lib/dateCalculations';
-import { calculatePot } from '@/services/financialService';
+import { calculatePot, calculateCycleTotalHands } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
+import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
+
+/** Segmented track (one segment per hand) is readable up to this many hands. */
+const MAX_SEGMENTS = 12;
 
 export default function SolMatrixScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const router = useRouter();
+  const { userRole } = useAuth();
+  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -37,6 +50,9 @@ export default function SolMatrixScreen() {
   const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
 
+
+  const [dbTotalHands, setDbTotalHands] = useState<number>(0);
+
   const loadData = useCallback(async () => {
     try {
       const [activeBusiness, memberList] = await Promise.all([
@@ -45,6 +61,22 @@ export default function SolMatrixScreen() {
       ]);
       setBusiness(activeBusiness);
       setMembers(memberList);
+
+      // Direct SQL SUM for guaranteed accuracy — avoids ORM mapping issues
+      try {
+        const db = await getDatabase();
+        const collectorId = await getActiveCollectorId();
+        const row = await db.getFirstAsync<{ total: number }>(
+          `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+          [collectorId]
+        );
+        const totalFromSql = Number(row?.total || 0);
+        const totalFromMembers = calculateCycleTotalHands(memberList);
+        setDbTotalHands(Math.max(1, totalFromMembers, totalFromSql));
+      } catch {
+        // Fallback to JS calculation if direct query fails
+        setDbTotalHands(Math.max(1, calculateCycleTotalHands(memberList)));
+      }
     } catch (err) {
       console.warn('Error loading Sol matrix:', err);
     }
@@ -66,24 +98,32 @@ export default function SolMatrixScreen() {
   };
 
   const handleInitiatePayout = (member: Member) => {
+    if (isReadOnly) {
+      Alert.alert(t('Accès en lecture seule'), t('La remise de la main est réservée aux gestionnaires.'));
+      return;
+    }
     triggerMediumImpact();
     setPayoutTargetMember(member);
-    setPayoutNote(`Remise de la main #${member.rankOrder || member.payoutRank || 1} - ${member.fullName}`);
+    const hands = Math.max(1, member.handsCount || 1);
+    const rec = Number(member.receivedHandsCount || 0);
+    setPayoutNote(`Remise de la main (${rec + 1}/${hands}) - ${member.fullName}`);
     setIsPayoutModalOpen(true);
   };
 
   const handleConfirmPayoutDetails = () => {
     if (!payoutNote.trim()) {
-      Alert.alert('Justification requise', 'Veuillez saisir une note ou motif pour le déblocage de la main.');
+      Alert.alert(t('Justification requise'), t('Veuillez saisir une note ou motif pour le déblocage de la main.'));
       return;
     }
     setIsPayoutModalOpen(false);
     setIsPinModalOpen(true);
   };
 
+  // Use SQL-based total (most reliable) falling back to JS calculation then business config
+  const totalHandsCount = dbTotalHands || calculateCycleTotalHands(members) || (business?.totalSlots || 10);
   const potValue = calculatePot(
     business?.contributionAmount || 250,
-    business?.totalSlots || members.length || 10
+    totalHandsCount
   );
 
   const handlePinSuccessPayout = async () => {
@@ -99,546 +139,265 @@ export default function SolMatrixScreen() {
       );
       triggerSuccessFeedback();
       Alert.alert(
-        'Main Remise avec Succès !',
-        `La cagnotte complète de ${formatCurrency(potValue)} a été décaissée pour ${payoutTargetMember.fullName}.\n\nRappel : Cet enfant reste actif et doit continuer ses cotisations restantes jusqu'à la fin du cycle.`
+        t('Main remise'),
+        t('{0} remis à {1}. Ses cotisations continuent jusqu\'à la fin du cycle.', formatCurrency(potValue), payoutTargetMember.fullName)
       );
       loadData();
     } catch (err: any) {
-      Alert.alert('Erreur', err?.message || 'Échec du décaissement.');
+      Alert.alert(t('Erreur'), err?.message || t('Échec du décaissement.'));
     } finally {
       setPayoutTargetMember(null);
     }
   };
 
-  const totalPaidOut = members.filter((m) => m.hasReceivedHand || m.hasReceivedPayout).length;
-  const currentRound = Math.min(members.length || 1, totalPaidOut + 1);
+
+  const totalHandsTouched = members.reduce(
+    (sum, m) => sum + (m.receivedHandsCount || (m.hasReceivedHand ? m.handsCount || 1 : 0)),
+    0
+  );
+  const currentRound = Math.min(totalHandsCount, totalHandsTouched + 1);
+
+  const progressRatio = totalHandsTouched / (totalHandsCount || 1);
+  const isCycleDone = totalHandsTouched >= totalHandsCount && totalHandsCount > 0;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Header
-        title={business?.name || 'Sol (ROSCA)'}
-        subtitle="Matrice de passage des mains & tirage"
-        onRefresh={handleRefresh}
-      />
-
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            colors={[SOL_COLORS.primary]}
+    <Screen
+      edges={['top', 'left', 'right']}
+      header={
+        <View style={styles.topBar}>
+          <View style={styles.flexShrink}>
+            <Text variant="title" accessibilityRole="header">{t('Sol')}</Text>
+            <Text variant="caption" tone="muted" numberOfLines={1}>
+              {business?.name ? t('{0} · ordre de passage', business.name) : t('Ordre de passage')}
+            </Text>
+          </View>
+          <SyncBadge onSyncComplete={handleRefresh} compact />
+          <ActionMenu
+            title={t('Cycle')}
+            items={[
+              { label: t('Gestion du cycle'), description: t('Clôturer, renouveler, bilans PDF'), icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
+              { label: t('Clôtures de caisse'), icon: 'calendar', onPress: () => router.push('/closure' as any) },
+            ]}
           />
-        }
-      >
-        {/* Sol Status Hero Card */}
-        <View style={styles.heroCard}>
-          <View style={styles.heroHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.heroGroupLabel}>CYCLE EN COURS</Text>
-              <Text style={styles.heroGroupName}>{business?.name || 'Groupe Sol'}</Text>
-              <Text style={styles.heroFrequency}>
-                Fréquence : {getFrequencyLabel(business?.frequency || 'DAILY')}
-              </Text>
-            </View>
-            <View style={styles.potBox}>
-              <Text style={styles.potLabel}>CAGNOTTE (PO)</Text>
-              <Text style={styles.potAmount}>{formatCurrency(potValue)}</Text>
-            </View>
-          </View>
-
-          {/* Progress Metrics */}
-          <View style={styles.progressSection}>
-            <View style={styles.progressTextRow}>
-              <Text style={styles.progressLabel}>
-                Tour actuel : <Text style={styles.progressBold}>Main #{currentRound}</Text> sur {business?.totalSlots || members.length}
-              </Text>
-              <Text style={styles.progressPct}>
-                {Math.round((totalPaidOut / (business?.totalSlots || members.length || 1)) * 100)}%
-              </Text>
-            </View>
-            <View style={styles.progressBar}>
-              <View
-                style={[
-                  styles.progressFill,
-                  {
-                    width: `${Math.min(
-                      100,
-                      (totalPaidOut / (business?.totalSlots || members.length || 1)) * 100
-                    )}%`,
-                  },
-                ]}
-              />
-            </View>
-          </View>
+        </View>
+      }
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          colors={[theme.colors.primary]}
+          tintColor={theme.colors.primary}
+        />
+      }
+    >
+      {/* Cycle hero */}
+      <Card tone="hero" padding="lg" style={styles.heroCard}>
+        <View style={styles.heroPot}>
+          <AmountText amount={potValue} size="hero" tone="onHero" />
+          <Text variant="body" tone="onHeroMuted">{t('Cagnotte du tour · {0} mains × {1}', totalHandsCount, formatCurrency(business?.contributionAmount || 250))}
+          </Text>
         </View>
 
-        {/* Matrix List of Ranks */}
-        <View style={styles.matrixContainer}>
-          <Text style={styles.sectionTitle}>ORDRE OFFICIEL DE PASSAGE DES MAINS</Text>
+        <View style={styles.heroProgress}>
+          {totalHandsCount <= MAX_SEGMENTS ? (
+            <View
+              accessible
+              accessibilityRole="progressbar"
+              accessibilityLabel={t('{0} main(s) remise(s) sur {1}', totalHandsTouched, totalHandsCount)}
+              style={styles.segments}
+            >
+              {Array.from({ length: totalHandsCount }).map((_, i) => (
+                <View key={i} style={[styles.segment, i < totalHandsTouched && styles.segmentDone]} />
+              ))}
+            </View>
+          ) : (
+            <ProgressBar value={progressRatio} accessibilityLabel={t('Mains remises')} />
+          )}
+          <View style={styles.heroProgressRow}>
+            <Text variant="label" tone="onHero">
+              {totalHandsTouched} / {totalHandsCount}{' '}{t('mains remises')}</Text>
+            <Text variant="caption" tone="onHeroMuted">{t('Tour {0} sur {1}', currentRound, totalHandsCount)}
+            </Text>
+          </View>
+        </View>
+      </Card>
 
+      {isCycleDone && (
+        <Card tone="success">
+          <View style={styles.noticeRow}>
+            <Icon name="check" size={22} color={theme.colors.success} strokeWidth={2.5} />
+            <View style={styles.flexShrink}>
+              <Text variant="subheading" tone="success">{t('Cycle terminé')}</Text>
+              <Text variant="body" tone="success">{t('Les {0} mains de ce cycle ont été remises.', totalHandsCount)}</Text>
+            </View>
+          </View>
+        </Card>
+      )}
+
+      <SectionHeader title={t('Adhérents')} count={members.length} />
+
+      {members.length === 0 ? (
+        <Card padding="none">
+          <EmptyState icon="users" title={t('Aucun adhérent dans ce cycle')} message={t('Inscrivez les enfants du sol pour établir l\'ordre de passage.')} />
+        </Card>
+      ) : (
+        <Card padding="none" style={styles.ledger}>
           {members.map((member, index) => {
-            const hasReceived = Boolean(member.hasReceivedHand || member.hasReceivedPayout);
-            const isNextTurn = !hasReceived && member.payoutRank === currentRound;
+            const memberHandsCount = Math.max(1, member.handsCount || 1);
+            const receivedCount = Number(member.receivedHandsCount || 0);
+            const hasReceived = receivedCount >= memberHandsCount || Boolean(member.hasReceivedHand || member.hasReceivedPayout);
+
+            const ranksList = (member.payoutRanks ? String(member.payoutRanks).split(',') : [String(member.payoutRank || '')])
+              .map((r) => Number(r.trim()))
+              .filter((n) => !isNaN(n) && n > 0);
+            const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
+            const isMulti = memberHandsCount > 1;
+            const isLast = index === members.length - 1;
+            const payoutLabel = isMulti ? t('Remettre la main {0}/{1}', receivedCount + 1, memberHandsCount) : t('Remettre la main');
 
             return (
-              <View
-                key={member.id}
-                style={[
-                  styles.rankCard,
-                  isNextTurn && styles.rankCardHighlight,
-                  hasReceived && styles.rankCardCompleted,
-                ]}
-              >
-                <View style={styles.rankLeft}>
-                  <View
-                    style={[
-                      styles.rankCircle,
-                      isNextTurn && styles.rankCircleHighlight,
-                      hasReceived && styles.rankCircleCompleted,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.rankNumber,
-                        isNextTurn && styles.rankNumberHighlight,
-                        hasReceived && styles.rankNumberCompleted,
-                      ]}
-                    >
-                      {member.rankOrder || member.payoutRank || index + 1}
-                    </Text>
-                  </View>
-
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.memberName}>{member.fullName}</Text>
-                    <Text style={styles.memberPhone}>{member.phoneNumber}</Text>
-                    {member.handReceivedDate && (
-                      <Text style={styles.receivedDateText}>
-                        Main touchée le {formatDateShort(member.handReceivedDate)}
-                      </Text>
-                    )}
-                  </View>
-                </View>
-
-                <View style={styles.rankRight}>
-                  {hasReceived ? (
-                    <View style={styles.badgePaidOut}>
-                      <Icon name="check" size={12} color="#047857" style={{ marginRight: 4 }} />
-                      <Text style={styles.badgePaidOutText}>Main Touchée</Text>
+              <View key={`${member.id}-${index}`} style={isNextTurn && styles.rowCurrent}>
+                <ListItem
+                  divider={false}
+                  leading={<Avatar rank={member.rankOrder || member.payoutRank || index + 1} highlighted={isNextTurn} />}
+                  title={member.fullName}
+                  meta={
+                    <View style={styles.meta}>
+                      {isNextTurn && <StatusBadge status="UPCOMING_PAYOUT" appearance="inline" />}
+                      {hasReceived && (
+                        <StatusBadge
+                          status="HAND_RECEIVED"
+                          appearance="inline"
+                          label={isMulti ? t('{0}/{1} mains reçues', memberHandsCount, memberHandsCount) : t('Main reçue')}
+                          detail={!isMulti && member.handReceivedDate ? formatDateShort(member.handReceivedDate) : undefined}
+                        />
+                      )}
+                      {isMulti && !hasReceived && (
+                        <>
+                          <Text variant="caption" tone="muted">
+                            {receivedCount}/{memberHandsCount}{' '}{t('mains reçues · rangs')}{' '}{member.payoutRanks || member.payoutRank}
+                          </Text>
+                        </>
+                      )}
+                      {!isNextTurn && !hasReceived && !isMulti && (
+                        <Text variant="caption" tone="muted">{t('En attente de son tour')}</Text>
+                      )}
                     </View>
-                  ) : (
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => handleInitiatePayout(member)}
-                      style={[styles.payoutActionBtn, isNextTurn && styles.payoutActionBtnHighlight]}
-                    >
-                      <Icon name="crown" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                      <Text style={styles.payoutActionBtnText}>
-                        {isNextTurn ? 'Donner la Main' : 'Décaisser'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+                  }
+                  trailing={
+                    isNextTurn ? (
+                      <Button
+                        label={t('Remettre')}
+                        onPress={() => handleInitiatePayout(member)}
+                        accessibilityLabel={`${payoutLabel} à ${member.fullName}`}
+                      />
+                    ) : !hasReceived ? (
+                      <Pressable
+                        onPress={() => handleInitiatePayout(member)}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('{0} à {1} (hors tour)', payoutLabel, member.fullName)}
+                        hitSlop={4}
+                        style={({ pressed }) => [styles.roundAction, pressed && styles.pressed]}
+                      >
+                        <Icon name="payout" size={20} color={theme.colors.textMuted} />
+                      </Pressable>
+                    ) : undefined
+                  }
+                />
+                {!isLast && <View style={styles.rule} />}
               </View>
             );
           })}
-        </View>
-      </ScrollView>
+        </Card>
+      )}
 
-      {/* Payout Justification Modal */}
-      <Modal
+      {/* Payout justification */}
+      <BottomSheet
         visible={isPayoutModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsPayoutModalOpen(false)}
+        onClose={() => setIsPayoutModalOpen(false)}
+        title={t('Remettre la main')}
+        subtitle={t('{0} · rang {1}', payoutTargetMember?.fullName ?? '', payoutTargetMember?.rankOrder || payoutTargetMember?.payoutRank || 1)}
+        footer={<Button size="lg" fullWidth label={t('Valider avec le PIN')} icon="lock" onPress={handleConfirmPayoutDetails} />}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <View style={styles.iconCircleCrown}>
-                <Icon name="crown" size={24} color="#1D4ED8" />
-              </View>
-              <Text style={styles.modalTitle}>Remise de la Main (Payout)</Text>
-            </View>
-
-            <Text style={styles.modalSub}>
-              Vous allez débloquer la cagnotte complète de{' '}
-              <Text style={styles.modalSubBold}>{formatCurrency(potValue)}</Text> pour{' '}
-              <Text style={styles.modalSubBold}>{payoutTargetMember?.fullName}</Text> (Main #{payoutTargetMember?.rankOrder || payoutTargetMember?.payoutRank || 1}).
-            </Text>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>NOTE / JUSTIFICATION DU DÉCAISSEMENT (OBLIGATOIRE)</Text>
-              <TextInput
-                style={styles.textArea}
-                multiline
-                numberOfLines={3}
-                placeholder="Ex: Remise de main effectuée en mains propres au marché."
-                placeholderTextColor="#94A3B8"
-                value={payoutNote}
-                onChangeText={setPayoutNote}
-              />
-            </View>
-
-            <View style={styles.modalWarningBox}>
-              <Icon name="shield" size={14} color="#0284C7" style={{ marginRight: 6 }} />
-              <Text style={styles.modalWarningText}>
-                L'adhérent restera sur le tableau de bord et continuera d'être exigible pour les cotisations restantes.
-              </Text>
-            </View>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => setIsPayoutModalOpen(false)}
-                style={styles.modalCancelBtn}
-              >
-                <Text style={styles.modalCancelBtnText}>Annuler</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleConfirmPayoutDetails}
-                style={styles.modalConfirmBtn}
-              >
-                <Text style={styles.modalConfirmBtnText}>Valider (Code PIN)</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+        <AmountText amount={potValue} size="hero" align="center" />
+        <View style={styles.inputGroup}>
+          <Text variant="label">{t('Motif')}</Text>
+          <TextInput
+            style={styles.textArea}
+            multiline
+            numberOfLines={3}
+            placeholder={t('Ex : remise effectuée en mains propres au marché')}
+            placeholderTextColor={theme.colors.textPlaceholder}
+            value={payoutNote}
+            onChangeText={setPayoutNote}
+            accessibilityLabel={t('Motif de la remise')}
+          />
         </View>
-      </Modal>
+        <View style={styles.noticeRow}>
+          <Icon name="info" size={16} color={theme.colors.textMuted} />
+          <Text variant="caption" tone="muted" style={styles.flexShrink}>{t('L\'adhérent reste dans le carnet et continue ses cotisations jusqu\'à la fin du cycle.')}</Text>
+        </View>
+      </BottomSheet>
 
-      {/* 4-Digit PIN Security Modal */}
+      {/* 4-Digit PIN Security Modal for Payout */}
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Validation Sécurisée de la Main"
-        subtitle={`Saisissez votre code PIN gestionnaire pour autoriser le décaissement de ${formatCurrency(potValue)}.`}
+        title={t('Confirmer la remise')}
+        subtitle={t('{0} pour {1}', formatCurrency(potValue), payoutTargetMember?.fullName ?? '')}
         onSuccess={handlePinSuccessPayout}
         onCancel={() => setIsPinModalOpen(false)}
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: SOL_COLORS.background,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 90,
-  },
-  heroCard: {
-    backgroundColor: SOL_COLORS.secondary,
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1.5,
-    borderColor: '#334155',
-  },
-  heroHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 14,
-  },
-  heroGroupLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
-  },
-  heroGroupName: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    marginTop: 2,
-  },
-  heroFrequency: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginTop: 2,
-    fontWeight: '600',
-  },
-  potBox: {
-    alignItems: 'flex-end',
-    backgroundColor: '#334155',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-  },
-  potLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
-  },
-  potAmount: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: '#34D399',
-    marginTop: 2,
-  },
-  progressSection: {
-    marginTop: 6,
-  },
-  progressTextRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  progressLabel: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontWeight: '600',
-  },
-  progressBold: {
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  progressPct: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#34D399',
-  },
-  progressBar: {
-    height: 6,
-    backgroundColor: '#334155',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#34D399',
-    borderRadius: 3,
-  },
-  matrixContainer: {
-    marginTop: 4,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
-  rankCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  rankCardHighlight: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EFF6FF',
-    borderWidth: 2,
-  },
-  rankCardCompleted: {
-    backgroundColor: '#F8FAFC',
-    opacity: 0.85,
-  },
-  rankLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  rankCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  rankCircleHighlight: {
-    backgroundColor: '#2563EB',
-    borderColor: '#1D4ED8',
-  },
-  rankCircleCompleted: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
-  },
-  rankNumber: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#64748B',
-  },
-  rankNumberHighlight: {
-    color: '#FFFFFF',
-  },
-  rankNumberCompleted: {
-    color: '#059669',
-  },
-  memberName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  memberPhone: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  receivedDateText: {
-    fontSize: 11,
-    color: '#047857',
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  rankRight: {
-    alignItems: 'flex-end',
-    marginLeft: 8,
-  },
-  badgePaidOut: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  badgePaidOutText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#047857',
-  },
-  payoutActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: SOL_COLORS.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  payoutActionBtnHighlight: {
-    backgroundColor: '#2563EB',
-  },
-  payoutActionBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 20,
-    elevation: 6,
-  },
-  modalHeader: {
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  iconCircleCrown: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#EFF6FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  modalSub: {
-    fontSize: 13,
-    color: '#475569',
-    textAlign: 'center',
-    marginVertical: 8,
-    lineHeight: 18,
-  },
-  modalSubBold: {
-    fontWeight: '900',
-    color: '#1D4ED8',
-  },
-  inputGroup: {
-    marginVertical: 10,
-  },
-  inputLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#64748B',
-    marginBottom: 6,
-    letterSpacing: 0.5,
-  },
-  textArea: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    padding: 12,
-    fontSize: 13,
-    fontWeight: '600',
-    color: SOL_COLORS.textPrimary,
-    textAlignVertical: 'top',
-    minHeight: 70,
-  },
-  modalWarningBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F9FF',
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    marginBottom: 14,
-  },
-  modalWarningText: {
-    flex: 1,
-    fontSize: 11,
-    color: '#0369A1',
-    fontWeight: '600',
-    lineHeight: 15,
-  },
-  modalBtnRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  modalCancelBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#F1F5F9',
-  },
-  modalCancelBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  modalConfirmBtn: {
-    flex: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#2563EB',
-  },
-  modalConfirmBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
+  StyleSheet.create({
+    flexShrink: { flex: 1, minWidth: 0 },
+    pressed: { backgroundColor: colors.surfacePressed },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingLeft: layout.gutter,
+      paddingRight: spacing.sm,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.xs,
+    },
+
+    heroCard: { gap: spacing.lg },
+    heroPot: { gap: spacing.xs },
+    heroProgress: { gap: spacing.sm },
+    heroProgressRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
+    segments: { flexDirection: 'row', gap: spacing.xs },
+    segment: { flex: 1, height: spacing.xs, borderRadius: radius.pill, backgroundColor: colors.heroTrack },
+    segmentDone: { backgroundColor: colors.heroTrackActive },
+
+    noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+
+    ledger: { overflow: 'hidden' },
+    rowCurrent: { backgroundColor: colors.primarySoft },
+    rule: { height: 1, marginLeft: spacing.md + spacing.xxxl - spacing.sm + spacing.md, backgroundColor: colors.divider },
+    meta: { gap: spacing.xs },
+    roundAction: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceAlt,
+    },
+
+    inputGroup: { gap: spacing.sm },
+    textArea: {
+      minHeight: layout.actionHeight + spacing.xl,
+      padding: spacing.md,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      backgroundColor: colors.surface,
+      color: colors.text,
+      ...typography.body,
+      textAlignVertical: 'top',
+    },
+  });

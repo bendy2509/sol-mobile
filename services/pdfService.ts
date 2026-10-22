@@ -1,12 +1,14 @@
 /**
  * Official PDF Generation & Sharing Service for SOL Mobile
- * Generates branded, verifiable, printable and shareable PDF documents.
+ * Generates institutional-grade, verifiable, printable and shareable PDF documents.
+ * Compliant with Haitian financial documentation standards (SOL / Tontine mutuelle).
  */
 
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 import { formatCurrency, formatDate, formatDateShort } from '@/lib/formatters';
+import { getReceiptPreferences } from '@/lib/receiptPreferences';
 
 export interface ContributionPdfData {
   transactionId: string;
@@ -17,6 +19,7 @@ export interface ContributionPdfData {
   clientName: string;
   clientPhone: string;
   payoutRank?: number;
+  payoutRanks?: string;
   qrCodeToken: string;
   unitAmount: number;
   handsCount: number;
@@ -35,35 +38,12 @@ export interface PayoutPdfData {
   clientName: string;
   clientPhone: string;
   payoutRank?: number;
+  payoutRanks?: string;
   totalPotAmount: number;
   registeredChildrenCount: number;
   unitAmount: number;
   note?: string;
   createdAt: string;
-}
-
-export interface AdminReportPdfData {
-  adminName: string;
-  adminPhone: string;
-  totalManagers: number;
-  activeManagers: number;
-  pendingManagers: number;
-  suspendedManagers: number;
-  totalClients: number;
-  totalVolumeCollected: number;
-  totalVolumeDistributed: number;
-  netReserveBalance: number;
-  managers: Array<{
-    name: string;
-    phone: string;
-    zone?: string;
-    status: string;
-    businessName?: string;
-    clientsCount: number;
-    totalCollected: number;
-    totalDistributed: number;
-  }>;
-  generatedAt: string;
 }
 
 export interface ManagerBusinessReportPdfData {
@@ -77,6 +57,7 @@ export interface ManagerBusinessReportPdfData {
   totalPotAmount: number;
   cycleStartDate: string;
   cycleEndDate: string;
+  cycleNumber?: number;
   handsCollectedTotal: number;
   totalCashCollected: number;
   totalDistributed: number;
@@ -94,812 +75,1090 @@ export interface ManagerBusinessReportPdfData {
   generatedAt: string;
 }
 
+export interface CashClosurePdfData {
+  closureId: string;
+  businessName?: string;
+  collectorName: string;
+  collectorPhone: string;
+  collectorZone?: string;
+  closureDate: string;
+  totalCashDeclared: number;
+  totalSystemCalculated: number;
+  discrepancy: number;
+  discrepancyReason?: string;
+  status: string;
+  generatedAt: string;
+}
+
+/**
+ * Generates an SVG vector barcode for receipts and audit trails.
+ */
+function generateBarcodeSvg(value?: string | null, width = 260, height = 36): string {
+  const safeVal = String(value || 'SOL-HAITI-SECURITE');
+  const hash = Array.from(safeVal).reduce((acc, char, i) => acc + char.charCodeAt(0) * (i + 1), 0);
+  const bars: string[] = [];
+  let currentX = 10;
+  const barWidths = [2, 1, 3, 1, 2, 4, 1, 2, 3, 2];
+
+  for (let i = 0; currentX < width - 15; i++) {
+    const charCode = safeVal.charCodeAt(i % safeVal.length) || 48;
+    const wIndex = (charCode + hash + i) % barWidths.length;
+    const barW = barWidths[wIndex];
+    if (i % 2 === 0) {
+      bars.push(`<rect x="${currentX}" y="0" width="${barW}" height="${height}" fill="#141B2D" />`);
+    }
+    currentX += barW + ((i % 3 === 0) ? 2 : 1);
+  }
+
+  return `
+    <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+      ${bars.join('')}
+    </svg>
+  `;
+}
+
+/**
+ * Universal HTML-to-PDF / Print renderer compatible with Android, iOS and Web.
+ *
+ * On Android (including Expo Go), printToFileAsync writes to an internal sandbox
+ * path (file:///data/user/0/.../cache/print/) that expo-sharing cannot access.
+ * We bypass file creation entirely and call printAsync({ html }) directly, which
+ * opens the native Android print dialog (allows Save as PDF / print).
+ */
+let printInProgress = false;
+
+/**
+ * Opens the system print dialog once at a time. The native module refuses a second request
+ * while a dialog is open ("Another print request is already in progress"), which happened on
+ * a double tap: the extra request is now ignored instead of surfacing as an error.
+ */
+async function printHtmlOnce(html: string): Promise<void> {
+  if (printInProgress) return;
+  printInProgress = true;
+  try {
+    await Print.printAsync({ html });
+  } catch (err: any) {
+    if (!String(err?.message || '').includes('already in progress')) throw err;
+  } finally {
+    printInProgress = false;
+  }
+}
+
+async function renderHtmlDocument(html: string): Promise<string> {
+  if (Platform.OS === 'web') {
+    await printHtmlOnce(html);
+    return 'web-printed';
+  }
+
+  // Android: open system print dialog directly — no file creation needed.
+  if (Platform.OS === 'android') {
+    await printHtmlOnce(html);
+    return 'android-printed';
+  }
+
+  // iOS: use file-based approach so the share sheet can attach the PDF.
+  try {
+    const result = await Print.printToFileAsync({ html });
+    if (result && result.uri) {
+      return result.uri;
+    }
+    await Print.printAsync({ html });
+    return 'fallback-printed';
+  } catch (err: any) {
+    console.warn('Print.printToFileAsync error, fallback to Print.printAsync:', err);
+    try {
+      await Print.printAsync({ html });
+      return 'fallback-printed';
+    } catch (fallbackErr: any) {
+      throw new Error(err?.message || fallbackErr?.message || 'Échec de la génération du document PDF.');
+    }
+  }
+}
+
+/**
+ * Shared institutional CSS styling for all A4 documents.
+ */
+/** Applies the receipt name chosen in Réglages (falls back to the carnet name). */
+function withReceiptName<T extends { businessName?: string }>(data: T): T {
+  const { receiptName } = getReceiptPreferences();
+  return receiptName ? { ...data, businessName: receiptName } : data;
+}
+
+/** Optional note printed at the bottom of every document. */
+function receiptNoteHtml(): string {
+  const { receiptNote } = getReceiptPreferences();
+  if (!receiptNote) return '';
+  const safe = receiptNote.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string);
+  return `<div style="text-align:center;font-size:10px;color:#4A5368;margin-top:10px;">${safe}</div>`;
+}
+
+const BASE_PRINT_CSS = `
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm;
+  }
+  * {
+    box-sizing: border-box;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  body {
+    font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+    padding: 0;
+    color: #141B2D;
+    background-color: #FFFFFF;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .haitian-ribbon {
+    height: 4px;
+    width: 100%;
+    background: linear-gradient(90deg, #00209F 0%, #00209F 50%, #D21034 50%, #D21034 100%);
+    border-radius: 2px;
+    margin-bottom: 12px;
+  }
+  .header-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 14px;
+    border-bottom: 1.5px solid #E6E8EE;
+    padding-bottom: 12px;
+  }
+  .header-table td {
+    vertical-align: top;
+  }
+  .brand-logo-text {
+    font-size: 24px;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+    color: #141B2D;
+    margin: 0;
+  }
+  .brand-logo-text span {
+    color: #00209F;
+  }
+  .brand-subline {
+    font-size: 10px;
+    font-weight: 700;
+    color: #4A5368;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+  }
+  .doc-badge {
+    display: inline-block;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    text-align: right;
+  }
+  .badge-blue {
+    background-color: #EBEEFA;
+    color: #1F3FB8;
+    border: 1px solid #C3CCF2;
+  }
+  .badge-green {
+    background-color: #E6F4EC;
+    color: #0B6E47;
+    border: 1px solid #A9D9BF;
+  }
+  .badge-amber {
+    background-color: #FBF1DF;
+    color: #8A5300;
+    border: 1px solid #EBCB91;
+  }
+  .info-grid {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 10px;
+    margin-bottom: 14px;
+  }
+  .info-card {
+    background-color: #F4F5F8;
+    border: 1px solid #E6E8EE;
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .info-card-title {
+    font-size: 9.5px;
+    font-weight: 900;
+    text-transform: uppercase;
+    color: #4A5368;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid #E6E8EE;
+    padding-bottom: 4px;
+  }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 3px;
+    font-size: 11px;
+  }
+  .info-label {
+    color: #4A5368;
+    font-weight: 600;
+  }
+  .info-value {
+    color: #141B2D;
+    font-weight: 800;
+    text-align: right;
+  }
+  .hero-amount-box {
+    background: linear-gradient(135deg, #F4F5F8 0%, #EBEEFA 100%);
+    border: 1.5px solid #C3CCF2;
+    border-radius: 10px;
+    padding: 14px 16px;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .hero-amount-box.amber {
+    background: linear-gradient(135deg, #FBF1DF 0%, #FBF1DF 100%);
+    border-color: #EBCB91;
+  }
+  .hero-amount-box.green {
+    background: linear-gradient(135deg, #E6F4EC 0%, #E6F4EC 100%);
+    border-color: #A9D9BF;
+  }
+  .hero-label {
+    font-size: 10px;
+    font-weight: 800;
+    color: #4A5368;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .hero-value {
+    font-size: 28px;
+    font-weight: 900;
+    color: #141B2D;
+    margin: 4px 0;
+    letter-spacing: -0.5px;
+  }
+  .hero-sub {
+    font-size: 11px;
+    font-weight: 600;
+    color: #4A5368;
+  }
+  .table-clean {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 16px;
+  }
+  .table-clean th {
+    background-color: #141B2D;
+    color: #FFFFFF;
+    font-size: 9.5px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 7px 8px;
+    text-align: left;
+  }
+  .table-clean td {
+    padding: 7px 8px;
+    border-bottom: 1px solid #E6E8EE;
+    font-size: 10.5px;
+  }
+  .table-clean tr:nth-child(even) {
+    background-color: #F4F5F8;
+  }
+  .signatures-zone {
+    width: 100%;
+    margin-top: 20px;
+    page-break-inside: avoid;
+  }
+  .sig-box {
+    border: 1px dashed #6B7385;
+    background-color: #F4F5F8;
+    border-radius: 8px;
+    padding: 10px;
+    height: 80px;
+    position: relative;
+  }
+  .sig-title {
+    font-size: 9.5px;
+    font-weight: 800;
+    color: #4A5368;
+    text-transform: uppercase;
+  }
+  .sig-line {
+    position: absolute;
+    bottom: 12px;
+    left: 10px;
+    right: 10px;
+    border-bottom: 1px solid #C5CBD8;
+    font-size: 8.5px;
+    color: #6B7385;
+    text-align: right;
+    padding-bottom: 2px;
+  }
+  .security-seal {
+    text-align: center;
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid #E6E8EE;
+    font-size: 9px;
+    color: #4A5368;
+    page-break-inside: avoid;
+  }
+  .barcode-wrapper {
+    margin: 6px auto;
+    display: inline-block;
+  }
+  .legal-note {
+    font-size: 8.5px;
+    color: #6B7385;
+    line-height: 1.35;
+    margin-top: 6px;
+    text-align: justify;
+  }
+`;
+
 /**
  * Generates an official Contribution Receipt PDF document.
  */
 export async function generateContributionReceiptPdf(data: ContributionPdfData): Promise<string> {
+  data = withReceiptName(data);
+  const safeTrxId = (data.transactionId || 'SOL-TRX').toUpperCase();
+  const safeToken = (data.qrCodeToken || data.transactionId || 'CERT-SOL').slice(0, 24).toUpperCase();
+  const barcodeSvg = generateBarcodeSvg(data.transactionId || data.qrCodeToken);
+  const displayRank = data.payoutRanks ? `Rangs: ${data.payoutRanks}` : (data.payoutRank ? `Rang: #${data.payoutRank}` : 'Non assigné');
+
   const html = `
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Reçu SOL - ${data.clientName}</title>
+  <title>SOL – Reçu de Cotisation – ${data.clientName || 'Adhérent'} – ${data.businessName || data.collectorName} – ${data.createdAt ? data.createdAt.slice(0,10) : ''} – Réf. ${(data.transactionId || '').toUpperCase().slice(0,12)}</title>
   <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      margin: 0;
-      padding: 30px;
-      color: #0F172A;
-      background-color: #FFFFFF;
-    }
-    .receipt-container {
-      max-width: 550px;
+    ${BASE_PRINT_CSS}
+    .receipt-frame {
+      max-width: 680px;
       margin: 0 auto;
-      border: 2px solid #0F172A;
+      border: 1.5px solid #141B2D;
       border-radius: 12px;
-      padding: 24px;
-    }
-    .header {
-      text-align: center;
-      border-bottom: 2px dashed #CBD5E1;
-      padding-bottom: 16px;
-      margin-bottom: 16px;
-    }
-    .brand-title {
-      font-size: 26px;
-      font-weight: 900;
-      color: #1D4ED8;
-      letter-spacing: 2px;
-      margin: 0;
-    }
-    .brand-sub {
-      font-size: 11px;
-      font-weight: 700;
-      color: #64748B;
-      text-transform: uppercase;
-      margin-top: 4px;
-    }
-    .doc-type {
-      font-size: 14px;
-      font-weight: 900;
-      background-color: #EFF6FF;
-      color: #1D4ED8;
-      display: inline-block;
-      padding: 4px 12px;
-      border-radius: 20px;
-      margin-top: 8px;
-      border: 1px solid #BFDBFE;
-    }
-    .section-title {
-      font-size: 10px;
-      font-weight: 900;
-      color: #64748B;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-top: 14px;
-      margin-bottom: 6px;
-      border-bottom: 1px solid #F1F5F9;
-      padding-bottom: 3px;
-    }
-    .info-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-      font-size: 13px;
-    }
-    .label {
-      color: #64748B;
-      font-weight: 600;
-    }
-    .value {
-      font-weight: 800;
-      color: #0F172A;
-    }
-    .highlight-card {
-      background-color: #ECFDF5;
-      border: 1.5px solid #A7F3D0;
-      border-radius: 10px;
-      padding: 12px 16px;
-      margin: 16px 0;
-      text-align: center;
-    }
-    .amount-label {
-      font-size: 10px;
-      font-weight: 900;
-      color: #065F46;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-    .amount-value {
-      font-size: 28px;
-      font-weight: 900;
-      color: #059669;
-      margin: 4px 0;
-    }
-    .formula-pill {
-      font-size: 12px;
-      font-weight: 700;
-      color: #047857;
-    }
-    .coverage-box {
-      background-color: #F8FAFC;
-      border: 1px solid #E2E8F0;
-      border-radius: 8px;
-      padding: 10px 14px;
-      margin-bottom: 14px;
-    }
-    .footer {
-      border-top: 2px dashed #CBD5E1;
-      padding-top: 14px;
-      margin-top: 16px;
-      text-align: center;
-      font-size: 10px;
-      color: #94A3B8;
-      font-weight: 600;
-    }
-    .qr-badge {
-      font-family: monospace;
-      font-size: 12px;
-      font-weight: 800;
-      background-color: #F1F5F9;
-      padding: 4px 8px;
-      border-radius: 6px;
-      color: #0F172A;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
     }
   </style>
 </head>
 <body>
-  <div class="receipt-container">
-    <div class="header">
-      <div class="brand-title">SOL MOBILE</div>
-      <div class="brand-sub">Sistèm Epany & Tontin Dijital Ayiti</div>
-      <div class="doc-type">REÇU OFFICIEL D'ENCAISSEMENT</div>
-    </div>
+  <div class="receipt-frame">
+    <div class="haitian-ribbon"></div>
 
-    <div class="section-title">Informations du Carnet & Gestionnaire</div>
-    <div class="info-row">
-      <span class="label">Activité / Carnet :</span>
-      <span class="value">${data.businessName}</span>
-    </div>
-    <div class="info-row">
-      <span class="label">Responsable :</span>
-      <span class="value">${data.collectorName} (${data.collectorPhone})</span>
-    </div>
-    ${data.collectorZone ? `
-    <div class="info-row">
-      <span class="label">Zone / Marché :</span>
-      <span class="value">${data.collectorZone}</span>
-    </div>` : ''}
+    <!-- Header -->
+    <table class="header-table">
+      <tr>
+        <td>
+          <div class="brand-logo-text">SOL <span>MOBILE</span></div>
+          <div class="brand-subline">SYSTÈME TONTINIER SÉCURISÉ D'HAÏTI</div>
+          <div style="font-size: 11px; font-weight: 700; color: #141B2D; margin-top: 4px;">
+            ${data.businessName || 'Carnet Tontinier Communautaire'}
+          </div>
+        </td>
+        <td style="text-align: right;">
+          <div class="doc-badge badge-green">REÇU OFFICIEL DE COTISATION</div>
+          <div style="font-size: 10px; color: #4A5368; margin-top: 4px; font-weight: 600;">
+            N° : <strong>${safeTrxId}</strong>
+          </div>
+          <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
+            Date : <strong>${formatDate(data.createdAt)}</strong>
+          </div>
+        </td>
+      </tr>
+    </table>
 
-    <div class="section-title">Informations de l'Adhérent ("Enfant")</div>
-    <div class="info-row">
-      <span class="label">Nom complet :</span>
-      <span class="value">${data.clientName}</span>
-    </div>
-    <div class="info-row">
-      <span class="label">Numéro Téléphone :</span>
-      <span class="value">${data.clientPhone}</span>
-    </div>
-    <div class="info-row">
-      <span class="label">Position / Rang :</span>
-      <span class="value">${data.payoutRank ? `Main #${data.payoutRank}` : 'Adhérent standard'}</span>
-    </div>
-    <div class="info-row">
-      <span class="label">Identifiant Unique :</span>
-      <span class="qr-badge">${data.qrCodeToken}</span>
-    </div>
-
-    <!-- Highlighted Amount Card -->
-    <div class="highlight-card">
-      <div class="amount-label">Montant Total Encaissé</div>
-      <div class="amount-value">${formatCurrency(data.totalAmount)}</div>
-      <div class="formula-pill">${data.handsCount} main(s) × ${formatCurrency(data.unitAmount)} / main</div>
-    </div>
-
-    <div class="section-title">Couverture de la Cotisation</div>
-    <div class="coverage-box">
-      <div class="info-row">
-        <span class="label">Période couverte :</span>
-        <span class="value">Du ${formatDateShort(data.coverageStartDate)} au ${formatDateShort(data.coverageEndDate)}</span>
-      </div>
-      <div class="info-row">
-        <span class="label">Nombre d'échéances :</span>
-        <span class="value">${data.handsCount} main(s) validée(s)</span>
+    <!-- Hero Amount -->
+    <div class="hero-amount-box green">
+      <div class="hero-label">Montant Total Encaissé (Vèsman Resevwa)</div>
+      <div class="hero-value" style="color: #0B6E47;">${formatCurrency(data.totalAmount)}</div>
+      <div class="hero-sub">
+        <strong>${data.handsCount} main${data.handsCount > 1 ? 's' : ''}</strong> cotisée${data.handsCount > 1 ? 's' : ''} à <strong>${formatCurrency(data.unitAmount)}</strong> / main
       </div>
     </div>
 
-    <div class="footer">
-      <div>Réf Opération : #${data.transactionId.replace(/-/g, '').substring(0, 10).toUpperCase()}</div>
-      <div>Certifié conforme le ${formatDate(data.createdAt)} via la plateforme sécurisée SOL.</div>
+    <!-- Info Cards 2-Col -->
+    <table class="info-grid">
+      <tr>
+        <td style="width: 50%;">
+          <div class="info-card">
+            <div class="info-card-title">Adhérent Titulaire (Patisipan)</div>
+            <div class="info-row">
+              <span class="info-label">Nom & Prénom :</span>
+              <span class="info-value">${data.clientName}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Téléphone :</span>
+              <span class="info-value">${data.clientPhone || 'Non renseigné'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Position / Attribution :</span>
+              <span class="info-value">${displayRank}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Période Couverte :</span>
+              <span class="info-value" style="color: #0B6E47;">${formatDateShort(data.coverageStartDate)} au ${formatDateShort(data.coverageEndDate)}</span>
+            </div>
+          </div>
+        </td>
+        <td style="width: 50%;">
+          <div class="info-card">
+            <div class="info-card-title">Gestionnaire de Caisse (Jesyonè)</div>
+            <div class="info-row">
+              <span class="info-label">Responsable :</span>
+              <span class="info-value">${data.collectorName}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Téléphone :</span>
+              <span class="info-value">${data.collectorPhone}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Zone / Marché :</span>
+              <span class="info-value">${data.collectorZone || 'Zone Standard'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Statut Validation :</span>
+              <span class="info-value" style="color: #0B6E47;">ENCAISSÉ & SÉCURISÉ</span>
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Dual Signatures -->
+    <table class="signatures-zone">
+      <tr>
+        <td style="width: 48%;">
+          <div class="sig-box">
+            <div class="sig-title">Émargement de l'Adhérent (Patisipan)</div>
+            <div class="sig-line">Date & Signature</div>
+          </div>
+        </td>
+        <td style="width: 4%;"></td>
+        <td style="width: 48%;">
+          <div class="sig-box">
+            <div class="sig-title">Visa & Cachet du Gestionnaire SOL</div>
+            <div class="sig-line">Signature autorisée</div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Security Seal & Barcode -->
+    <div class="security-seal">
+      <div class="barcode-wrapper">
+        ${barcodeSvg}
+      </div>
+      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
+        CERT-ID: ${safeToken}
+      </div>
+      <div class="legal-note">
+        Ce reçu officiel fait foi du versement régulier des cotisations au sein du carnet tontinier SOL Mobile. Enregistré sous l'intégrité de la plateforme décentralisée SOL Haïti. Toute falsification est passible des sanctions prévues par la législation en vigueur.
+      </div>
     </div>
   </div>
+${receiptNoteHtml()}
 </body>
 </html>
   `.trim();
 
-  const { uri } = await Print.printToFileAsync({ html });
-  return uri;
+  return await renderHtmlDocument(html);
 }
 
 /**
- * Generates an official Payout / Disbursement ("Bay Men") PDF document.
+ * Generates an official Payout Receipt / Décharge PDF document.
  */
 export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<string> {
+  data = withReceiptName(data);
+  const safeTrxId = (data.transactionId || 'SOL-DEC').toUpperCase();
+  const barcodeSvg = generateBarcodeSvg(data.transactionId);
+  const displayRank = data.payoutRanks ? `Rangs: ${data.payoutRanks}` : (data.payoutRank ? `Rang: #${data.payoutRank}` : 'Main standard');
+
   const html = `
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Reçu Décaissement - ${data.clientName}</title>
+  <title>SOL – Décharge de Décaissement – ${data.clientName || 'Adhérent'} – ${data.businessName || data.collectorName} – ${data.createdAt ? data.createdAt.slice(0,10) : ''} – Réf. ${(data.transactionId || '').toUpperCase().slice(0,12)}</title>
   <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      margin: 0;
-      padding: 30px;
-      color: #0F172A;
-      background-color: #FFFFFF;
-    }
-    .receipt-container {
-      max-width: 550px;
+    ${BASE_PRINT_CSS}
+    .receipt-frame {
+      max-width: 680px;
       margin: 0 auto;
-      border: 2px solid #065F46;
+      border: 1.5px solid #141B2D;
       border-radius: 12px;
-      padding: 24px;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
     }
-    .header {
-      text-align: center;
-      border-bottom: 2px dashed #CBD5E1;
-      padding-bottom: 16px;
-      margin-bottom: 16px;
-    }
-    .brand-title {
-      font-size: 26px;
-      font-weight: 900;
-      color: #059669;
-      letter-spacing: 2px;
-      margin: 0;
-    }
-    .brand-sub {
-      font-size: 11px;
-      font-weight: 700;
-      color: #64748B;
-      text-transform: uppercase;
-      margin-top: 4px;
-    }
-    .doc-type {
-      font-size: 14px;
-      font-weight: 900;
-      background-color: #ECFDF5;
-      color: #065F46;
-      display: inline-block;
-      padding: 4px 12px;
-      border-radius: 20px;
-      margin-top: 8px;
-      border: 1px solid #A7F3D0;
-    }
-    .section-title {
+    .legal-box {
+      background-color: #FBF1DF;
+      border: 1px solid #EBCB91;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-top: 12px;
+      margin-bottom: 14px;
       font-size: 10px;
-      font-weight: 900;
-      color: #64748B;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-top: 14px;
-      margin-bottom: 6px;
-      border-bottom: 1px solid #F1F5F9;
-      padding-bottom: 3px;
-    }
-    .info-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-      font-size: 13px;
-    }
-    .label {
-      color: #64748B;
-      font-weight: 600;
-    }
-    .value {
-      font-weight: 800;
-      color: #0F172A;
-    }
-    .highlight-card {
-      background-color: #ECFDF5;
-      border: 2px solid #059669;
-      border-radius: 10px;
-      padding: 14px 16px;
-      margin: 16px 0;
-      text-align: center;
-    }
-    .amount-label {
-      font-size: 10px;
-      font-weight: 900;
-      color: #065F46;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-    .amount-value {
-      font-size: 30px;
-      font-weight: 900;
-      color: #059669;
-      margin: 4px 0;
-    }
-    .formula-pill {
-      font-size: 12px;
-      font-weight: 700;
-      color: #047857;
-    }
-    .footer {
-      border-top: 2px dashed #CBD5E1;
-      padding-top: 14px;
-      margin-top: 16px;
-      text-align: center;
-      font-size: 10px;
-      color: #94A3B8;
-      font-weight: 600;
+      color: #78350F;
+      line-height: 1.4;
+      font-weight: 500;
     }
   </style>
 </head>
 <body>
-  <div class="receipt-container">
-    <div class="header">
-      <div class="brand-title">SOL MOBILE</div>
-      <div class="brand-sub">Sistèm Epany & Tontin Dijital Ayiti</div>
-      <div class="doc-type">ATTESTATION DE DÉCAISSEMENT ("REMISE DE MAIN")</div>
-    </div>
+  <div class="receipt-frame">
+    <div class="haitian-ribbon"></div>
 
-    <div class="section-title">Informations du Carnet & Gestionnaire</div>
-    <div class="info-row">
-      <span class="label">Activité :</span>
-      <span class="value">${data.businessName}</span>
-    </div>
-    <div class="info-row">
-      <span class="label">Responsable :</span>
-      <span class="value">${data.collectorName} (${data.collectorPhone})</span>
-    </div>
-
-    <div class="section-title">Bénéficiaire de la Main</div>
-    <div class="info-row">
-      <span class="label">Nom complet :</span>
-      <span class="value">${data.clientName}</span>
-    </div>
-    <div class="info-row">
-      <span class="label">Numéro Téléphone :</span>
-      <span class="value">${data.clientPhone}</span>
-    </div>
-    <div class="info-row">
-      <span class="label">Numéro de la Main :</span>
-      <span class="value">${data.payoutRank ? `Main #${data.payoutRank}` : 'Main attribuée'}</span>
-    </div>
-
-    <!-- Highlighted Amount Card -->
-    <div class="highlight-card">
-      <div class="amount-label">Montant Total de la Cagnotte Décaissée</div>
-      <div class="amount-value">${formatCurrency(data.totalPotAmount)}</div>
-      <div class="formula-pill">Calculée sur ${data.registeredChildrenCount} enfants inscrits × ${formatCurrency(data.unitAmount)}</div>
-    </div>
-
-    ${data.note ? `
-    <div class="section-title">Motif & Justification</div>
-    <div style="font-size: 12px; font-weight: 600; color: #475569; padding: 6px 0;">
-      ${data.note}
-    </div>` : ''}
-
-    <div class="footer">
-      <div>Réf Transaction : #${data.transactionId.replace(/-/g, '').substring(0, 10).toUpperCase()}</div>
-      <div>Main décaissée et certifiée le ${formatDate(data.createdAt)} via SOL.</div>
-    </div>
-  </div>
-</body>
-</html>
-  `.trim();
-
-  const { uri } = await Print.printToFileAsync({ html });
-  return uri;
-}
-
-/**
- * Generates an Administrator Global Platform Financial Report PDF.
- */
-export async function generateAdminGlobalReportPdf(data: AdminReportPdfData): Promise<string> {
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Rapport Global SOL Plateforme</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      margin: 0;
-      padding: 24px;
-      color: #0F172A;
-      background-color: #FFFFFF;
-    }
-    .header {
-      border-bottom: 3px solid #1D4ED8;
-      padding-bottom: 14px;
-      margin-bottom: 20px;
-    }
-    .title {
-      font-size: 24px;
-      font-weight: 900;
-      color: #1D4ED8;
-      margin: 0;
-    }
-    .subtitle {
-      font-size: 12px;
-      color: #64748B;
-      font-weight: 600;
-      margin-top: 4px;
-    }
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-    .kpi-card {
-      background-color: #F8FAFC;
-      border: 1.5px solid #E2E8F0;
-      border-radius: 10px;
-      padding: 12px;
-      text-align: center;
-    }
-    .kpi-label {
-      font-size: 9px;
-      font-weight: 900;
-      color: #64748B;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .kpi-value {
-      font-size: 18px;
-      font-weight: 900;
-      color: #0F172A;
-      margin-top: 4px;
-    }
-    .kpi-green { color: #059669; }
-    .kpi-blue { color: #1D4ED8; }
-    .kpi-amber { color: #D97706; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-      font-size: 11px;
-    }
-    th {
-      background-color: #0F172A;
-      color: #FFFFFF;
-      text-align: left;
-      padding: 8px 10px;
-      font-weight: 800;
-    }
-    td {
-      padding: 8px 10px;
-      border-bottom: 1px solid #E2E8F0;
-    }
-    tr:nth-child(even) {
-      background-color: #F8FAFC;
-    }
-    .status-badge {
-      font-size: 9px;
-      font-weight: 800;
-      padding: 2px 6px;
-      border-radius: 4px;
-    }
-    .status-active { background-color: #ECFDF5; color: #047857; }
-    .status-pending { background-color: #FFFBEB; color: #B45309; }
-    .status-suspended { background-color: #FEF2F2; color: #DC2626; }
-    .footer {
-      margin-top: 30px;
-      border-top: 1px solid #E2E8F0;
-      padding-top: 12px;
-      text-align: center;
-      font-size: 10px;
-      color: #94A3B8;
-      font-weight: 600;
-    }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div class="title">SOL - RAPPORT GLOBAL DE SUPERVISION</div>
-    <div class="subtitle">Généré par ${data.adminName} (${data.adminPhone}) • Le ${formatDate(data.generatedAt)}</div>
-  </div>
-
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-label">Responsables Totaux</div>
-      <div class="kpi-value kpi-blue">${data.totalManagers} (${data.activeManagers} Actifs)</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Total Adhérents</div>
-      <div class="kpi-value">${data.totalClients} enfants</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Solde Net Global</div>
-      <div class="kpi-value kpi-green">${formatCurrency(data.netReserveBalance)}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Volume Total Encaissé</div>
-      <div class="kpi-value kpi-green">${formatCurrency(data.totalVolumeCollected)}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Volume Total Décaissé</div>
-      <div class="kpi-value kpi-amber">${formatCurrency(data.totalVolumeDistributed)}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">En Attente / Suspendus</div>
-      <div class="kpi-value">${data.pendingManagers} att. / ${data.suspendedManagers} susp.</div>
-    </div>
-  </div>
-
-  <h3 style="font-size: 14px; font-weight: 900; margin-bottom: 6px;">État des Responsables & Carnets</h3>
-  <table>
-    <thead>
+    <!-- Header -->
+    <table class="header-table">
       <tr>
-        <th>Responsable</th>
-        <th>Téléphone / Zone</th>
-        <th>Carnet</th>
-        <th>Enfants</th>
-        <th>Encaissé</th>
-        <th>Décaissé</th>
-        <th>Statut</th>
+        <td>
+          <div class="brand-logo-text">SOL <span>MOBILE</span></div>
+          <div class="brand-subline">SYSTÈME TONTINIER SÉCURISÉ D'HAÏTI</div>
+          <div style="font-size: 11px; font-weight: 700; color: #141B2D; margin-top: 4px;">
+            ${data.businessName || 'Carnet Tontinier Communautaire'}
+          </div>
+        </td>
+        <td style="text-align: right;">
+          <div class="doc-badge badge-amber">ATTESTATION DE DÉCAISSEMENT</div>
+          <div style="font-size: 10px; color: #4A5368; margin-top: 4px; font-weight: 600;">
+            REMISE DE MAIN (BAY MEN)
+          </div>
+          <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
+            Réf : <strong>${safeTrxId}</strong>
+          </div>
+          <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
+            Date : <strong>${formatDate(data.createdAt)}</strong>
+          </div>
+        </td>
       </tr>
-    </thead>
-    <tbody>
-      ${data.managers
-        .map(
-          (m) => `
-        <tr>
-          <td><strong>${m.name}</strong></td>
-          <td>${m.phone}${m.zone ? ` (${m.zone})` : ''}</td>
-          <td>${m.businessName || 'Non configuré'}</td>
-          <td>${m.clientsCount}</td>
-          <td style="color: #059669; font-weight: 700;">+${formatCurrency(m.totalCollected)}</td>
-          <td style="color: #DC2626; font-weight: 700;">-${formatCurrency(m.totalDistributed)}</td>
-          <td>
-            <span class="status-badge ${
-              m.status === 'ACTIVE'
-                ? 'status-active'
-                : m.status === 'PENDING_APPROVAL'
-                ? 'status-pending'
-                : 'status-suspended'
-            }">
-              ${m.status === 'ACTIVE' ? 'ACTIF' : m.status === 'PENDING_APPROVAL' ? 'EN ATTENTE' : 'SUSPENDU'}
-            </span>
-          </td>
-        </tr>
-      `
-        )
-        .join('')}
-    </tbody>
-  </table>
+    </table>
 
-  <div class="footer">
-    Rapport certifié édité via SOL Mobile Management Module • Document confidentiel d'administration.
+    <!-- Hero Amount -->
+    <div class="hero-amount-box amber">
+      <div class="hero-label">Montant Total Décaissé (Kòb Men Remèt)</div>
+      <div class="hero-value" style="color: #8A5300;">${formatCurrency(data.totalPotAmount)}</div>
+      <div class="hero-sub">
+        Cagnotte intégrale constituée de <strong>${data.registeredChildrenCount} souscriptions</strong> à <strong>${formatCurrency(data.unitAmount)}</strong>
+      </div>
+    </div>
+
+    <!-- Info Cards 2-Col -->
+    <table class="info-grid">
+      <tr>
+        <td style="width: 50%;">
+          <div class="info-card">
+            <div class="info-card-title">Bénéficiaire de la Main (Moun ki Pran Men an)</div>
+            <div class="info-row">
+              <span class="info-label">Nom & Prénom :</span>
+              <span class="info-value">${data.clientName}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Téléphone :</span>
+              <span class="info-value">${data.clientPhone || 'Non renseigné'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Rang attribué :</span>
+              <span class="info-value">${displayRank}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Mode de Remise :</span>
+              <span class="info-value">Espèces (Kòb Kach)</span>
+            </div>
+          </div>
+        </td>
+        <td style="width: 50%;">
+          <div class="info-card">
+            <div class="info-card-title">Opérateur & Caisse (Jesyonè Kès)</div>
+            <div class="info-row">
+              <span class="info-label">Gestionnaire :</span>
+              <span class="info-value">${data.collectorName}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Téléphone :</span>
+              <span class="info-value">${data.collectorPhone}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Zone d'Activité :</span>
+              <span class="info-value">${data.collectorZone || 'Zone Standard'}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Statut :</span>
+              <span class="info-value" style="color: #0B6E47;">DÉCAISSEMENT CERTIFIÉ</span>
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Legal Discharge Declaration -->
+    <div class="legal-box">
+      <strong>DÉCLARATION SUR L'HONNEUR & BON POUR DÉCHARGE :</strong><br/>
+      Je soussigné(e) <strong>${data.clientName}</strong>, certifie sur l'honneur avoir reçu en mains propres la somme totale de <strong>${formatCurrency(data.totalPotAmount)}</strong> au titre du tirage de ma main tontinière. Je m'engage expressément à continuer d'honorer toutes mes cotisations futures jusqu'au terme complet du cycle actuel du carnet SOL.
+      ${data.note ? `<br/><br/><em>Note spéciale : ${data.note}</em>` : ''}
+    </div>
+
+    <!-- Dual Signatures -->
+    <table class="signatures-zone">
+      <tr>
+        <td style="width: 48%;">
+          <div class="sig-box">
+            <div class="sig-title">Signature du Bénéficiaire (Bon pour décharge)</div>
+            <div class="sig-line">Émargement obligatoire</div>
+          </div>
+        </td>
+        <td style="width: 4%;"></td>
+        <td style="width: 48%;">
+          <div class="sig-box">
+            <div class="sig-title">Visa du Gestionnaire de Caisse</div>
+            <div class="sig-line">Cachet & Signature</div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Security Seal & Barcode -->
+    <div class="security-seal">
+      <div class="barcode-wrapper">
+        ${barcodeSvg}
+      </div>
+      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
+        AUTH-DEC: ${safeTrxId}
+      </div>
+      <div class="legal-note">
+        Acte de décaissement authentifié par le protocole SOL Mobile Haïti. Valable comme quittance définitive de remise de fonds et engagement mutuel irrévocable.
+      </div>
+    </div>
   </div>
+${receiptNoteHtml()}
 </body>
 </html>
   `.trim();
 
-  const { uri } = await Print.printToFileAsync({ html });
-  return uri;
+  return await renderHtmlDocument(html);
 }
 
 /**
- * Generates an official Business Evolution & Performance Report PDF for a Manager.
+ * Generates an official Manager Business Report PDF document.
  */
 export async function generateManagerBusinessReportPdf(data: ManagerBusinessReportPdfData): Promise<string> {
+  data = withReceiptName(data);
+  const barcodeSvg = generateBarcodeSvg(`REP-${data.collectorPhone || '0000'}-${data.generatedAt || Date.now()}`);
+  const safeCompletionRate = Number(data.completionRate) || 0;
+
   const html = `
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Rapport Évolution SOL - ${data.businessName}</title>
+  <title>SOL – Rapport d'Évolution – ${data.collectorName} (${data.businessName || 'Caisse'}) – ${data.generatedAt ? data.generatedAt.slice(0,10) : ''} – Cycle ${data.cycleNumber || 1}</title>
   <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      margin: 0;
-      padding: 24px;
-      color: #0F172A;
-      background-color: #FFFFFF;
-    }
-    .header {
-      border-bottom: 3px solid #1D4ED8;
-      padding-bottom: 12px;
-      margin-bottom: 18px;
-    }
-    .brand-title {
-      font-size: 22px;
-      font-weight: 900;
-      color: #1D4ED8;
-      margin: 0;
-    }
-    .brand-sub {
-      font-size: 11px;
-      color: #64748B;
-      font-weight: 700;
-      margin-top: 3px;
-    }
+    ${BASE_PRINT_CSS}
     .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 10px;
-      margin-bottom: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      margin-bottom: 16px;
     }
-    .kpi-card {
-      background-color: #F8FAFC;
-      border: 1.5px solid #E2E8F0;
+    .kpi-tile {
+      width: 31%;
+      box-sizing: border-box;
+      margin-bottom: 10px;
+      background-color: #F4F5F8;
+      border: 1px solid #E6E8EE;
       border-radius: 8px;
-      padding: 10px;
-      text-align: center;
+      padding: 10px 12px;
     }
-    .kpi-label {
-      font-size: 8px;
-      font-weight: 900;
-      color: #64748B;
+    .kpi-tile-label {
+      font-size: 9px;
+      font-weight: 800;
+      color: #4A5368;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-    .kpi-value {
+    .kpi-tile-val {
       font-size: 16px;
       font-weight: 900;
-      color: #0F172A;
-      margin-top: 3px;
+      margin-top: 2px;
     }
-    .kpi-green { color: #059669; }
-    .kpi-amber { color: #D97706; }
-    .kpi-blue { color: #1D4ED8; }
-    .section-title {
-      font-size: 12px;
-      font-weight: 900;
-      color: #0F172A;
-      margin-top: 14px;
-      margin-bottom: 6px;
-      border-bottom: 1px solid #E2E8F0;
-      padding-bottom: 4px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 10px;
-      margin-top: 6px;
-    }
-    th {
-      background-color: #1E293B;
-      color: #FFFFFF;
-      text-align: left;
-      padding: 6px 8px;
-      font-weight: 800;
-    }
-    td {
-      padding: 6px 8px;
-      border-bottom: 1px solid #E2E8F0;
-    }
-    tr:nth-child(even) {
-      background-color: #F8FAFC;
-    }
-    .badge {
-      font-size: 8px;
-      font-weight: 800;
+    .badge-status {
+      display: inline-block;
       padding: 2px 6px;
       border-radius: 4px;
-      display: inline-block;
+      font-size: 8.5px;
+      font-weight: 800;
+      text-transform: uppercase;
     }
-    .badge-paid { background-color: #ECFDF5; color: #047857; }
-    .badge-pending { background-color: #FFFBEB; color: #B45309; }
-    .badge-late { background-color: #FEF2F2; color: #DC2626; }
-    .footer {
-      margin-top: 24px;
-      border-top: 1px solid #E2E8F0;
-      padding-top: 10px;
-      text-align: center;
-      font-size: 9px;
-      color: #94A3B8;
-      font-weight: 600;
+    .badge-paid {
+      background-color: #E6F4EC;
+      color: #0B6E47;
+    }
+    .badge-late {
+      background-color: #FEF2F2;
+      color: #B91C1C;
+    }
+    .badge-pending {
+      background-color: #FBF1DF;
+      color: #8A5300;
     }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="brand-title">RAPPORT D'ÉVOLUTION DU CARNET SOL</div>
-    <div class="brand-sub">
-      Carnet : <strong>${data.businessName}</strong> • Responsable : <strong>${data.collectorName}</strong> (${data.collectorPhone}${data.collectorZone ? ` - ${data.collectorZone}` : ''}) • Édité le ${formatDate(data.generatedAt)}
-    </div>
-  </div>
+  <div class="haitian-ribbon"></div>
 
+  <!-- Header -->
+  <table class="header-table">
+    <tr>
+      <td>
+        <div class="brand-logo-text">SOL <span>MOBILE</span></div>
+        <div class="brand-subline">RAPPORT OFFICIEL D'ÉVOLUTION & AUDIT DE CARNET</div>
+        <div style="font-size: 14px; font-weight: 900; color: #141B2D; margin-top: 4px;">
+          ${data.businessName || 'Carnet Tontinier'} ${data.cycleNumber ? `• Cycle #${data.cycleNumber}` : ''}
+        </div>
+        <div style="font-size: 11px; color: #4A5368; margin-top: 2px;">
+          Gestionnaire : <strong>${data.collectorName}</strong> (${data.collectorPhone}) • Zone : <strong>${data.collectorZone || 'Standard'}</strong>
+        </div>
+      </td>
+      <td style="text-align: right;">
+        <div class="doc-badge badge-blue">AUDIT DE CYCLE</div>
+        <div style="font-size: 10px; color: #4A5368; margin-top: 6px; font-weight: 600;">
+          Période : <strong>${formatDateShort(data.cycleStartDate)} au ${formatDateShort(data.cycleEndDate)}</strong>
+        </div>
+        <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
+          Édité le : <strong>${formatDate(data.generatedAt)}</strong>
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- KPI Matrix -->
   <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-label">Enfants Inscrits</div>
-      <div class="kpi-value kpi-blue">${data.registeredChildrenCount} / ${data.totalSlots}</div>
+    <div class="kpi-tile">
+      <div class="kpi-tile-label">Cagnotte par Main</div>
+      <div class="kpi-tile-val" style="color: #1F3FB8;">${formatCurrency(data.totalPotAmount)}</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">${data.totalSlots} souscriptions attendues</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Cagnotte de la Main</div>
-      <div class="kpi-value kpi-blue">${formatCurrency(data.totalPotAmount)}</div>
+    <div class="kpi-tile">
+      <div class="kpi-tile-label">Total Encaissé</div>
+      <div class="kpi-tile-val" style="color: #0B6E47;">+${formatCurrency(data.totalCashCollected)}</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">${data.handsCollectedTotal} mains reçues</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Total Encaissé</div>
-      <div class="kpi-value kpi-green">+${formatCurrency(data.totalCashCollected)}</div>
+    <div class="kpi-tile">
+      <div class="kpi-tile-label">Total Décaissé</div>
+      <div class="kpi-tile-val" style="color: #8A5300;">-${formatCurrency(data.totalDistributed)}</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Mains remises aux bénéficiaires</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Total Décaissé (Mains)</div>
-      <div class="kpi-value kpi-amber">-${formatCurrency(data.totalDistributed)}</div>
+    <div class="kpi-tile">
+      <div class="kpi-tile-label">Solde Net en Caisse</div>
+      <div class="kpi-tile-val" style="color: #141B2D;">${formatCurrency(data.netReserveBalance)}</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Fonds conservés en réserve</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Solde en Réserve</div>
-      <div class="kpi-value kpi-green">${formatCurrency(data.netReserveBalance)}</div>
+    <div class="kpi-tile">
+      <div class="kpi-tile-label">Effectif Adhérents</div>
+      <div class="kpi-tile-val" style="color: #141B2D;">${data.registeredChildrenCount} adhérents</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Membres inscrits au carnet</div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Mains Collectées</div>
-      <div class="kpi-value">${data.handsCollectedTotal} mains</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Cotisation / Main</div>
-      <div class="kpi-value">${formatCurrency(data.unitAmount)}</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">Période du Cycle</div>
-      <div class="kpi-value" style="font-size: 11px;">${formatDateShort(data.cycleStartDate)} au ${formatDateShort(data.cycleEndDate)}</div>
+    <div class="kpi-tile">
+      <div class="kpi-tile-label">Taux de Recouvrement</div>
+      <div class="kpi-tile-val" style="color: ${safeCompletionRate >= 80 ? '#0B6E47' : '#D97706'};">
+        ${safeCompletionRate.toFixed(1)}%
+      </div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Complétion de l'échéancier</div>
     </div>
   </div>
 
-  <div class="section-title">État Nominatif des Adhérents ("Enfants")</div>
-  <table>
+  <!-- Members Roster Table -->
+  <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #141B2D; letter-spacing: 0.5px; margin-bottom: 6px;">
+    État Nominatif des Adhérents & Suivi des Cotisations
+  </div>
+  <table class="table-clean">
     <thead>
       <tr>
-        <th>Rang</th>
-        <th>Nom Complet</th>
-        <th>Téléphone</th>
-        <th>Total Versé</th>
-        <th>Mains Couvertes</th>
-        <th>Statut Couverture</th>
-        <th>Remise de Main</th>
+        <th style="width: 8%;">Rang</th>
+        <th style="width: 28%;">Nom & Prénom de l'Adhérent</th>
+        <th style="width: 16%;">Téléphone</th>
+        <th style="width: 14%; text-align: right;">Total Cotisé</th>
+        <th style="width: 12%; text-align: center;">Mains</th>
+        <th style="width: 11%; text-align: center;">Couverture</th>
+        <th style="width: 11%; text-align: center;">Main Tirée</th>
       </tr>
     </thead>
     <tbody>
-      ${data.members
-        .map(
-          (m) => `
+      ${data.members.map((m) => `
         <tr>
           <td><strong>#${m.rank}</strong></td>
           <td><strong>${m.fullName}</strong></td>
-          <td>${m.phoneNumber}</td>
-          <td style="color: #059669; font-weight: 700;">${formatCurrency(m.totalPaid)}</td>
-          <td><strong>${m.handsCovered}</strong> main(s)</td>
-          <td>
-            <span class="badge ${
-              m.coverageStatus === 'A_JOUR'
-                ? 'badge-paid'
-                : m.coverageStatus === 'EN_AVANCE'
+          <td>${m.phoneNumber || 'N/A'}</td>
+          <td style="text-align: right; color: #0B6E47; font-weight: 800;">${formatCurrency(m.totalPaid)}</td>
+          <td style="text-align: center; font-weight: 700;">${m.handsCovered}</td>
+          <td style="text-align: center;">
+            <span class="badge-status ${
+              m.coverageStatus === 'A_JOUR' || m.coverageStatus === 'EN_AVANCE'
                 ? 'badge-paid'
                 : 'badge-late'
             }">
-              ${m.coverageStatus === 'A_JOUR' ? 'À JOUR' : m.coverageStatus === 'EN_AVANCE' ? 'EN AVANCE' : 'RETARD'}
+              ${m.coverageStatus === 'A_JOUR' ? 'À JOUR' : m.coverageStatus === 'EN_AVANCE' ? 'AVANCE' : 'RETARD'}
             </span>
           </td>
-          <td>
-            <span class="badge ${m.hasReceivedPayout ? 'badge-paid' : 'badge-pending'}">
-              ${m.hasReceivedPayout ? 'MAIN PERÇUE' : 'EN ATTENTE'}
+          <td style="text-align: center;">
+            <span class="badge-status ${m.hasReceivedPayout ? 'badge-paid' : 'badge-pending'}">
+              ${m.hasReceivedPayout ? 'PERÇUE' : 'ATTENTE'}
             </span>
           </td>
         </tr>
-      `
-        )
-        .join('')}
+      `).join('')}
     </tbody>
   </table>
 
-  <div class="footer">
-    SOL Mobile Haiti • Rapport officiel de performance et de suivi d'activité généré avec succès.
+  <!-- Dual Signatures & Seal -->
+  <table class="signatures-zone">
+    <tr>
+      <td style="width: 48%;">
+        <div class="sig-box">
+          <div class="sig-title">Attestation du Gestionnaire Titulaire</div>
+          <div class="sig-line">Date & Signature certifiée</div>
+        </div>
+      </td>
+      <td style="width: 4%;"></td>
+      <td style="width: 48%;">
+        <div class="sig-box">
+          <div class="sig-title">Contrôle & Visa de Conformité SOL Mobile</div>
+          <div class="sig-line">Sceau d'Audit</div>
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  <div class="security-seal">
+    <div class="barcode-wrapper">
+      ${barcodeSvg}
+    </div>
+    <div style="font-size: 9.5px; font-weight: 700; color: #141B2D;">
+      SOL MOBILE HAITI • DOCUMENT D'AUDIT CERTIFIÉ CONFORME AUX REGISTRES
+    </div>
   </div>
+${receiptNoteHtml()}
 </body>
 </html>
   `.trim();
 
-  const { uri } = await Print.printToFileAsync({ html });
-  return uri;
+  return await renderHtmlDocument(html);
+}
+
+/**
+ * Generates an official Cash Closure Receipt (Procès-Verbal de Clôture Journalière de Caisse).
+ */
+export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): Promise<string> {
+  data = withReceiptName(data);
+  const safeClosureId = (data.closureId || 'CLOTURE').toUpperCase();
+  const barcodeSvg = generateBarcodeSvg(safeClosureId);
+  const isBalanced = Math.abs(data.discrepancy) < 0.01;
+
+  const html = `
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>SOL – PV de Clôture de Caisse – ${data.collectorName} (${data.businessName || 'Caisse'}) – ${data.closureDate ? data.closureDate.slice(0,10) : ''} – Réf. ${safeClosureId.slice(0,12)}</title>
+  <style>
+    ${BASE_PRINT_CSS}
+    .receipt-frame {
+      max-width: 680px;
+      margin: 0 auto;
+      border: 1.5px solid #141B2D;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+    .discrepancy-banner {
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .discrepancy-balanced {
+      background-color: #E6F4EC;
+      border: 1.5px solid #A9D9BF;
+      color: #0B6E47;
+    }
+    .discrepancy-alert {
+      background-color: #FEF2F2;
+      border: 1.5px solid #FECACA;
+      color: #B91C1C;
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt-frame">
+    <div class="haitian-ribbon"></div>
+
+    <!-- Header -->
+    <table class="header-table">
+      <tr>
+        <td>
+          <div class="brand-logo-text">SOL <span>MOBILE</span></div>
+          <div class="brand-subline">SYSTÈME TONTINIER SÉCURISÉ D'HAÏTI</div>
+          <div style="font-size: 11px; font-weight: 700; color: #141B2D; margin-top: 4px;">
+            ${data.businessName || 'Carnet Tontinier Communautaire'}
+          </div>
+        </td>
+        <td style="text-align: right;">
+          <div class="doc-badge ${isBalanced ? 'badge-green' : 'badge-amber'}">PROCÈS-VERBAL DE CLÔTURE DE CAISSE</div>
+          <div style="font-size: 10px; color: #4A5368; margin-top: 4px; font-weight: 600;">
+            Réf : <strong>${safeClosureId}</strong>
+          </div>
+          <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
+            Date Clôture : <strong>${formatDateShort(data.closureDate)}</strong>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Hero Box -->
+    <div class="hero-amount-box ${isBalanced ? 'green' : 'amber'}">
+      <div class="hero-label">Total Espèces Déclaré en Caisse (Kòb Kach Fizik)</div>
+      <div class="hero-value" style="color: ${isBalanced ? '#0B6E47' : '#8A5300'};">${formatCurrency(data.totalCashDeclared)}</div>
+      <div class="hero-sub">
+        Solde théorique attendu par le système : <strong>${formatCurrency(data.totalSystemCalculated)}</strong>
+      </div>
+    </div>
+
+    <!-- Discrepancy Status Banner -->
+    <div class="discrepancy-banner ${isBalanced ? 'discrepancy-balanced' : 'discrepancy-alert'}">
+      ${isBalanced 
+        ? '✓ CAISSE PARFAITEMENT ÉQUILIBRÉE — Aucun écart constaté entre les espèces physiques et les encaissements du système.'
+        : `⚠️ ÉCART DE CAISSE CONSTATÉ : ${formatCurrency(data.discrepancy)} (${data.discrepancy > 0 ? 'Excédent' : 'Déficit de caisse'})`
+      }
+      ${data.discrepancyReason ? `<div style="margin-top: 4px; font-weight: 600; font-size: 10px; color: #141B2D;">Justification consignée : <em>"${data.discrepancyReason}"</em></div>` : ''}
+    </div>
+
+    <!-- Info Cards -->
+    <table class="info-grid">
+      <tr>
+        <td style="width: 50%;">
+          <div class="info-card">
+            <div class="info-card-title">Opérateur Responsable de Caisse</div>
+            <div class="info-row">
+              <span class="info-label">Gestionnaire :</span>
+              <span class="info-value">${data.collectorName}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Téléphone :</span>
+              <span class="info-value">${data.collectorPhone}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Zone de Collecte :</span>
+              <span class="info-value">${data.collectorZone || 'Standard'}</span>
+            </div>
+          </div>
+        </td>
+        <td style="width: 50%;">
+          <div class="info-card">
+            <div class="info-card-title">Détails d'Arrêté des Comptes</div>
+            <div class="info-row">
+              <span class="info-label">Statut Journalier :</span>
+              <span class="info-value" style="color: #0B6E47;">${data.status.toUpperCase()}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Validation Sécurité :</span>
+              <span class="info-value">Code PIN Vérifié</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Horodatage Clôture :</span>
+              <span class="info-value">${formatDate(data.generatedAt)}</span>
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Dual Signatures -->
+    <table class="signatures-zone">
+      <tr>
+        <td style="width: 48%;">
+          <div class="sig-box">
+            <div class="sig-title">Visa du Gestionnaire de Caisse</div>
+            <div class="sig-line">Signature du Déclarant</div>
+          </div>
+        </td>
+        <td style="width: 4%;"></td>
+        <td style="width: 48%;">
+          <div class="sig-box">
+            <div class="sig-title">Visa Contrôle Interne / Supervision</div>
+            <div class="sig-line">Audit & Vérification</div>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Security Seal & Barcode -->
+    <div class="security-seal">
+      <div class="barcode-wrapper">
+        ${barcodeSvg}
+      </div>
+      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
+        ARRÊTÉ DE CAISSE ID: ${safeClosureId}
+      </div>
+      <div class="legal-note">
+        Procès-verbal officiel d'arrêté de caisse journalière. Les montants déclarés engagent la responsabilité pleine et entière du gestionnaire titulaire du carnet. Certifié par le système central SOL Mobile.
+      </div>
+    </div>
+  </div>
+${receiptNoteHtml()}
+</body>
+</html>
+  `.trim();
+
+  return await renderHtmlDocument(html);
 }
 
 /**
  * Shares or opens native print dialog for a generated PDF file.
+ *
+ * Android PDFs are handled directly in renderHtmlDocument (printAsync({ html }))
+ * so this function is a no-op for Android sentinels.
+ * iOS uses file-based sharing via expo-sharing.
  */
 export async function sharePdfFile(pdfUri: string, dialogTitle: string = 'Partager le document PDF'): Promise<void> {
-  if (Platform.OS === 'web') {
-    window.open(pdfUri, '_blank');
+  // Sentinels: print was already triggered upstream — nothing left to do.
+  if (
+    pdfUri === 'web-printed' ||
+    pdfUri === 'android-printed' ||
+    pdfUri === 'fallback-printed'
+  ) {
     return;
   }
 
-  const isAvailable = await Sharing.isAvailableAsync();
-  if (isAvailable) {
+  if (Platform.OS === 'web') {
+    if (pdfUri.startsWith('http') || pdfUri.startsWith('blob:') || pdfUri.startsWith('data:')) {
+      window.open(pdfUri, '_blank');
+    }
+    return;
+  }
+
+  // iOS: share the generated file via the native share sheet.
+  try {
+    const isAvailable = await Sharing.isAvailableAsync();
+    if (!isAvailable) {
+      await Print.printAsync({ uri: pdfUri });
+      return;
+    }
     await Sharing.shareAsync(pdfUri, {
       mimeType: 'application/pdf',
       dialogTitle,
       UTI: 'com.adobe.pdf',
     });
-  } else {
-    await Print.printAsync({ uri: pdfUri });
+  } catch (error) {
+    console.warn('[PDF] shareAsync failed, falling back to printAsync:', error);
+    try {
+      await Print.printAsync({ uri: pdfUri });
+    } catch (printErr) {
+      console.error('[PDF] printAsync fallback failed:', printErr);
+    }
   }
 }

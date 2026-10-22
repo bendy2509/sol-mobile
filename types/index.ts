@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'MANAGER' | 'COLLECTOR';
+export type UserRole = 'MANAGER' | 'READ_ONLY' | 'COLLECTOR' | 'USER';
 
 export type UserStatus = 'PENDING_APPROVAL' | 'ACTIVE' | 'SUSPENDED';
 
@@ -31,6 +31,8 @@ export type TransactionType =
   | 'CORRECTION';
 
 export type SyncStatus = 'PENDING' | 'SYNCED' | 'FAILED';
+
+export type CycleStatus = 'ACTIVE' | 'COMPLETED' | 'CLOSED' | 'ARCHIVED';
 
 export type MemberPaymentStatus =
   | 'PAID_TODAY'
@@ -94,7 +96,8 @@ export interface BusinessConfig {
   totalSlots: number; // Nombre total d'enfants / slots prévus
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
-  status: 'ACTIVE' | 'COMPLETED' | 'PAUSED';
+  status: 'ACTIVE' | 'COMPLETED' | 'PAUSED' | 'CLOSED';
+  cycleStatus?: CycleStatus;
   createdAt: string;
 }
 
@@ -105,10 +108,14 @@ export interface MemberChild {
   fullName: string;
   phoneNumber: string;
   rankOrder?: number; // Position/Rang de passage
-  hasReceivedHand: boolean; // Main déjà touchée (Oui/Non)
-  handReceivedDate?: string; // Date de remise de la main
+  payoutRank?: number | null;
+  payoutRanks?: string | number[]; // Rangs assignés pour les différentes mains (ex: "1, 4, 7")
+  handsCount: number; // Nombre de mains/parts souscrites (défaut: 1)
+  receivedHandsCount: number; // Nombre de mains déjà perçues (défaut: 0)
+  hasReceivedHand: boolean; // Toutes les mains reçues (true si receivedHandsCount >= handsCount)
+  handReceivedDate?: string; // Date de remise de la dernière main
   totalPaidAmount: number; // Total cotisé en HTG
-  paidHandsCount: number; // Nombre total de mains payées
+  paidHandsCount: number; // Nombre total de cotisations unitaires versées
   paidUntilDate: string; // Date jusqu'à laquelle les cotisations sont couvertes (YYYY-MM-DD)
   qrCodeToken: string;
   createdAt: string;
@@ -120,37 +127,16 @@ export interface Member extends MemberChild {
   type: BusinessType;
   dailyAmount: number;
   currentBalance: number;
-  payoutRank?: number | null;
   hasReceivedPayout: boolean;
   paymentStatusToday: MemberPaymentStatus;
   overdueRoundsCount: number;
   lastPaymentDate?: string | null;
   totalPaidInCycle: number;
   handsCoveredAhead: number; // Nombre de jours/mains d'avance
+  nextDueDate?: string;
 }
 
 export type Client = Member;
-
-export interface SolGroup {
-  id: string; // UUIDv4
-  name: string;
-  contributionAmount: number;
-  frequency: string;
-  totalRounds: number;
-  currentRound: number;
-  status: 'ACTIVE' | 'COMPLETED' | 'PENDING';
-  createdAt: string;
-  members?: SolGroupMember[];
-}
-
-export interface SolGroupMember {
-  id: string; // UUIDv4
-  solGroupId: string;
-  clientId: string;
-  payoutRank: number;
-  hasPaid: boolean;
-  client?: Member;
-}
 
 export interface LocalTransaction {
   id: string; // UUIDv4
@@ -166,6 +152,10 @@ export interface LocalTransaction {
   createdAtLocal: string;
   syncedAt?: string | null;
   syncStatus: SyncStatus;
+  idempotencyKey?: string | null;
+  isReversed?: boolean;
+  reversalId?: string | null;
+  reversedAt?: string | null;
   memberName?: string;
   memberPhone?: string;
 }
@@ -187,6 +177,75 @@ export interface CashClosure {
   createdAt: string;
 }
 
+export interface ClosedCycle {
+  id: string; // UUIDv4
+  collectorId: string;
+  businessId: string;
+  businessName: string;
+  cycleNumber: number;
+  startDate: string;
+  endDate: string;
+  closedAt: string;
+  unitAmount: number;
+  totalSlots: number;
+  totalHands: number;
+  totalPot: number;
+  totalCollected: number;
+  totalDistributed: number;
+  netReserve: number;
+  completionRate: number;
+  membersCount: number;
+  snapshotData?: string; // JSON with complete member list & metrics for PDF generation
+  createdAt: string;
+}
+
+export type AuditLogAction =
+  | 'CREATE_CONTRIBUTION'
+  | 'REVERSE_CONTRIBUTION'
+  | 'REVERSE_TRANSACTION'
+  | 'CREATE_PAYOUT'
+  | 'PAYOUT_OUT_OF_ORDER'
+  | 'UPDATE_PAYOUT_ORDER'
+  | 'CREATE_CLIENT'
+  | 'DELETE_CLIENT'
+  | 'CREATE_BOOK'
+  | 'UPDATE_BOOK'
+  | 'CLOSE_DAY'
+  | 'REOPEN_DAY'
+  | 'CLOSE_CYCLE'
+  | 'RECONCILE_CLIENT'
+  | 'APPROVE_MANAGER'
+  | 'SUSPEND_MANAGER'
+  | 'RESTORE_BACKUP'
+  | 'UPDATE_SECURITY'
+  | 'LOGIN_FAILURE';
+
+export interface AuditLog {
+  id: string; // UUIDv4
+  userId: string;
+  userRole: UserRole;
+  action: AuditLogAction;
+  entityType: 'TRANSACTION' | 'CLIENT' | 'BUSINESS' | 'COLLECTOR' | 'CLOSURE' | 'SYSTEM';
+  entityId: string;
+  oldData?: string | null; // JSON string
+  newData?: string | null; // JSON string
+  reason?: string | null;
+  createdAt: string;
+  syncStatus: SyncStatus;
+}
+
+export interface SyncLogEntry {
+  id: string;
+  tableName: string;
+  entityId: string;
+  action: 'INSERT' | 'UPDATE' | 'DELETE' | 'PUSH';
+  status: 'PENDING' | 'SYNCED' | 'FAILED';
+  attemptsCount: number;
+  lastError?: string | null;
+  createdAt: string;
+  syncedAt?: string | null;
+}
+
 export interface DashboardMetrics {
   unitAmount: number; // Montant unitaire d'une main (ex: 250 HTG)
   totalPotAmount: number; // Cagnotte complète (unitAmount * totalSlots, ex: 2 500 HTG)
@@ -206,6 +265,7 @@ export interface DashboardMetrics {
   frequency: Frequency | PaymentFrequency;
   startDate: string;
   endDate: string;
+  cycleStatus?: CycleStatus;
   // Legacy aliases for backward compatibility
   handsCollected: number;
   handsRemaining: number;
@@ -228,6 +288,8 @@ export interface SyncState {
   isOnline: boolean;
   isSyncing: boolean;
   pendingCount: number;
+  syncedCount: number;
+  failedCount: number;
   lastSyncedAt: string | null;
   error?: string | null;
 }

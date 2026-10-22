@@ -3,6 +3,7 @@ import { getActiveBusinessConfig } from './businessRepository';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { createTransaction } from './transactionRepository';
 import { calculateClientPaymentStatus } from '@/services/financialService';
+import { localDateString } from '@/lib/dates';
 
 export async function getMembersWithPaymentStatus(options?: {
   businessId?: string;
@@ -17,7 +18,7 @@ export async function getMembersWithPaymentStatus(options?: {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const startOfDayIso = startOfDay.toISOString();
-  const todayStr = startOfDayIso.split('T')[0];
+  const todayStr = localDateString(startOfDay);
 
   let query = `
     SELECT 
@@ -30,6 +31,9 @@ export async function getMembersWithPaymentStatus(options?: {
       daily_amount,
       current_balance,
       payout_rank,
+      payout_ranks,
+      hands_count,
+      received_hands_count,
       has_received_hand,
       has_received_payout,
       hand_received_date,
@@ -41,6 +45,7 @@ export async function getMembersWithPaymentStatus(options?: {
       sync_status
     FROM clients
     WHERE collector_id = ?
+      AND id NOT IN (SELECT id FROM deleted_clients)
   `;
   const params: (string | number)[] = [collectorId];
 
@@ -60,6 +65,9 @@ export async function getMembersWithPaymentStatus(options?: {
     daily_amount: number;
     current_balance: number;
     payout_rank: number | null;
+    payout_ranks: string | null;
+    hands_count: number | null;
+    received_hands_count: number | null;
     has_received_hand: number | null;
     has_received_payout: number | null;
     hand_received_date: string | null;
@@ -74,26 +82,45 @@ export async function getMembersWithPaymentStatus(options?: {
   const unitAmount = business?.contributionAmount || 250;
   const members: Member[] = [];
 
+  // Batch query 1: All clients who made a payment today (1 fast query instead of N queries)
+  const paidTodayRows = await db.getAllAsync<{ client_id: string }>(
+    `SELECT client_id FROM transactions 
+     WHERE collector_id = ? 
+       AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
+       AND is_reversed = 0 
+       AND created_at_local >= ?
+     GROUP BY client_id`,
+    [collectorId, startOfDayIso]
+  );
+  const paidTodaySet = new Set(paidTodayRows.map((t) => t.client_id));
+
+  // Batch query 2: Last overall payment date for all clients (1 fast query instead of N queries)
+  const lastTxRows = await db.getAllAsync<{ client_id: string; last_date: string }>(
+    `SELECT client_id, MAX(created_at_local) as last_date 
+     FROM transactions 
+     WHERE collector_id = ? AND is_reversed = 0
+     GROUP BY client_id`,
+    [collectorId]
+  );
+  const lastTxMap = new Map(lastTxRows.map((t) => [t.client_id, t.last_date]));
+
   for (const r of rows) {
-    // Check if member paid today
-    const paidTodayRow = await db.getFirstAsync<{ count: number; last_date: string }>(
-      `SELECT count(*) as count, MAX(created_at_local) as last_date FROM transactions 
-       WHERE client_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND created_at_local >= ?`,
-      [r.id, startOfDayIso]
-    );
-    const hasPaidToday = (paidTodayRow?.count || 0) > 0;
+    const hasPaidToday = paidTodaySet.has(r.id);
+    const lastPaymentDate = lastTxMap.get(r.id) || null;
 
-    // Get last overall payment date
-    const lastTxRow = await db.getFirstAsync<{ last_date: string }>(
-      `SELECT MAX(created_at_local) as last_date FROM transactions WHERE client_id = ?`,
-      [r.id]
-    );
-
+    const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+    const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
+    const rawReceived = Number(r.received_hands_count || 0);
+    const receivedHandsCount = rawReceived > 0
+      ? rawReceived
+      : (r.has_received_hand || r.has_received_payout)
+        ? (handsCount === 1 ? 1 : 0)
+        : 0;
+    const hasReceived = receivedHandsCount >= handsCount;
     const balance = Number(r.current_balance || 0);
     const totalPaid = Number(r.total_paid_amount || balance);
     const paidHands = Number(r.paid_hands_count || Math.floor(balance / (unitAmount || 1)));
     const paidUntil = r.paid_until_date || null;
-    const hasReceived = Boolean(r.has_received_hand || r.has_received_payout);
 
     const calculated = calculateClientPaymentStatus({
       todayStr,
@@ -118,6 +145,9 @@ export async function getMembersWithPaymentStatus(options?: {
       currentBalance: balance,
       payoutRank: r.payout_rank !== null && r.payout_rank !== undefined ? Number(r.payout_rank) : null,
       rankOrder: r.payout_rank !== null && r.payout_rank !== undefined ? Number(r.payout_rank) : undefined,
+      payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
+      handsCount,
+      receivedHandsCount,
       hasReceivedHand: hasReceived,
       hasReceivedPayout: hasReceived,
       handReceivedDate: r.hand_received_date || undefined,
@@ -129,7 +159,7 @@ export async function getMembersWithPaymentStatus(options?: {
       syncStatus: (r.sync_status as any) || 'PENDING',
       paymentStatusToday,
       overdueRoundsCount,
-      lastPaymentDate: paidTodayRow?.last_date || lastTxRow?.last_date || null,
+      lastPaymentDate,
       totalPaidInCycle: totalPaid,
       handsCoveredAhead,
     });
@@ -140,50 +170,50 @@ export async function getMembersWithPaymentStatus(options?: {
   if (options?.filter && options.filter !== 'ALL') {
     switch (options.filter) {
       case 'PAID_TODAY':
-        filtered = filtered.filter(
-          (m) => m.paymentStatusToday === 'PAID_TODAY' || m.paymentStatusToday === 'PAID_IN_ADVANCE'
-        );
+        filtered = members.filter((m) => m.paymentStatusToday === 'PAID_TODAY' || m.paymentStatusToday === 'PAID_IN_ADVANCE');
         break;
       case 'UNPAID_TODAY':
-        filtered = filtered.filter((m) => m.paymentStatusToday === 'UNPAID_TODAY');
+        filtered = members.filter((m) => m.paymentStatusToday === 'UNPAID_TODAY' || m.paymentStatusToday === 'OVERDUE');
         break;
       case 'OVERDUE':
-        filtered = filtered.filter((m) => m.paymentStatusToday === 'OVERDUE');
+        filtered = members.filter((m) => m.paymentStatusToday === 'OVERDUE');
         break;
       case 'HAND_RECEIVED':
-        filtered = filtered.filter((m) => m.hasReceivedHand);
+        filtered = members.filter((m) => m.hasReceivedHand || (m.receivedHandsCount !== undefined && m.receivedHandsCount > 0));
         break;
       case 'HAND_PENDING':
-        filtered = filtered.filter((m) => !m.hasReceivedHand);
-        break;
       case 'UPCOMING_PAYOUT':
-        filtered = filtered.filter((m) => !m.hasReceivedHand && m.payoutRank !== null);
+        filtered = members.filter((m) => !m.hasReceivedHand);
         break;
     }
   }
 
   // Apply Sorting
-  const sort = options?.sort || 'PAYOUT_RANK';
   filtered.sort((a, b) => {
-    switch (sort) {
+    switch (options?.sort) {
+      case 'PAYOUT_RANK':
+        return (a.payoutRank || 999) - (b.payoutRank || 999);
       case 'NAME':
         return a.fullName.localeCompare(b.fullName);
-      case 'PAYOUT_RANK': {
-        const rankA = a.payoutRank ?? 9999;
-        const rankB = b.payoutRank ?? 9999;
-        return rankA - rankB;
-      }
       case 'BALANCE':
         return b.currentBalance - a.currentBalance;
       case 'OVERDUE':
         return b.overdueRoundsCount - a.overdueRoundsCount;
       case 'RECENT':
-      default:
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      default:
+        return 0;
     }
   });
 
-  return filtered;
+  const uniqueMap = new Map<string, Member>();
+  for (const m of filtered) {
+    if (!uniqueMap.has(m.id)) {
+      uniqueMap.set(m.id, m);
+    }
+  }
+
+  return Array.from(uniqueMap.values());
 }
 
 export async function payoutMemberHand(
@@ -193,9 +223,41 @@ export async function payoutMemberHand(
   businessId?: string
 ): Promise<Transaction> {
   const db = await getDatabase();
-  const collectorId = await getActiveCollectorId();
-  const todayStr = new Date().toISOString().split('T')[0];
 
+  const client = await db.getFirstAsync<{
+    hands_count: number | null;
+    payout_ranks: string | null;
+    received_hands_count: number | null;
+    has_received_hand: number | null;
+    has_received_payout: number | null;
+    full_name: string;
+  }>(
+    `SELECT hands_count, payout_ranks, received_hands_count, has_received_hand, has_received_payout, full_name FROM clients WHERE id = ?`,
+    [memberId]
+  );
+
+  const parsedRanksCount = client?.payout_ranks ? String(client.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
+  const totalHands = Math.max(1, Number(client?.hands_count || 1), parsedRanksCount);
+  const currentReceived = Number(
+    client?.received_hands_count !== null && client?.received_hands_count !== undefined
+      ? client.received_hands_count
+      : client?.has_received_hand || client?.has_received_payout
+      ? totalHands
+      : 0
+  );
+
+  if (currentReceived >= totalHands) {
+    throw new Error(
+      `Action interdite : L'adhérent ${client?.full_name || ''} a déjà reçu l'intégralité de ses mains (${currentReceived}/${totalHands}) pour ce cycle.`
+    );
+  }
+
+  const collectorId = await getActiveCollectorId();
+  const todayStr = localDateString();
+  const newReceivedCount = currentReceived + 1;
+  const isFullyCompleted = newReceivedCount >= totalHands ? 1 : 0;
+
+  // createTransaction handles its own atomic INSERT + client balance UPDATE internally.
   const tx = await createTransaction({
     clientId: memberId,
     businessId: businessId || null,
@@ -203,16 +265,20 @@ export async function payoutMemberHand(
     type: 'HAND_PAYOUT',
     collectorId,
     paymentMethod: 'CASH',
-    note: note || 'Remise de la main complète du SOL',
+    note: note || `Remise de la main (${newReceivedCount}/${totalHands}) pour ${client?.full_name}`,
   });
 
-  // Flag hand received on client record but KEEP client in cycle
-  await db.runAsync(
-    `UPDATE clients 
-     SET has_received_hand = 1, has_received_payout = 1, hand_received_date = ?, sync_status = 'PENDING' 
-     WHERE id = ?`,
-    [todayStr, memberId]
-  );
+  // Atomically persist received-hand counters as a second write.
+  // Isolated in its own withTransactionAsync so it is durable even if
+  // the calling screen re-renders or the process is interrupted.
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE clients 
+       SET received_hands_count = ?, has_received_hand = ?, has_received_payout = ?, hand_received_date = ?, sync_status = 'PENDING' 
+       WHERE id = ?`,
+      [newReceivedCount, isFullyCompleted, isFullyCompleted, todayStr, memberId]
+    );
+  });
 
   return tx;
 }

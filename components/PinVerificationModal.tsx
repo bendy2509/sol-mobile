@@ -1,16 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  Modal,
-  TouchableOpacity,
-  StyleSheet,
-  Platform,
-} from 'react-native';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { View, Modal, Pressable, StyleSheet, Animated, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/AuthContext';
-import { Icon } from '@/components/Icon';
-import { SOL_COLORS } from '@/constants/Colors';
+import { Card, Icon, PinDots, PinPad, Text } from '@/components/ui';
 import { triggerLightImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
+import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
+
+const MAX_ATTEMPTS = 3;
 
 interface PinVerificationModalProps {
   visible: boolean;
@@ -18,27 +16,65 @@ interface PinVerificationModalProps {
   subtitle?: string;
   onSuccess: () => void;
   onCancel: () => void;
+  /** Appelé si l'utilisateur dépasse le nombre max de tentatives incorrectes */
+  onLockout?: () => void;
 }
 
 export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   visible,
-  title = 'Confirmation de Sécurité',
-  subtitle = 'Veuillez saisir votre code PIN à 4 chiffres pour valider cette opération.',
+  title = t('Confirmation de Sécurité'),
+  subtitle = t('Veuillez saisir votre code PIN à 4 chiffres pour valider cette opération.'),
   onSuccess,
   onCancel,
+  onLockout,
 }) => {
-  const { verifyPin } = useAuth();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { verifyPin, getPinLockMessage } = useAuth();
+  const { isSmallScreen, isTablet, height } = useResponsive();
+  const isShortScreen = height < 680;
   const [pin, setPin] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [failureCount, setFailureCount] = useState(0);
+  const [isLocked, setIsLocked] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
+  // Shake animation for wrong PIN
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+
+  const triggerShake = () => {
+    shakeAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: -12, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 12, duration: 60, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -8, duration: 55, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 8, duration: 55, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -4, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]).start();
+  };
+
+  // Reset all state when modal becomes visible
   useEffect(() => {
     if (visible) {
       setPin('');
       setErrorMessage(null);
+      setFailureCount(0);
+      setIsLocked(false);
+      setIsVerifying(false);
+      shakeAnim.setValue(0);
+      // Progressive lockout is global (login + every sensitive action): show it right away
+      getPinLockMessage().then((lock) => {
+        if (lock) {
+          setIsLocked(true);
+          setErrorMessage(lock);
+        }
+      });
     }
   }, [visible]);
 
   const handleDigit = async (digit: string) => {
+    if (isLocked || isVerifying) return;
     triggerLightImpact();
     if (pin.length < 4) {
       const nextPin = pin + digit;
@@ -46,20 +82,53 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
       setErrorMessage(null);
 
       if (nextPin.length === 4) {
-        const isValid = await verifyPin(nextPin);
-        if (isValid) {
-          triggerSuccessFeedback();
-          onSuccess();
-        } else {
-          triggerErrorFeedback();
-          setErrorMessage('Code PIN incorrect.');
-          setPin('');
-        }
+        setIsVerifying(true);
+        // Allow the 4th filled dot and spinner to render on screen before starting verification
+        setTimeout(async () => {
+          const isValid = await verifyPin(nextPin);
+          setIsVerifying(false);
+          if (isValid) {
+            triggerSuccessFeedback();
+            onSuccess();
+          } else {
+            triggerErrorFeedback();
+            triggerShake();
+            setPin('');
+
+            const lock = await getPinLockMessage();
+            if (lock) {
+              setIsLocked(true);
+              setErrorMessage(lock);
+              return;
+            }
+
+            const nextFailures = failureCount + 1;
+            setFailureCount(nextFailures);
+
+            if (nextFailures >= MAX_ATTEMPTS) {
+              setIsLocked(true);
+              setErrorMessage(
+                t('Accès verrouillé — {0} tentatives incorrectes. Opération annulée par sécurité.', MAX_ATTEMPTS)
+              );
+              // Fermeture automatique après 2 secondes
+              setTimeout(() => {
+                onLockout?.();
+                onCancel();
+              }, 2000);
+            } else {
+              const remaining = MAX_ATTEMPTS - nextFailures;
+              setErrorMessage(
+                t('Code PIN incorrect — {0} tentative{1} restante{2}.', remaining, remaining > 1 ? 's' : '', remaining > 1 ? 's' : '')
+              );
+            }
+          }
+        }, 30);
       }
     }
   };
 
   const handleBackspace = () => {
+    if (isLocked || isVerifying) return;
     triggerLightImpact();
     if (pin.length > 0) {
       setPin(pin.slice(0, -1));
@@ -68,225 +137,121 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   };
 
   const handleClear = () => {
+    if (isLocked || isVerifying) return;
     triggerLightImpact();
     setPin('');
     setErrorMessage(null);
   };
 
-  const numpadKeys = [
+  // Keypad layout — 'DEL' replaces emoji ⌫
+  const numpadKeys: string[][] = [
     ['1', '2', '3'],
     ['4', '5', '6'],
     ['7', '8', '9'],
-    ['C', '0', '⌫'],
+    ['C', '0', 'DEL'],
   ];
 
+  const insets = useSafeAreaInsets();
+  const compact = isSmallScreen || isShortScreen;
+
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onCancel}
-    >
-      <View style={styles.overlay}>
-        <View style={styles.card}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.iconCircle}>
-              <Icon name="shield" size={24} color="#FFFFFF" />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
+      <View style={[styles.overlay, isTablet && styles.overlayTablet]}>
+        <View style={[styles.sheet, isTablet && styles.sheetTablet, !isTablet && { paddingBottom: insets.bottom + theme.spacing.lg }]}>
+          {!isTablet && <View style={styles.handle} />}
+          <View style={styles.headerRow}>
+            <View style={styles.flexShrink}>
+              <Text variant="heading" accessibilityRole="header">
+                {isLocked ? t('Accès verrouillé') : title}
+              </Text>
+              <Text variant="caption" tone={isLocked ? 'danger' : 'muted'}>
+                {isLocked ? t('Saisie du code PIN suspendue pour votre sécurité.') : subtitle}
+              </Text>
             </View>
-            <TouchableOpacity onPress={onCancel} style={styles.closeBtn}>
-              <Icon name="close" size={18} color="#64748B" />
-            </TouchableOpacity>
+            <Pressable
+              onPress={onCancel}
+              accessibilityRole="button"
+              accessibilityLabel={t('Fermer')}
+              style={({ pressed }) => [styles.closeBtn, pressed && styles.pressed]}
+            >
+              <Icon name="close" size={22} color={theme.colors.textMuted} />
+            </Pressable>
           </View>
 
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.subtitle}>{subtitle}</Text>
+          {failureCount > 0 && (
+            <View style={styles.attemptsRow} accessible accessibilityLabel={t('{0} tentative(s) incorrecte(s) sur {1}', failureCount, MAX_ATTEMPTS)}>
+              {[1, 2, 3].map((n) => (
+                <View key={n} style={[styles.attemptDot, n <= failureCount && styles.attemptDotFailed]} />
+              ))}
+            </View>
+          )}
 
-          {/* 4 Dots Display */}
-          <View style={styles.dotsRow}>
-            {[0, 1, 2, 3].map((index) => {
-              const isFilled = index < pin.length;
-              return (
-                <View
-                  key={index}
-                  style={[
-                    styles.dot,
-                    isFilled && styles.dotFilled,
-                    errorMessage ? styles.dotError : null,
-                  ]}
-                />
-              );
-            })}
-          </View>
+          {!isLocked && (
+            <Animated.View style={[styles.dotsBox, { transform: [{ translateX: shakeAnim }] }]}>
+              <PinDots filled={pin.length} active={!isVerifying} error={!!errorMessage} size={compact ? 'md' : 'lg'} />
+            </Animated.View>
+          )}
 
-          {errorMessage && <Text style={styles.errorText}>{errorMessage}</Text>}
+          {isVerifying && (
+            <View style={styles.verifyingRow}>
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+              <Text variant="label" tone="primary">{t('Vérification…')}</Text>
+            </View>
+          )}
 
-          {/* Tactile Keypad */}
-          <View style={styles.keypadGrid}>
-            {numpadKeys.map((row, rowIndex) => (
-              <View key={`row-${rowIndex}`} style={styles.keypadRow}>
-                {row.map((k) => {
-                  const isAction = k === 'C' || k === '⌫';
-                  return (
-                    <TouchableOpacity
-                      key={k}
-                      activeOpacity={0.6}
-                      onPress={() => {
-                        if (k === 'C') handleClear();
-                        else if (k === '⌫') handleBackspace();
-                        else handleDigit(k);
-                      }}
-                      style={[styles.keyButton, isAction && styles.actionKeyButton]}
-                    >
-                      <Text style={[styles.keyText, isAction && styles.actionKeyText]}>
-                        {k}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+          {errorMessage && (
+            <Card tone="danger" padding="sm">
+              <View style={styles.errorRow}>
+                <Icon name="alert" size={16} color={theme.colors.danger} />
+                <Text variant="label" tone="danger" style={styles.flexShrink}>
+                  {errorMessage}
+                </Text>
               </View>
-            ))}
-          </View>
+            </Card>
+          )}
 
-          {/* Cancel Button */}
-          <TouchableOpacity activeOpacity={0.7} onPress={onCancel} style={styles.cancelBtn}>
-            <Text style={styles.cancelBtnText}>Annuler</Text>
-          </TouchableOpacity>
+          <PinPad onDigit={handleDigit} onBackspace={handleBackspace} onClear={handleClear} disabled={isLocked || isVerifying} compact={compact} />
         </View>
       </View>
     </Modal>
   );
 };
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  card: {
-    width: '100%',
-    maxWidth: 380,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 22,
-    alignItems: 'center',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-  },
-  header: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  closeBtn: {
-    padding: 6,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: '#64748B',
-    textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-    paddingHorizontal: 10,
-    fontWeight: '600',
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    gap: 18,
-    marginBottom: 12,
-  },
-  dot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: '#94A3B8',
-    backgroundColor: '#FFFFFF',
-  },
-  dotFilled: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primary,
-    transform: [{ scale: 1.25 }],
-  },
-  dotError: {
-    borderColor: '#EF4444',
-  },
-  errorText: {
-    color: '#DC2626',
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  keypadGrid: {
-    width: '100%',
-    marginTop: 6,
-    marginBottom: 6,
-  },
-  keypadRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  keyButton: {
-    flex: 1,
-    height: 52,
-    marginHorizontal: 4,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 1,
-  },
-  actionKeyButton: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#94A3B8',
-  },
-  keyText: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  actionKeyText: {
-    fontSize: 16,
-    color: '#64748B',
-  },
-  cancelBtn: {
-    marginTop: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-  },
-  cancelBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+  StyleSheet.create({
+    flexShrink: { flex: 1, minWidth: 0 },
+    pressed: { backgroundColor: colors.surfacePressed },
+
+    overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay },
+    overlayTablet: { justifyContent: 'center', alignItems: 'center', padding: layout.gutter },
+    sheet: {
+      width: '100%',
+      gap: spacing.lg,
+      paddingTop: spacing.sm,
+      paddingHorizontal: layout.gutter,
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.xl,
+      borderTopRightRadius: radius.xl,
+      borderCurve: 'continuous',
+    },
+    handle: { alignSelf: 'center', width: spacing.xxl, height: spacing.xs, borderRadius: radius.pill, backgroundColor: colors.borderStrong },
+    sheetTablet: { maxWidth: 440, borderRadius: radius.lg, padding: spacing.xl },
+
+    headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+    closeBtn: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      marginTop: -spacing.sm,
+      marginRight: -spacing.sm,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    attemptsRow: { flexDirection: 'row', justifyContent: 'center', gap: spacing.sm },
+    attemptDot: { width: spacing.sm, height: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceAlt },
+    attemptDotFailed: { backgroundColor: colors.danger },
+    dotsBox: { paddingVertical: spacing.sm },
+    verifyingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+    errorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  });

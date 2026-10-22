@@ -1,116 +1,136 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useMemo } from 'react';
+import { View, Pressable, StyleSheet } from 'react-native';
+import { useRouter, usePathname } from 'expo-router';
 import { SyncBadge } from './SyncBadge';
-import { Icon } from './Icon';
+import { Icon, Text } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { triggerLightImpact } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
+import { safeBack } from '@/lib/navigation';
+import { useResponsive } from '@/hooks/useResponsive';
+import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
 
 interface HeaderProps {
   title?: string;
   subtitle?: string;
   showScanner?: boolean;
+  showBack?: boolean;
   onRefresh?: () => void;
+  fallbackBackRoute?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   title,
   subtitle,
   showScanner = true,
+  showBack = false,
   onRefresh,
+  fallbackBackRoute = '/(tabs)',
 }) => {
   const router = useRouter();
+  const pathname = usePathname();
   const { activeCollector } = useAuth();
+  const { isSmallScreen } = useResponsive();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const { colors } = theme;
+
+  const isScanScreen = pathname === '/scan' || pathname?.endsWith('/scan');
+
+  const handleBackPress = () => {
+    safeBack(router, fallbackBackRoute);
+  };
 
   const handleScanPress = () => {
+    if (isScanScreen) return;
     triggerLightImpact();
     router.push('/scan' as any);
   };
 
+  const getFirstName = () => {
+    if (activeCollector?.fullName) {
+      return activeCollector.fullName.split(' ')[0];
+    }
+    return 'Responsable';
+  };
+
   return (
-    <View style={styles.container}>
-      <View style={styles.leftSection}>
-        <Text style={styles.appTitle}>{title || 'SOL'}</Text>
-        <Text style={styles.collectorInfo} numberOfLines={1}>
-          {subtitle ||
-            (activeCollector
-              ? `${activeCollector.fullName.split(' ')[0]} • ${activeCollector.zone || 'Marché'}`
-              : 'Mode Hors-Ligne')}
-        </Text>
-      </View>
-
-      <View style={styles.rightSection}>
-        <SyncBadge onSyncComplete={onRefresh} />
-
-        {showScanner && (
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={handleScanPress}
-            style={styles.scanButton}
-            accessibilityLabel="Scanner Code QR"
+    <View style={styles.headerWrapper}>
+      <View style={styles.container}>
+        {showBack && (
+          <Pressable
+            onPress={handleBackPress}
+            accessibilityRole="button"
+            accessibilityLabel={t('Retour')}
+            style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
           >
-            <Icon name="scan" size={18} color={SOL_COLORS.textPrimary} />
-          </TouchableOpacity>
+            <Icon name="arrow-left" size={22} color={colors.text} />
+          </Pressable>
         )}
 
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => {
-            triggerLightImpact();
-            router.push('/profile' as any);
-          }}
-          style={styles.scanButton}
-          accessibilityLabel="Mon Profil"
-        >
-          <Icon name="user" size={18} color={SOL_COLORS.textPrimary} />
-        </TouchableOpacity>
+        <View style={styles.leftSection}>
+          <Text variant={isSmallScreen ? 'subheading' : 'heading'} numberOfLines={1} accessibilityRole="header">
+            {title || t('SOL')}
+          </Text>
+          <Text variant="caption" tone="muted" numberOfLines={1} ellipsizeMode="tail">
+            {subtitle || `${getFirstName()} • ${activeCollector?.zone || t('Zone principale')}`}
+          </Text>
+        </View>
+
+        <View style={styles.rightSection}>
+          <SyncBadge onSyncComplete={onRefresh} compact={isSmallScreen} />
+
+          {showScanner && !isScanScreen && (
+            <Pressable
+              onPress={handleScanPress}
+              accessibilityRole="button"
+              accessibilityLabel={t('Scanner Code QR')}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
+            >
+              <Icon name="scan" size={22} color={colors.text} />
+            </Pressable>
+          )}
+
+        </View>
       </View>
+
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1.5,
-    borderBottomColor: '#E2E8F0',
-  },
-  leftSection: {
-    flex: 1,
-  },
-  appTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: SOL_COLORS.primary,
-    letterSpacing: 0.5,
-  },
-  collectorInfo: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: SOL_COLORS.textSecondary,
-    marginTop: 1,
-  },
-  rightSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  scanButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 6,
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+  StyleSheet.create({
+    headerWrapper: {
+      backgroundColor: colors.background,
+      zIndex: 90,
+    },
+    container: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      width: '100%',
+      maxWidth: layout.maxContentWidth + layout.gutter * 2,
+      alignSelf: 'center',
+      paddingHorizontal: layout.gutter,
+      paddingVertical: spacing.sm,
+    },
+    leftSection: {
+      flex: 1,
+      minWidth: 0,
+    },
+    rightSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
+    iconButton: {
+      width: layout.touchTarget,
+      height: layout.touchTarget,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    iconButtonPressed: {
+      backgroundColor: colors.surfacePressed,
+    },
+  });

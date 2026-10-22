@@ -1,111 +1,203 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  Modal,
-  ScrollView,
-  FlatList,
-  TextInput,
-  Share,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useState, useCallback, useMemo } from 'react';
+import { View, Pressable, StyleSheet, Alert, FlatList, TextInput } from 'react-native';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 
-import { Header } from '@/components/Header';
-import { Badge } from '@/components/Badge';
-import { Icon } from '@/components/Icon';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { SyncBadge } from '@/components/SyncBadge';
+import {
+  AmountText,
+  Avatar,
+  BottomSheet,
+  Button,
+  EmptyState,
+  Icon,
+  ListItem,
+  ListSkeleton,
+  ProgressBar,
+  Screen,
+  StatusBadge,
+  Text,
+} from '@/components/ui';
 import { getClientById, getAllClients } from '@/db/clientRepository';
 import { createTransaction } from '@/db/transactionRepository';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getMembersWithPaymentStatus } from '@/db/memberRepository';
+import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
+
 import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
-import { BusinessConfig, Client, Transaction } from '@/types';
-import { formatCurrency, formatDate, formatDateShort, getInitials } from '@/lib/formatters';
-import { arePhoneNumbersEqual, extractRaw8Digits, normalizePhoneNumber } from '@/lib/phoneUtils';
+import { BusinessConfig, Client, MemberPaymentStatus, Transaction } from '@/types';
+import { formatCurrency, formatDateShort, formatDayMonth } from '@/lib/formatters';
+import { extractRaw8Digits } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
-import { SOL_COLORS } from '@/constants/Colors';
-import { calculateCoverageDate, calculateContributionAmount } from '@/services/financialService';
+import {
+  calculateCoverageDate,
+  calculateContributionAmount,
+  calculateCycleContributionLimits,
+  calculateCycleTotalHands,
+  calculateHandsCovered,
+} from '@/services/financialService';
 import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfService';
+import { Theme, useTheme } from '@/theme';
+import { t } from '@/i18n';
+import { localDateString } from '@/lib/dates';
 
+/** Members still to collect come first, completed cycles last. */
+const STATUS_ORDER: Record<MemberPaymentStatus, number> = {
+  OVERDUE: 0,
+  UNPAID_TODAY: 1,
+  UPCOMING_PAYOUT: 2,
+  PAID_TODAY: 3,
+  PAID_IN_ADVANCE: 4,
+};
+
+/**
+ * Encaisser: search + list of members (to collect first). Tap a member → bottom sheet
+ * (hands −/+, amount, Encaisser → PIN) → success state with the receipt. 3 taps from the tab.
+ */
 export default function CollectScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const params = useLocalSearchParams<{ clientId?: string }>();
-  const { activeCollector } = useAuth();
+  const { activeCollector, userRole } = useAuth();
   const { triggerSync } = useSync();
+  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [allClients, setAllClients] = useState<Client[]>([]);
+  const [statusById, setStatusById] = useState<Record<string, MemberPaymentStatus>>({});
   const [handsCount, setHandsCount] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const [loaded, setLoaded] = useState(false);
 
-  // Modals
-  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
-  const [isReceiptOpen, setIsReceiptOpen] = useState(false);
   const [lastTx, setLastTx] = useState<Transaction | null>(null);
+  /** Figures of the last collection, frozen before the member is reloaded (receipt + success state). */
+  const [lastReceipt, setLastReceipt] = useState<{ handsCount: number; unitAmount: number; totalAmount: number; start: string; end: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
   const unitAmount = selectedClient?.dailyAmount || business?.contributionAmount || 250;
   const totalAmount = calculateContributionAmount(handsCount, unitAmount);
 
-  useEffect(() => {
-    async function init() {
-      const [biz, list] = await Promise.all([
+  const loadData = useCallback(async () => {
+    try {
+      const [biz, list, members] = await Promise.all([
         getActiveBusinessConfig(),
         getAllClients(),
+        getMembersWithPaymentStatus({ filter: 'ALL', sort: 'PAYOUT_RANK' }).catch(() => []),
       ]);
       setBusiness(biz);
       setAllClients(list);
+      setStatusById(Object.fromEntries(members.map((m) => [m.id, m.paymentStatusToday])));
 
-      if (params.clientId) {
-        const found = await getClientById(params.clientId);
-        if (found) {
-          setSelectedClient(found);
-        }
-      } else if (list.length > 0) {
-        setSelectedClient(list[0]);
+      // Direct SQL SUM for guaranteed accuracy
+      try {
+        const db = await getDatabase();
+        const collectorId = await getActiveCollectorId();
+        const row = await db.getFirstAsync<{ total: number }>(
+          `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
+          [collectorId]
+        );
+        const totalFromSql = Number(row?.total || 0);
+        const totalFromList = calculateCycleTotalHands(list);
+        setDbTotalHands(Math.max(1, totalFromList, totalFromSql));
+      } catch {
+        setDbTotalHands(Math.max(1, calculateCycleTotalHands(list)));
       }
+      return list;
+    } catch (err) {
+      console.warn('Error loading collect data:', err);
+      return [];
+    } finally {
+      setLoaded(true);
     }
-    init();
-  }, [params.clientId]);
+  }, []);
 
-  const handleSelectClient = (client: Client) => {
-    triggerLightImpact();
-    setSelectedClient(client);
-    setHandsCount(1);
-    setIsClientModalOpen(false);
-    setSearchQuery('');
+  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
+
+  const limitsFor = useCallback(
+    (client: Client) => {
+      const unit = client.dailyAmount || business?.contributionAmount || 250;
+      const balance = Number(client.currentBalance || 0);
+      const totalPaid = Number(client.totalPaidAmount || balance);
+      const paidHands = Math.max(Number(client.paidHandsCount || 0), calculateHandsCovered(balance, unit), calculateHandsCovered(totalPaid, unit));
+      const memberHands = Math.max(1, client.handsCount || 1);
+      return {
+        paidHands,
+        memberHands,
+        unit,
+        ...calculateCycleContributionLimits({ currentPaidHands: paidHands, totalCycleHands, memberHandsCount: memberHands, unitAmount: unit }),
+      };
+    },
+    [business?.contributionAmount, totalCycleHands]
+  );
+
+  const handleSelectClient = useCallback(
+    (client: Client) => {
+      triggerLightImpact();
+      const l = limitsFor(client);
+      setSelectedClient(client);
+      setLastTx(null);
+      setHandsCount(l.remainingHands > 0 ? (l.memberHands > 1 ? Math.min(l.remainingHands, l.memberHands) : 1) : 0);
+      setIsSheetOpen(true);
+    },
+    [limitsFor]
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      loadData().then((list) => {
+        if (!active || !params.clientId) return;
+        const found = list.find((c) => c.id === params.clientId);
+        router.setParams({ clientId: undefined });
+        if (found) handleSelectClient(found);
+      });
+      return () => {
+        active = false;
+        // A sheet left open must not float over the other tabs
+        setIsSheetOpen(false);
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loadData, params.clientId])
+  );
+
+  const current = selectedClient ? limitsFor(selectedClient) : null;
+  const memberHandsCount = current?.memberHands ?? 1;
+  const currentPaidHands = current?.paidHands ?? 0;
+  const limits = current ?? {
+    remainingHands: 0,
+    maxAllowedHands: 0,
+    maxPotAmount: 0,
+    isCycleCompleted: false,
   };
 
-  const handleSelectHandsCount = (count: number) => {
-    triggerLightImpact();
-    setHandsCount(Math.max(1, count));
-  };
+  const presetRounds = [
+    { label: memberHandsCount > 1 ? t('1 tour') : t('1 main'), hands: memberHandsCount },
+    { label: memberHandsCount > 1 ? t('2 tours') : t('2 mains'), hands: memberHandsCount * 2 },
+    { label: memberHandsCount > 1 ? t('3 tours') : t('3 mains'), hands: memberHandsCount * 3 },
+    ...(limits.remainingHands > memberHandsCount * 3 ? [{ label: t('Tout le solde'), hands: limits.remainingHands }] : []),
+  ].filter((p) => p.hands <= limits.remainingHands);
 
   const handleIncrement = () => {
     triggerLightImpact();
-    if (handsCount < 50) {
-      setHandsCount(handsCount + 1);
-    }
+    if (handsCount < limits.remainingHands) setHandsCount(handsCount + 1);
   };
 
   const handleDecrement = () => {
     triggerLightImpact();
-    if (handsCount > 1) {
-      setHandsCount(handsCount - 1);
-    }
+    if (handsCount > 1) setHandsCount(handsCount - 1);
   };
 
   // Coverage date calculation
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateString();
   const coveragePreview = calculateCoverageDate({
     todayStr,
-    handsCovered: handsCount,
+    handsCovered: handsCount > 0 ? handsCount : 1,
     frequency: business?.frequency || 'DAILY',
     currentPaidUntilDate: selectedClient?.paidUntilDate,
   });
@@ -113,17 +205,32 @@ export default function CollectScreen() {
   const previewDateStr = coveragePreview.paidUntilDate;
 
   const handleOpenPinValidation = () => {
-    if (!selectedClient) {
+    if (isReadOnly) {
       triggerErrorFeedback();
-      Alert.alert('Aucun adhérent', 'Veuillez sélectionner un enfant adhérent.');
+      Alert.alert(t('Accès en lecture seule'), t('L\'encaissement est réservé aux gestionnaires.'));
+      return;
+    }
+    if (!selectedClient) return;
+    if (limits.isCycleCompleted) {
+      triggerErrorFeedback();
+      Alert.alert(
+        t('Plafond du cycle atteint'),
+        t('{0} a déjà complété toutes ses cotisations pour ce cycle ({1}/{2} mains, {3}).', selectedClient.fullName, currentPaidHands, limits.maxAllowedHands, formatCurrency(limits.maxPotAmount))
+      );
       return;
     }
     if (handsCount <= 0 || totalAmount <= 0) {
       triggerErrorFeedback();
-      Alert.alert('Nombre de mains invalide', 'Veuillez sélectionner au moins 1 main.');
+      Alert.alert(t('Nombre de mains invalide'), t('Sélectionnez au moins 1 main.'));
+      return;
+    }
+    if (handsCount > limits.remainingHands) {
+      triggerErrorFeedback();
+      Alert.alert(t('Dépassement du plafond'), t('Cet adhérent ne peut plus cotiser que {0} main(s) pour ce cycle.', limits.remainingHands));
       return;
     }
     triggerMediumImpact();
+    setIsSheetOpen(false);
     setIsPinModalOpen(true);
   };
 
@@ -146,23 +253,25 @@ export default function CollectScreen() {
       });
 
       triggerSuccessFeedback();
+      setLastReceipt({ handsCount, unitAmount, totalAmount, start: previewStartDateStr, end: previewDateStr });
       setLastTx(tx);
-      setIsReceiptOpen(true);
+      setIsSheetOpen(true);
 
       const updated = await getClientById(selectedClient.id);
       if (updated) setSelectedClient(updated);
+      loadData();
 
       triggerSync().catch(() => {});
     } catch (err: any) {
       triggerErrorFeedback();
-      Alert.alert('Erreur', err?.message || "Échec de l'enregistrement de l'encaissement.");
+      Alert.alert(t('Erreur'), err?.message || t('Échec de l\'enregistrement de l\'encaissement.'));
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleShareReceipt = async () => {
-    if (!lastTx || !selectedClient) return;
+    if (!lastTx || !selectedClient || !lastReceipt) return;
     triggerMediumImpact();
     try {
       const pdfUri = await generateContributionReceiptPdf({
@@ -175,976 +284,356 @@ export default function CollectScreen() {
         clientPhone: selectedClient.phoneNumber,
         payoutRank: selectedClient.payoutRank || undefined,
         qrCodeToken: selectedClient.qrCodeToken,
-        unitAmount,
-        handsCount,
-        totalAmount,
-        coverageStartDate: previewStartDateStr,
-        coverageEndDate: previewDateStr,
+        unitAmount: lastReceipt.unitAmount,
+        handsCount: lastReceipt.handsCount,
+        totalAmount: lastReceipt.totalAmount,
+        coverageStartDate: lastReceipt.start,
+        coverageEndDate: lastReceipt.end,
         createdAt: lastTx.createdAtLocal,
       });
 
       await sharePdfFile(pdfUri, `Recu_SOL_${selectedClient.fullName.replace(/\s+/g, '_')}.pdf`);
-    } catch (err: any) {
-      Alert.alert('Erreur PDF', 'Impossible de générer ou partager le document PDF.');
+    } catch {
+      Alert.alert(t('Erreur PDF'), t('Impossible de générer ou partager le document PDF.'));
     }
   };
 
-  // Filter clients for modal search
-  const filteredClients = allClients.filter((c) => {
-    if (!searchQuery.trim()) return true;
+  const closeSheet = () => {
+    setIsSheetOpen(false);
+    setLastTx(null);
+  };
+
+  const rows = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     const rawQ = extractRaw8Digits(q);
-    return (
-      c.fullName.toLowerCase().includes(q) ||
-      c.phoneNumber.includes(q) ||
-      (rawQ.length >= 4 && extractRaw8Digits(c.phoneNumber).includes(rawQ)) ||
-      (c.payoutRank && c.payoutRank.toString() === q)
-    );
-  });
+    return allClients
+      .filter(
+        (c) =>
+          !q ||
+          c.fullName.toLowerCase().includes(q) ||
+          c.phoneNumber.includes(q) ||
+          (rawQ.length >= 4 && extractRaw8Digits(c.phoneNumber).includes(rawQ)) ||
+          (c.payoutRank && c.payoutRank.toString() === q)
+      )
+      .map((client) => ({ client, l: limitsFor(client), status: statusById[client.id] }))
+      .sort((a, b) => {
+        if (a.l.isCycleCompleted !== b.l.isCycleCompleted) return a.l.isCycleCompleted ? 1 : -1;
+        return (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9);
+      });
+  }, [allClients, searchQuery, limitsFor, statusById]);
 
-  const presetHands = [1, 2, 3, 4, 5, 10];
+  const toCollect = rows.filter((r) => !r.l.isCycleCompleted && (r.status === 'OVERDUE' || r.status === 'UNPAID_TODAY')).length;
+  const handsLabel = t('{0} main{1}', handsCount, handsCount > 1 ? 's' : '');
+
+  const renderRow = ({ item, index }: { item: (typeof rows)[number]; index: number }) => {
+    const { client, l, status } = item;
+    return (
+      <View style={[styles.rowBg, index === 0 && styles.rowFirst, index === rows.length - 1 && styles.rowLast]}>
+      <ListItem
+        divider={index < rows.length - 1}
+        onPress={() => handleSelectClient(client)}
+        accessibilityLabel={t('Encaisser {0}', client.fullName)}
+        leading={<Avatar rank={client.payoutRank || 1} />}
+        title={client.fullName}
+        subtitle={t('{0}/{1} mains{2}', l.paidHands, l.maxAllowedHands, client.paidUntilDate ? ` · au ${formatDayMonth(client.paidUntilDate)}` : '')}
+        trailing={
+          l.isCycleCompleted ? (
+            <StatusBadge status="HAND_RECEIVED" label={t('Complet')} appearance="inline" />
+          ) : status ? (
+            <StatusBadge status={status} appearance="inline" />
+          ) : null
+        }
+      />
+      </View>
+    );
+  };
+
+  const success = lastTx && selectedClient;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Header
-        title="Encaissement"
-        subtitle={business ? `${business.name} • ${formatCurrency(unitAmount)}/main` : 'Collecte SOL'}
-      />
-
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Top Info Banner */}
-        {business && (
-          <View style={styles.businessBanner}>
-            <View style={styles.businessBannerLeft}>
-              <View style={styles.businessIconCircle}>
-                <Icon name="sol" size={16} color={SOL_COLORS.primary} />
-              </View>
-              <View style={{ marginLeft: 8 }}>
-                <Text style={styles.businessBannerName}>{business.name}</Text>
-                <Text style={styles.businessBannerRate}>
-                  Valeur par main : <Text style={styles.businessBannerRateBold}>{formatCurrency(unitAmount)}</Text>
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.totalSlotsBadge}>
-              <Text style={styles.totalSlotsBadgeText}>{allClients.length} inscrits</Text>
-            </View>
+    <Screen scroll={false} padded={false} edges={['top', 'left', 'right']}>
+      <View style={styles.top}>
+        <View style={styles.titleRow}>
+          <View style={styles.flexShrink}>
+            <Text variant="title" accessibilityRole="header">{t('Encaisser')}</Text>
+            <Text variant="caption" tone="muted" numberOfLines={1}>
+              {toCollect > 0 ? t('{0} à encaisser aujourd\'hui', toCollect) : business ? t('{0} par main', formatCurrency(business.contributionAmount)) : ' '}
+            </Text>
           </View>
-        )}
+          <SyncBadge compact />
+        </View>
 
-        {/* Selected Adherent Card */}
-        <View style={styles.clientHeroCard}>
-          <View style={styles.clientHeroHeader}>
-            <Text style={styles.sectionLabel}>ADHÉRENT EN COURS D'ENCAISSEMENT</Text>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setIsClientModalOpen(true)}
-              style={styles.changeClientBtn}
-            >
-              <Icon name="search" size={13} color={SOL_COLORS.primary} style={{ marginRight: 4 }} />
-              <Text style={styles.changeClientBtnText}>Changer</Text>
-            </TouchableOpacity>
-          </View>
-
-          {selectedClient ? (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setIsClientModalOpen(true)}
-              style={styles.clientProfileBox}
-            >
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>{getInitials(selectedClient.fullName)}</Text>
-              </View>
-
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.clientName}>{selectedClient.fullName}</Text>
-                <Text style={styles.clientPhone}>{selectedClient.phoneNumber}</Text>
-
-                <View style={styles.clientBadgesRow}>
-                  <View style={styles.rankPill}>
-                    <Icon name="crown" size={11} color="#1D4ED8" style={{ marginRight: 3 }} />
-                    <Text style={styles.rankPillText}>Main #{selectedClient.payoutRank || 1}</Text>
-                  </View>
-
-                  <View style={styles.balancePill}>
-                    <Text style={styles.balancePillText}>
-                      Solde : {formatCurrency(selectedClient.currentBalance)}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </TouchableOpacity>
+        <View style={styles.searchBar}>
+          <Icon name="search" size={18} color={theme.colors.textMuted} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder={t('Nom, téléphone ou rang')}
+            placeholderTextColor={theme.colors.textPlaceholder}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCorrect={false}
+            accessibilityLabel={t('Rechercher un adhérent')}
+          />
+          {searchQuery.length > 0 ? (
+            <Pressable onPress={() => setSearchQuery('')} accessibilityRole="button" accessibilityLabel={t('Effacer la recherche')} hitSlop={12}>
+              <Icon name="close" size={18} color={theme.colors.textMuted} />
+            </Pressable>
           ) : (
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setIsClientModalOpen(true)}
-              style={styles.emptyClientSelectBox}
+            <Pressable
+              onPress={() => router.push('/scan' as any)}
+              accessibilityRole="button"
+              accessibilityLabel={t('Scanner la carte QR d\'un adhérent')}
+              hitSlop={8}
+              style={styles.scanBtn}
             >
-              <Icon name="user" size={24} color="#64748B" />
-              <Text style={styles.emptyClientSelectText}>Sélectionner un enfant adhérent</Text>
-            </TouchableOpacity>
+              <Icon name="scan" size={20} color={theme.colors.primary} />
+            </Pressable>
           )}
         </View>
+      </View>
 
-        {/* Quick Hands Multiplier Selector (Konbyen Men) */}
-        <View style={styles.handsSectionCard}>
-          <View style={styles.handsSectionHeader}>
-            <Text style={styles.sectionLabel}>NOMBRE DE MAIN(S) À PAYER</Text>
-            <Text style={styles.handsCountLiveBadge}>
-              {handsCount} main{handsCount > 1 ? 's' : ''} sélectionnée{handsCount > 1 ? 's' : ''}
-            </Text>
-          </View>
-
-          {/* Stepper Control */}
-          <View style={styles.stepperRow}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleDecrement}
-              style={[styles.stepperBtn, handsCount <= 1 && styles.stepperBtnDisabled]}
-              disabled={handsCount <= 1}
-            >
-              <Text style={styles.stepperBtnSymbol}>−</Text>
-            </TouchableOpacity>
-
-            <View style={styles.stepperDisplay}>
-              <Text style={styles.stepperValueText}>{handsCount}</Text>
-              <Text style={styles.stepperSubText}>main{handsCount > 1 ? 's' : ''}</Text>
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleIncrement}
-              style={styles.stepperBtn}
-            >
-              <Text style={styles.stepperBtnSymbol}>+</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Preset Buttons Grid */}
-          <View style={styles.presetGrid}>
-            {presetHands.map((num) => {
-              const isSelected = handsCount === num;
-              const calcAmount = num * unitAmount;
-
-              return (
-                <TouchableOpacity
-                  key={num}
-                  activeOpacity={0.7}
-                  onPress={() => handleSelectHandsCount(num)}
-                  style={[
-                    styles.presetCard,
-                    isSelected && styles.presetCardSelected,
-                  ]}
-                >
-                  <Text style={[styles.presetCardHands, isSelected && styles.presetCardHandsSelected]}>
-                    {num} Main{num > 1 ? 's' : ''}
-                  </Text>
-                  <Text style={[styles.presetCardAmount, isSelected && styles.presetCardAmountSelected]}>
-                    {formatCurrency(calcAmount)}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+      {!loaded ? (
+        <View style={styles.listPad}>
+          <ListSkeleton hero={false} rows={6} />
         </View>
+      ) : (
+        <FlatList
+          data={rows}
+          keyExtractor={(item) => item.client.id}
+          renderItem={renderRow}
+          initialNumToRender={12}
+          maxToRenderPerBatch={10}
+          windowSize={7}
+          removeClippedSubviews
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.listContent}
+          style={styles.list}
+          ListEmptyComponent={
+            allClients.length === 0 ? (
+              <EmptyState
+                icon="users"
+                title={t('Aucun adhérent')}
+                message={t('Inscrivez les membres du sol pour commencer à encaisser.')}
+                action={{ label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }}
+              />
+            ) : (
+              <EmptyState icon="search" title={t('Aucun résultat')} message={t('Vérifiez le nom, le numéro ou le rang saisi.')} />
+            )
+          }
+        />
+      )}
 
-        {/* Calculated Total Hero Display Card */}
-        <View style={styles.amountDisplayCard}>
-          <Text style={styles.amountDisplayLabel}>MONTANT TOTAL CALCULÉ</Text>
-          <Text style={styles.totalAmountValue}>{formatCurrency(totalAmount)}</Text>
-
-          <View style={styles.formulaRow}>
-            <Text style={styles.formulaText}>
-              <Text style={styles.formulaBold}>{handsCount} main{handsCount > 1 ? 's' : ''}</Text> × {formatCurrency(unitAmount)} = {formatCurrency(totalAmount)}
-            </Text>
-          </View>
-
-          {/* Coverage Preview Pill */}
-          <View style={styles.coverageBadge}>
-            <Icon name="calendar" size={14} color="#065F46" style={{ marginRight: 6 }} />
-            <Text style={styles.coverageBadgeText}>
-              Avance : Couvre jusqu'au {formatDateShort(previewDateStr)}
-            </Text>
-          </View>
-        </View>
-
-        {/* Main Action Button */}
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={handleOpenPinValidation}
-          disabled={isProcessing}
-          style={styles.submitBtn}
-        >
-          <Icon name="shield" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-          <Text style={styles.submitBtnText}>
-            {isProcessing ? 'Traitement en cours...' : `Valider l'Encaissement (${formatCurrency(totalAmount)})`}
-          </Text>
-        </TouchableOpacity>
-      </ScrollView>
-
-      {/* Select Adherent Modal */}
-      <Modal
-        visible={isClientModalOpen}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setIsClientModalOpen(false)}
-      >
-        <SafeAreaView style={styles.modalSafeContainer}>
-          {/* Modal Header */}
-          <View style={styles.modalClientHeader}>
-            <View>
-              <Text style={styles.modalClientTitle}>Choisir un Adhérent</Text>
-              <Text style={styles.modalClientSub}>{allClients.length} enfants enregistrés dans ce carnet</Text>
+      {/* Collect sheet */}
+      <BottomSheet
+        visible={isSheetOpen && !!selectedClient}
+        onClose={closeSheet}
+        title={success ? undefined : selectedClient?.fullName}
+        subtitle={
+          success || !selectedClient
+            ? undefined
+            : t('{0} · cotisé {1}/{2}', memberHandsCount > 1 ? `${memberHandsCount} mains · rangs ${selectedClient.payoutRanks || selectedClient.payoutRank}` : `Rang ${selectedClient.payoutRank || 1}`, currentPaidHands, limits.maxAllowedHands)
+        }
+        footer={
+          success ? (
+            <View style={styles.footerRow}>
+              <Button label={t('Partager le reçu')} icon="share" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
+              <Button label={t('Terminé')} onPress={closeSheet} style={styles.flexGrow} />
             </View>
-            <TouchableOpacity
-              onPress={() => setIsClientModalOpen(false)}
-              style={styles.modalCloseBtn}
-            >
-              <Icon name="close" size={18} color="#64748B" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Search Bar */}
-          <View style={styles.modalSearchBar}>
-            <Icon name="search" size={16} color="#64748B" style={{ marginRight: 8 }} />
-            <TextInput
-              style={styles.modalSearchInput}
-              placeholder="Rechercher par nom, téléphone (+509...), # rang..."
-              placeholderTextColor="#94A3B8"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              autoCorrect={false}
+          ) : limits.isCycleCompleted ? (
+            <Button size="lg" fullWidth variant="secondary" label={t('Fermer')} onPress={closeSheet} />
+          ) : (
+            <Button
+              size="lg"
+              fullWidth
+              icon="lock"
+              onPress={handleOpenPinValidation}
+              loading={isProcessing}
+              disabled={limits.isCycleCompleted || handsCount <= 0}
+              label={limits.isCycleCompleted ? t('Cycle complété') : t('Encaisser {0}', formatCurrency(totalAmount))}
             />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
-                <Icon name="close" size={16} color="#64748B" />
-              </TouchableOpacity>
-            )}
+          )
+        }
+      >
+        {success ? (
+          <View style={styles.success} accessibilityLiveRegion="polite">
+            <View style={styles.successIcon}>
+              <Icon name="check" size={28} color={theme.colors.success} strokeWidth={3} />
+            </View>
+            <Text variant="heading" align="center" accessibilityRole="header">{t('Encaissement enregistré')}</Text>
+            <AmountText amount={lastTx.amount} size="hero" align="center" />
+            <Text variant="body" tone="muted" align="center">
+              {selectedClient.fullName} · {lastReceipt?.handsCount}{' '}{t('main')}{(lastReceipt?.handsCount ?? 1) > 1 ? 's' : ''}{' '}{t('· couvert jusqu\'au')}{' '}
+              {formatDateShort(lastReceipt?.end ?? previewDateStr)}
+            </Text>
+            <Text variant="caption" tone="muted" align="center" selectable>{t('Réf. #{0}', lastTx.id.slice(0, 8))}
+            </Text>
           </View>
+        ) : limits.isCycleCompleted ? (
+          <View style={styles.noticeRow}>
+            <Icon name="check" size={20} color={theme.colors.success} />
+            <Text variant="body" style={styles.flexShrink}>{t('Toutes les cotisations du cycle sont versées ({0} mains, {1}). Aucun versement supplémentaire n\'est possible.', limits.maxAllowedHands, formatCurrency(limits.maxPotAmount))}</Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.amountBlock}>
+              <AmountText amount={totalAmount} size="hero" align="center" />
+              <Text variant="caption" tone="muted" align="center">
+                {handsLabel} × {formatCurrency(unitAmount)}{' '}{t('· couvert jusqu\'au')}{' '}{formatDateShort(previewDateStr)}
+              </Text>
+            </View>
 
-          {/* Adherent List */}
-          <FlatList
-            data={filteredClients}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
-            renderItem={({ item }) => {
-              const isSelected = selectedClient?.id === item.id;
-              return (
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => handleSelectClient(item)}
-                  style={[
-                    styles.clientOptionCard,
-                    isSelected && styles.clientOptionCardActive,
-                  ]}
-                >
-                  <View style={styles.clientOptionLeft}>
-                    <View style={styles.rankCircle}>
-                      <Text style={styles.rankText}>#{item.payoutRank || 1}</Text>
-                    </View>
-
-                    <View style={{ marginLeft: 12, flex: 1 }}>
-                      <Text style={styles.clientOptionName}>{item.fullName}</Text>
-                      <Text style={styles.clientOptionPhone}>{item.phoneNumber}</Text>
-
-                      <View style={styles.clientOptionSubRow}>
-                        <Text style={styles.clientOptionBalance}>
-                          Solde : {formatCurrency(item.currentBalance)}
-                        </Text>
-                        {item.paidUntilDate && (
-                          <Text style={styles.clientOptionCovered}>
-                            • Couvert : {formatDateShort(item.paidUntilDate)}
-                          </Text>
-                        )}
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.clientOptionRight}>
-                    {isSelected ? (
-                      <View style={styles.selectedCheckCircle}>
-                        <Icon name="check" size={12} color="#FFFFFF" />
-                      </View>
-                    ) : (
-                      <Icon name="arrow-right" size={14} color="#94A3B8" />
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            }}
-            ListEmptyComponent={
-              <View style={styles.emptySearchContainer}>
-                <Icon name="user" size={32} color="#94A3B8" />
-                <Text style={styles.emptySearchText}>Aucun adhérent correspondant à votre recherche.</Text>
+            <View style={styles.stepperRow}>
+              <Pressable
+                onPress={handleDecrement}
+                disabled={handsCount <= 1}
+                accessibilityRole="button"
+                accessibilityLabel={t('Retirer une main')}
+                style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed, handsCount <= 1 && styles.stepperBtnDisabled]}
+              >
+                <Icon name="minus" size={22} color={handsCount <= 1 ? theme.colors.textPlaceholder : theme.colors.text} />
+              </Pressable>
+              <View style={styles.stepperDisplay} accessible accessibilityLabel={t('{0} sur {1} restantes', handsLabel, limits.remainingHands)}>
+                <Text variant="amountLarge" align="center">
+                  {handsCount}
+                </Text>
+                <Text variant="caption" tone="muted" align="center">{t('sur {0} restante{1}', limits.remainingHands, limits.remainingHands > 1 ? 's' : '')}
+                </Text>
               </View>
-            }
-          />
-        </SafeAreaView>
-      </Modal>
+              <Pressable
+                onPress={handleIncrement}
+                disabled={handsCount >= limits.remainingHands}
+                accessibilityRole="button"
+                accessibilityLabel={t('Ajouter une main')}
+                style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed, handsCount >= limits.remainingHands && styles.stepperBtnDisabled]}
+              >
+                <Icon name="plus" size={22} color={handsCount >= limits.remainingHands ? theme.colors.textPlaceholder : theme.colors.text} />
+              </Pressable>
+            </View>
 
-      {/* Universal 4-Digit PIN Security Modal */}
+            {presetRounds.length > 1 ? (
+              <View style={styles.presetRow}>
+                {presetRounds.map((preset) => {
+                  const isSelected = handsCount === preset.hands;
+                  return (
+                    <Pressable
+                      key={preset.label}
+                      onPress={() => {
+                        triggerLightImpact();
+                        setHandsCount(preset.hands);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      accessibilityLabel={`${preset.label}, ${formatCurrency(preset.hands * unitAmount)}`}
+                      style={({ pressed }) => [styles.preset, pressed && styles.pressed, isSelected && styles.presetSelected]}
+                    >
+                      <Text variant="label" style={isSelected ? styles.onPrimarySoft : undefined}>
+                        {preset.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            <ProgressBar
+              value={limits.maxAllowedHands > 0 ? (currentPaidHands + handsCount) / limits.maxAllowedHands : 0}
+              accessibilityLabel={t('Progression des cotisations du cycle après cet encaissement')}
+            />
+          </>
+        )}
+      </BottomSheet>
+
       <PinVerificationModal
         visible={isPinModalOpen}
-        title="Validation de l'Encaissement"
-        subtitle={`Saisissez votre code PIN gestionnaire pour confirmer l'encaissement de ${formatCurrency(totalAmount)} (${handsCount} main(s)) pour ${selectedClient?.fullName}.`}
+        title={t('Confirmer l\'encaissement')}
+        subtitle={t('{0} · {1} pour {2}', formatCurrency(totalAmount), handsLabel, selectedClient?.fullName ?? '')}
         onSuccess={handlePinSuccessSubmit}
-        onCancel={() => setIsPinModalOpen(false)}
+        onCancel={() => {
+          setIsPinModalOpen(false);
+          setIsSheetOpen(true);
+        }}
       />
-
-      {/* Digital Receipt Modal */}
-      <Modal
-        visible={isReceiptOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsReceiptOpen(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.receiptCard}>
-            <View style={styles.receiptHeader}>
-              <View style={styles.receiptIconCircle}>
-                <Icon name="check" size={28} color="#FFFFFF" />
-              </View>
-              <Text style={styles.receiptTitle}>ENCAISSEMENT RÉUSSI !</Text>
-              <Text style={styles.receiptSub}>Récépissé Numérique Certifié</Text>
-            </View>
-
-            <View style={styles.receiptDivider} />
-
-            <View style={styles.receiptBody}>
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Adhérent :</Text>
-                <Text style={styles.receiptValueBold}>{selectedClient?.fullName}</Text>
-              </View>
-
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Téléphone :</Text>
-                <Text style={styles.receiptValue}>{selectedClient?.phoneNumber}</Text>
-              </View>
-
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Mains payées :</Text>
-                <Text style={styles.receiptValueBold}>{handsCount} main(s)</Text>
-              </View>
-
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Montant Total :</Text>
-                <Text style={styles.receiptValueAmount}>{formatCurrency(totalAmount)}</Text>
-              </View>
-
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Période couverte :</Text>
-                <Text style={styles.receiptValueGreen}>Jusqu'au {formatDateShort(previewDateStr)}</Text>
-              </View>
-
-              {lastTx && (
-                <View style={styles.receiptRow}>
-                  <Text style={styles.receiptLabel}>Réf Opération :</Text>
-                  <Text style={styles.receiptValueSmall}>#{lastTx.id.slice(0, 8)}</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.receiptActionRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handleShareReceipt}
-                style={styles.receiptShareBtn}
-              >
-                <Icon name="print" size={16} color={SOL_COLORS.primary} style={{ marginRight: 6 }} />
-                <Text style={styles.receiptShareBtnText}>Partager / Imprimer</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => {
-                  setIsReceiptOpen(false);
-                  router.push('/(tabs)' as any);
-                }}
-                style={styles.receiptDoneBtn}
-              >
-                <Text style={styles.receiptDoneBtnText}>Fermer</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  businessBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-  },
-  businessBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  businessIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#EFF6FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  businessBannerName: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  businessBannerRate: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  businessBannerRateBold: {
-    fontWeight: '800',
-    color: SOL_COLORS.primary,
-  },
-  totalSlotsBadge: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  totalSlotsBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  clientHeroCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    marginBottom: 12,
-  },
-  clientHeroHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  sectionLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  changeClientBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  changeClientBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: SOL_COLORS.primary,
-  },
-  clientProfileBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatarCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  clientName: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  clientPhone: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#64748B',
-    marginTop: 1,
-  },
-  clientBadgesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 6,
-  },
-  rankPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  rankPillText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#1D4ED8',
-  },
-  balancePill: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  balancePillText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  emptyClientSelectBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  emptyClientSelectText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-    marginLeft: 8,
-  },
-  handsSectionCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-    marginBottom: 12,
-  },
-  handsSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  handsCountLiveBadge: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
-  stepperBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  stepperBtnDisabled: {
-    opacity: 0.4,
-  },
-  stepperBtnSymbol: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-    lineHeight: 28,
-  },
-  stepperDisplay: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  stepperValueText: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  stepperSubText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: -2,
-  },
-  presetGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  presetCard: {
-    flexBasis: '31%',
-    flexGrow: 1,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  presetCardSelected: {
-    backgroundColor: SOL_COLORS.primary,
-    borderColor: SOL_COLORS.primary,
-  },
-  presetCardHands: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: SOL_COLORS.textPrimary,
-  },
-  presetCardHandsSelected: {
-    color: '#FFFFFF',
-  },
-  presetCardAmount: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748B',
-    marginTop: 2,
-  },
-  presetCardAmountSelected: {
-    color: '#E0E7FF',
-  },
-  amountDisplayCard: {
-    backgroundColor: '#0F172A',
-    borderRadius: 18,
-    padding: 18,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  amountDisplayLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#94A3B8',
-    letterSpacing: 0.5,
-  },
-  totalAmountValue: {
-    fontSize: 32,
-    fontWeight: '900',
-    color: '#34D399',
-    marginTop: 4,
-  },
-  formulaRow: {
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  formulaText: {
-    fontSize: 12,
-    color: '#CBD5E1',
-  },
-  formulaBold: {
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  coverageBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(5, 150, 105, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#059669',
-  },
-  coverageBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#34D399',
-  },
-  submitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#059669',
-    height: 52,
-    borderRadius: 14,
-    shadowColor: '#059669',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  submitBtnText: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  modalSafeContainer: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  modalClientHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-  },
-  modalClientTitle: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  modalClientSub: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  modalCloseBtn: {
-    padding: 6,
-  },
-  modalSearchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    margin: 16,
-    marginBottom: 8,
-    paddingHorizontal: 12,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#CBD5E1',
-  },
-  modalSearchInput: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-    color: SOL_COLORS.textPrimary,
-  },
-  clientOptionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-  },
-  clientOptionCardActive: {
-    borderColor: SOL_COLORS.primary,
-    backgroundColor: '#EFF6FF',
-  },
-  clientOptionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  rankCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  rankText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: SOL_COLORS.primary,
-  },
-  clientOptionName: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  clientOptionPhone: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  clientOptionSubRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 3,
-  },
-  clientOptionBalance: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  clientOptionCovered: {
-    fontSize: 11,
-    color: '#64748B',
-    marginLeft: 4,
-  },
-  clientOptionRight: {
-    marginLeft: 10,
-  },
-  selectedCheckCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: SOL_COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptySearchContainer: {
-    alignItems: 'center',
-    padding: 40,
-  },
-  emptySearchText: {
-    fontSize: 13,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  receiptCard: {
-    width: '100%',
-    maxWidth: 380,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 20,
-  },
-  receiptHeader: {
-    alignItems: 'center',
-  },
-  receiptIconCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#059669',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  receiptTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#059669',
-  },
-  receiptSub: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  receiptDivider: {
-    height: 1,
-    backgroundColor: '#E2E8F0',
-    marginVertical: 14,
-  },
-  receiptBody: {
-    gap: 8,
-    marginBottom: 16,
-  },
-  receiptRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  receiptLabel: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  receiptValue: {
-    fontSize: 13,
-    color: SOL_COLORS.textPrimary,
-    fontWeight: '700',
-  },
-  receiptValueBold: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: SOL_COLORS.textPrimary,
-  },
-  receiptValueAmount: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#059669',
-  },
-  receiptValueGreen: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#059669',
-  },
-  receiptValueSmall: {
-    fontSize: 11,
-    color: '#94A3B8',
-    fontWeight: '700',
-  },
-  receiptActionRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  receiptShareBtn: {
-    flex: 1.4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-  },
-  receiptShareBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: SOL_COLORS.primary,
-  },
-  receiptDoneBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: SOL_COLORS.primary,
-  },
-  receiptDoneBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-});
+const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
+  StyleSheet.create({
+    flexShrink: { flex: 1, minWidth: 0 },
+    flexGrow: { flexGrow: 1, flexBasis: 0 },
+    onPrimarySoft: { color: colors.onPrimarySoft },
+    pressed: { backgroundColor: colors.surfacePressed },
+
+    top: {
+      width: '100%',
+      maxWidth: layout.maxContentWidth,
+      alignSelf: 'center',
+      paddingHorizontal: layout.gutter,
+      paddingTop: spacing.lg,
+      gap: spacing.md,
+    },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    searchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingLeft: spacing.md,
+      paddingRight: spacing.xs,
+      minHeight: layout.touchTarget,
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceAlt,
+    },
+    searchInput: { flex: 1, ...typography.body, color: colors.text, paddingVertical: spacing.sm },
+    scanBtn: { width: layout.touchTarget - spacing.sm, height: layout.touchTarget - spacing.sm, alignItems: 'center', justifyContent: 'center' },
+
+    list: { flex: 1 },
+    listPad: { paddingHorizontal: layout.gutter },
+    listContent: {
+      width: '100%',
+      maxWidth: layout.maxContentWidth,
+      alignSelf: 'center',
+      paddingHorizontal: layout.gutter,
+      paddingTop: spacing.lg,
+      paddingBottom: spacing.xxl,
+    },
+
+    rowBg: { backgroundColor: colors.surface, overflow: 'hidden' },
+    rowFirst: { borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md },
+    rowLast: { borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md },
+
+    amountBlock: { gap: spacing.xs, alignItems: 'center' },
+    stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xl },
+    stepperBtn: {
+      width: layout.actionHeight,
+      height: layout.actionHeight,
+      borderRadius: radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceAlt,
+    },
+    stepperBtnDisabled: { opacity: 0.5 },
+    stepperDisplay: { minWidth: layout.actionHeight * 2, alignItems: 'center' },
+
+    presetRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: spacing.sm },
+    preset: {
+      minHeight: layout.touchTarget - spacing.sm,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceAlt,
+    },
+    presetSelected: { backgroundColor: colors.primarySoft },
+
+    noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+    success: { alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
+    successIcon: {
+      width: spacing.xxxl + spacing.sm,
+      height: spacing.xxxl + spacing.sm,
+      borderRadius: radius.pill,
+      backgroundColor: colors.successSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.xs,
+    },
+    footerRow: { flexDirection: 'row', gap: spacing.sm },
+  });

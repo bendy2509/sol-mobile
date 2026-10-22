@@ -1,4 +1,5 @@
-import { Frequency, PaymentFrequency } from '@/types';
+import { Frequency, PaymentFrequency } from '../types';
+import { localDateString } from './dates';
 
 /**
  * Returns the exact interval duration in days for any SOL / Sabotay frequency.
@@ -52,11 +53,11 @@ export function calculateCycleEndDate(
   frequency: PaymentFrequency | Frequency | string
 ): string {
   const slots = Math.max(1, Number(totalSlots) || 1);
-  const start = new Date(startDateStr || new Date().toISOString().split('T')[0]);
+  const start = new Date(startDateStr || localDateString());
 
   // Ensure start is valid
   if (isNaN(start.getTime())) {
-    return new Date().toISOString().split('T')[0];
+    return localDateString();
   }
 
   const result = new Date(start);
@@ -163,7 +164,10 @@ export function calculateCycleEndDate(
 export function calculateDaysRemaining(endDateStr: string): number {
   if (!endDateStr) return 0;
   try {
-    const end = new Date(endDateStr);
+    // A 'YYYY-MM-DD' end date is a local calendar day: new Date() would read it as UTC midnight,
+    // i.e. the evening before in Haiti, and count one day too few
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(endDateStr);
+    const end = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(endDateStr);
     end.setHours(23, 59, 59, 999);
     const now = new Date();
 
