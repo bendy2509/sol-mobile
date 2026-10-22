@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { Animated, Modal, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useKeyboardOffset } from '@/hooks/useKeyboardOffset';
 import { useTheme } from '@/theme';
 import { Icon } from './Icon';
 import { Text } from './Text';
@@ -21,13 +22,14 @@ export interface BottomSheetProps {
  * Bottom sheet for quick actions (encaisser, remettre, détail, menu ⋯).
  * Plain RN Modal + one translate animation on the native driver: no blur, no gesture
  * library, cheap on low-end Android. Closes on backdrop tap, Android back and the close button.
- * Centered with a max width on tablets.
+ * Centered with a max width on tablets. Rises above the keyboard on both platforms.
  */
 export function BottomSheet({ visible, onClose, title, subtitle, children, footer }: BottomSheetProps) {
   const { colors, spacing, radius, layout, shadows } = useTheme();
   const { height, width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const translate = useRef(new Animated.Value(height)).current;
+  const keyboardOffset = useKeyboardOffset();
 
   useEffect(() => {
     if (visible) {
@@ -40,8 +42,7 @@ export function BottomSheet({ visible, onClose, title, subtitle, children, foote
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay }}>
+      <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay, paddingBottom: keyboardOffset }}>
           <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('Fermer')} />
           <Animated.View
             accessibilityViewIsModal
@@ -50,12 +51,12 @@ export function BottomSheet({ visible, onClose, title, subtitle, children, foote
                 width: '100%',
                 maxWidth: isTablet ? layout.maxContentWidth : undefined,
                 alignSelf: 'center',
-                maxHeight: height * 0.88,
+                maxHeight: (height - keyboardOffset) * 0.88,
                 backgroundColor: colors.surface,
                 borderTopLeftRadius: radius.xl,
                 borderTopRightRadius: radius.xl,
                 borderCurve: 'continuous',
-                paddingBottom: Math.max(insets.bottom, spacing.lg),
+                paddingBottom: keyboardOffset > 0 ? spacing.md : Math.max(insets.bottom, spacing.lg),
                 transform: [{ translateY: translate }],
               },
               shadows.sheet,
@@ -109,8 +110,7 @@ export function BottomSheet({ visible, onClose, title, subtitle, children, foote
 
             {footer ? <View style={{ paddingHorizontal: layout.gutter, gap: spacing.sm }}>{footer}</View> : null}
           </Animated.View>
-        </View>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
