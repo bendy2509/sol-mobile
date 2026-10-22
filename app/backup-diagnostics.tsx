@@ -6,6 +6,10 @@ import { Button, Card, Icon, MetricTile, Screen, SectionHeader, Text } from '@/c
 
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { getLastMigrationReport, getSchemaVersion, LATEST_SCHEMA_VERSION } from '@/db/migrations';
+import { findLedgerDiscrepancies, LedgerDiscrepancy, repairLedgerDiscrepancies } from '@/db/ledgerRepository';
+import { PinVerificationModal } from '@/components/PinVerificationModal';
+import { TotalsField } from '@/services/ledgerConsistency';
+import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
@@ -30,6 +34,9 @@ export default function BackupDiagnosticsScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [loading, setLoading] = useState(true);
   const [diagnostics, setDiagnostics] = useState<DiagnosticState | null>(null);
+  const [discrepancies, setDiscrepancies] = useState<LedgerDiscrepancy[] | null>(null);
+  const [isRepairPinOpen, setIsRepairPinOpen] = useState(false);
+  const [repairing, setRepairing] = useState(false);
   const router = useRouter();
 
   const runDiagnostics = useCallback(async () => {
@@ -71,6 +78,9 @@ export default function BackupDiagnosticsScreen() {
       }
       const lastError = getLastMigrationReport()?.error;
 
+      // 4. Cohérence : totaux des adhérents = rejeu de leurs opérations du cycle
+      setDiscrepancies(await findLedgerDiscrepancies(collectorId).catch(() => null));
+
       setDiagnostics({
         schemaVersion,
         schemaWarnings,
@@ -97,6 +107,44 @@ export default function BackupDiagnosticsScreen() {
 
 
   const pending = diagnostics?.pendingSyncCount || 0;
+
+  const fieldLabel: Record<TotalsField, string> = {
+    currentBalance: t('Solde'),
+    totalPaidAmount: t('Total cotisé'),
+    paidHandsCount: t('Mains payées'),
+    receivedHandsCount: t('Mains reçues'),
+    hasReceivedHand: t('Main reçue'),
+    paidUntilDate: t('Couvert jusqu\'au'),
+  };
+  const showValue = (field: TotalsField, value: unknown) =>
+    field === 'currentBalance' || field === 'totalPaidAmount'
+      ? formatCurrency(Number(value || 0))
+      : field === 'paidUntilDate'
+        ? value
+          ? formatDateShort(String(value))
+          : '—'
+        : field === 'hasReceivedHand'
+          ? value
+            ? t('Oui')
+            : t('Non')
+          : String(value ?? 0);
+
+  const handleRepair = async () => {
+    setIsRepairPinOpen(false);
+    if (!discrepancies?.length) return;
+    setRepairing(true);
+    try {
+      const n = await repairLedgerDiscrepancies(discrepancies);
+      triggerSuccessFeedback();
+      Alert.alert(t('Totaux recalculés'), t('{0} adhérent(s) corrigé(s) à partir de leurs opérations.', n));
+      await runDiagnostics();
+    } catch (err: any) {
+      triggerErrorFeedback();
+      Alert.alert(t('Erreur'), err?.message || t('Le recalcul a échoué.'));
+    } finally {
+      setRepairing(false);
+    }
+  };
   const statusTone = !diagnostics ? 'sunken' : diagnostics.isHealthy ? 'success' : 'danger';
 
   return (
@@ -166,6 +214,52 @@ export default function BackupDiagnosticsScreen() {
         </Card>
       ) : null}
 
+      {/* Cohérence : le journal des opérations fait foi */}
+      <View style={styles.section}>
+        <SectionHeader title={t('Cohérence du carnet')} />
+        {discrepancies === null ? (
+          <Card tone="sunken">
+            <Text variant="caption" tone="muted">
+              {loading ? t('Vérification en cours…') : t('Contrôle indisponible.')}
+            </Text>
+          </Card>
+        ) : discrepancies.length === 0 ? (
+          <Card tone="success">
+            <View style={styles.statusRow}>
+              <Icon name="check" size={20} color={theme.colors.success} />
+              <Text variant="body" tone="success" style={styles.flexShrink}>
+                {t('Les totaux de chaque adhérent correspondent à ses opérations.')}
+              </Text>
+            </View>
+          </Card>
+        ) : (
+          <Card tone="warning" style={styles.ledgerCard}>
+            <Text variant="bodyStrong" tone="warning">
+              {t('{0} adhérent(s) dont les totaux diffèrent de leurs opérations', discrepancies.length)}
+            </Text>
+            {discrepancies.map((d) => (
+              <View key={d.clientId} style={styles.ledgerRow}>
+                <Text variant="label">{d.fullName}</Text>
+                {d.differences.map((x) => (
+                  <Text key={x.field} variant="caption" tone="muted">
+                    {t('{0} : enregistré {1}, selon les opérations {2}', fieldLabel[x.field], showValue(x.field, x.stored), showValue(x.field, x.ledger))}
+                  </Text>
+                ))}
+              </View>
+            ))}
+            <Text variant="caption" tone="muted">
+              {t('Le recalcul remplace les totaux enregistrés par ceux des opérations. Les opérations ne changent pas.')}
+            </Text>
+            <Button
+              icon="lock"
+              label={t('Recalculer depuis les opérations')}
+              loading={repairing}
+              onPress={() => setIsRepairPinOpen(true)}
+            />
+          </Card>
+        )}
+      </View>
+
       {/* Métriques Locales Inspectées */}
       <View style={styles.section}>
         <SectionHeader title={t('Persistance locale')} />
@@ -195,6 +289,13 @@ export default function BackupDiagnosticsScreen() {
           <MetricTile label={t('Sécurité atomique')} icon="lock" value={t('Active')} hint="withTransactionAsync" tone="success" style={styles.tile} />
         </View>
       </View>
+      <PinVerificationModal
+        visible={isRepairPinOpen}
+        title={t('Confirmer le recalcul')}
+        subtitle={t('Votre code PIN valide la correction des totaux.')}
+        onSuccess={handleRepair}
+        onCancel={() => setIsRepairPinOpen(false)}
+      />
     </Screen>
   );
 }
@@ -217,5 +318,7 @@ const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
     },
 
     grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    ledgerCard: { gap: spacing.md },
+    ledgerRow: { gap: spacing.xs },
     tile: { flexBasis: '47%', flexGrow: 1 },
   });

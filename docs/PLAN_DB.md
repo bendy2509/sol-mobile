@@ -35,6 +35,15 @@ La refonte n'a pas touché `db/`. Chaque phase ci-dessous se fait sur sa propre 
 
   Tests : migrations 31/31, démo et dates 23/23.
 
+- **PR 5, livrée sur `feat/db-ledger-source` (phase 4) :**
+  - Le journal des opérations fait foi. Le contrôle compare les totaux de chaque adhérent au rejeu de ses opérations du cycle, avec le même rejeu que l'annulation (`reconstructClientFinancialTimeline`).
+  - Diagnostic affiche les écarts champ par champ, valeur enregistrée contre valeur des opérations, et un recalcul confirmé par le PIN. Chaque correction est inscrite au journal d'audit (`RECONCILE_CLIENT`), et les opérations ne changent jamais.
+  - « Aujourd'hui » et le jour d'une opération sont des jours locaux partout (statuts, couverture, remises, jours restants). Un encaissement à 21 h à Haïti compte pour ce jour-là.
+  - La démo suit le journal : soldes cohérents, remise datée après la cotisation.
+  - **Non fait volontairement :** les écritures (encaissement, remise) gardent leur calcul incrémental. Les remplacer par un rejeu complet à chaque écriture changerait d'un coup les totaux des carnets existants ; le contrôle et le recalcul sous PIN laissent le gestionnaire décider.
+
+  Tests : `scripts/test_ledger.ts`, 19/19, exécuté en heure d'Haïti. Les 137 tests financiers passent aussi en heure d'Haïti.
+
 ## Résumé par priorité
 
 | # | Phase | Pourquoi | Effort | Risque |

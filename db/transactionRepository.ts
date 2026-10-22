@@ -18,6 +18,7 @@ import {
   reconstructClientFinancialTimeline,
 } from '@/services/financialService';
 import { recordAuditLog } from '@/services/auditService';
+import { localDateString } from '@/lib/dates';
 
 // In-memory Mutex to prevent double-submit collisions even during lag or double-clicking
 const inFlightTransactions = new Set<string>();
@@ -55,7 +56,7 @@ export async function createTransaction(data: {
     const activeBusiness = await getActiveBusinessConfig();
     const businessId = data.businessId !== undefined ? data.businessId : activeBusiness?.id || null;
     const now = new Date().toISOString();
-    const todayStr = now.split('T')[0];
+    const todayStr = localDateString();
     const paymentMethod = data.paymentMethod || 'CASH';
     const idempotencyKey = data.idempotencyKey || uuidv4();
 
@@ -552,7 +553,7 @@ export async function reverseTransaction(params: {
     transactions: updatedTxsList,
     unitAmount: activeBusiness?.contributionAmount || 250,
     frequency: activeBusiness?.frequency || 'DAILY',
-    cycleStartDate: activeBusiness?.startDate || now.split('T')[0],
+    cycleStartDate: activeBusiness?.startDate || localDateString(),
     handsCount,
   });
 

@@ -213,6 +213,7 @@ export type AuditLogAction =
   | 'CLOSE_DAY'
   | 'REOPEN_DAY'
   | 'CLOSE_CYCLE'
+  | 'RECONCILE_CLIENT'
   | 'APPROVE_MANAGER'
   | 'SUSPEND_MANAGER'
   | 'RESTORE_BACKUP'

@@ -32,6 +32,7 @@ import {
   verifyRecoveryCode,
 } from '@/services/securityService';
 import { t } from '@/i18n';
+import { localDateString } from '@/lib/dates';
 
 /**
  * Session of the manager. The app is fully autonomous: no administrator, no approval,
@@ -320,8 +321,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const db = await getDatabase();
       const collectorId = uuidv4();
       const now = new Date().toISOString();
-      const startDate = now.split('T')[0];
-      const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const startDate = localDateString();
+      const endDate = localDateString(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
 
       // 1. Create the manager, active immediately (no approval step)
       await db.runAsync(

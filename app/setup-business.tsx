@@ -11,6 +11,7 @@ import { AmountText, Button, Card, Icon, ListItem, Screen, SectionHeader, Text, 
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
+import { localDateString } from '@/lib/dates';
 
 export default function SetupBusinessScreen() {
   const router = useRouter();
@@ -18,7 +19,7 @@ export default function SetupBusinessScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateString();
 
   const [businessType, setBusinessType] = useState<BusinessType>('SABOTAY');
   const [name, setName] = useState('Sabotay Marché Cluny 2026');

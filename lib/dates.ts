@@ -9,13 +9,19 @@
  * `new Date().toISOString().split('T')[0]` is the UTC day: in Haiti (UTC−4/−5) it already reads
  * « tomorrow » from 20:00. Use localDateString() for a calendar day.
  *
- * Note: the member-status rules still derive « today » and operation days the UTC way on both
- * sides of each comparison, which keeps them consistent with each other; moving them to local
- * days is scheduled with phase 4, under the financial test suites.
+ * Since phase 4 « today » and the day of an operation are both local days on every side of
+ * each comparison (statuses, coverage, payouts), so a collection at 21:00 counts for that day.
  */
 export function localDateString(date: Date = new Date()): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+}
+
+/** Local calendar day of an instant (ISO string); a value that is already a day is kept. */
+export function localDayOf(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value.split('T')[0] : localDateString(date);
 }

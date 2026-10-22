@@ -44,6 +44,7 @@ import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, trigge
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
+import { localDateString, localDayOf } from '@/lib/dates';
 
 /** Display label of a ledger entry (presentation only). */
 function getTxTypeLabel(tx: Transaction): string {
@@ -454,8 +455,8 @@ export default function ClientDetailScreen() {
                 unitAmount: unitVal,
                 handsCount: hands,
                 totalAmount: totalVal,
-                coverageStartDate: new Date().toISOString().split('T')[0],
-                coverageEndDate: client.paidUntilDate || new Date().toISOString().split('T')[0],
+                coverageStartDate: localDateString(),
+                coverageEndDate: client.paidUntilDate || localDateString(),
                 createdAt: latestTx ? latestTx.createdAtLocal : new Date().toISOString(),
               });
 
@@ -512,8 +513,8 @@ export default function ClientDetailScreen() {
           unitAmount: uAmount,
           handsCount: selectedTx.handsCovered || 1,
           totalAmount: selectedTx.amount,
-          coverageStartDate: selectedTx.createdAtLocal.split('T')[0],
-          coverageEndDate: selectedTx.createdAtLocal.split('T')[0],
+          coverageStartDate: localDayOf(selectedTx.createdAtLocal),
+          coverageEndDate: localDayOf(selectedTx.createdAtLocal),
           createdAt: selectedTx.createdAtLocal,
         });
       }

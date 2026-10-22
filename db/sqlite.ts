@@ -8,6 +8,7 @@ import { arePhoneNumbersEqual, extractRaw8Digits, normalizePhoneNumber } from '@
 import { hashPin, verifyPinHash } from '@/lib/crypto';
 import { runVersionedMigrations } from './migrations';
 import { parseInsert } from './sqlInsertParser';
+import { localDateString } from '@/lib/dates';
 import { DEMO_BUSINESS_NAME, DEMO_COLLECTOR_ID, DEMO_PHONE, DEMO_PIN, isUntouchedDemoAccount, shouldSeedDemo } from './demoAccount';
 
 // Web In-Memory / LocalStorage State Interface for Web Testing
@@ -857,7 +858,7 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
   if (!collector) {
     const collectorId = DEMO_COLLECTOR_ID;
     const day = 24 * 60 * 60 * 1000;
-    const isoDay = (offsetDays: number) => new Date(Date.now() + offsetDays * day).toISOString().split('T')[0];
+    const isoDay = (offsetDays: number) => localDateString(new Date(Date.now() + offsetDays * day));
     // The demo carnet opened 2 days ago: its account, members and past operations carry that
     // time, so today's dashboard starts empty and the statuses (late, ahead) make sense.
     const now = new Date(Date.now() - 2 * day).toISOString();
@@ -899,7 +900,8 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
       phone,
       type: 'SOL',
       daily: unit,
-      balance: paidHands * unit,
+      // Same as the ledger replay: a hand received is paid out of the balance
+      balance: Math.max(0, paidHands * unit - (hasHand ? unit * 4 : 0)),
       rank,
       hasHand,
       handDate: hasHand ? isoDay(-2) : null,
@@ -953,7 +955,9 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
         await db.runAsync(
           `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status)
            VALUES (?, ?, ?, NULL, ?, ?, 1, 'SOL_PAYOUT', 'CASH', 'Remise de la main (démo)', ?, 'SYNCED')`,
-          [uuidv4(), c.id, collectorId, businessId, unit * sampleClients.length, now]
+          // 30 s after the contribution: the replay order is unambiguous (still within the
+          // seed window that lets a production phone recognise and remove the demo)
+          [uuidv4(), c.id, collectorId, businessId, unit * sampleClients.length, new Date(Date.parse(now) + 30_000).toISOString()]
         );
       }
     }

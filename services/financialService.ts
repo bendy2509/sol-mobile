@@ -1,4 +1,5 @@
 import { Frequency, MemberPaymentStatus, PaymentFrequency, Transaction } from '../types';
+import { localDayOf } from '@/lib/dates';
 
 /**
  * Calculates the total payout pot of a Sol/Sabotay cycle.
@@ -375,7 +376,8 @@ export function reconstructClientFinancialTimeline(params: {
       totalPaidAmount += tx.amount;
       paidHandsCount += hands;
 
-      const txDateStr = tx.createdAtLocal.split('T')[0];
+      // The operation's local day (a collection at 21:00 in Haiti belongs to that day)
+      const txDateStr = localDayOf(tx.createdAtLocal);
       const cov = calculateCoverageDate({
         todayStr: txDateStr,
         handsCovered: hands,
@@ -386,7 +388,7 @@ export function reconstructClientFinancialTimeline(params: {
     } else if (isPayout) {
       currentBalance = Math.max(0, currentBalance - tx.amount);
       receivedHandsCount += 1;
-      handReceivedDate = tx.createdAtLocal.split('T')[0];
+      handReceivedDate = localDayOf(tx.createdAtLocal);
     }
   }
 
