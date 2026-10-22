@@ -3,6 +3,7 @@ import { getActiveBusinessConfig } from './businessRepository';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { createTransaction } from './transactionRepository';
 import { calculateClientPaymentStatus } from '@/services/financialService';
+import { localDateString } from '@/lib/dates';
 
 export async function getMembersWithPaymentStatus(options?: {
   businessId?: string;
@@ -17,7 +18,7 @@ export async function getMembersWithPaymentStatus(options?: {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const startOfDayIso = startOfDay.toISOString();
-  const todayStr = startOfDayIso.split('T')[0];
+  const todayStr = localDateString(startOfDay);
 
   let query = `
     SELECT 
@@ -252,7 +253,7 @@ export async function payoutMemberHand(
   }
 
   const collectorId = await getActiveCollectorId();
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateString();
   const newReceivedCount = currentReceived + 1;
   const isFullyCompleted = newReceivedCount >= totalHands ? 1 : 0;
 

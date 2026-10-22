@@ -6,6 +6,7 @@ import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalcula
 import { recordAuditLog } from '@/services/auditService';
 import { calculateCycleTotalHands } from '@/services/financialService';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
+import { localDateString } from '@/lib/dates';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -141,7 +142,7 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
   const db = await getDatabase();
   const collectorId = params.collectorId || (await getActiveCollectorId());
   const now = new Date().toISOString();
-  const todayStr = params.startDate || now.split('T')[0];
+  const todayStr = params.startDate || localDateString();
   const unitAmount = Math.max(1, Number(params.contributionAmount) || 250);
   const frequency = params.frequency || 'DAILY';
 
@@ -358,7 +359,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const startOfDayIso = startOfDay.toISOString();
-  const todayStr = startOfDayIso.split('T')[0];
+  const todayStr = localDateString(startOfDay);
 
   if (!business) {
     return {

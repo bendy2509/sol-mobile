@@ -6,6 +6,7 @@ import { getActiveBusinessConfig } from './businessRepository';
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
 import { calculateCycleEndDate } from '@/lib/dateCalculations';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
+import { localDateString } from '@/lib/dates';
 
 export async function getAllClients(options?: {
   search?: string;
@@ -87,7 +88,7 @@ export async function getAllClients(options?: {
     sync_status: SyncStatus;
   }>(query, params);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateString();
 
   return rows.map((r) => {
     const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
@@ -168,7 +169,7 @@ export async function getClientById(id: string): Promise<Client | null> {
 
   if (!r) return null;
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateString();
   const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
   const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
   const receivedHandsCount = Number(
@@ -247,7 +248,7 @@ export async function getClientByQrToken(qrCodeToken: string): Promise<Client | 
 
   if (!r) return null;
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateString();
   const parsedQrRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
   const handsCount = Math.max(1, Number(r.hands_count || 1), parsedQrRanksCount);
   const receivedHandsCount = Number(
@@ -349,7 +350,7 @@ export async function createClient(data: {
   const shortId = id.replace(/-/g, '').substring(0, 8).toUpperCase();
   const qrCodeToken = `SOL-${shortId}`;
   const now = new Date().toISOString();
-  const todayStr = now.split('T')[0];
+  const todayStr = localDateString();
   const initialBalance = data.initialDeposit !== undefined ? data.initialDeposit : data.initialBalance || 0;
   const initialHandsCount = initialBalance > 0 ? Math.max(1, Math.floor(initialBalance / (data.dailyAmount || 1))) : 0;
 

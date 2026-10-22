@@ -20,6 +20,7 @@ import { isTransactionFromClosedCycle } from '@/services/financialService';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
+import { localDayOf } from '@/lib/dates';
 
 const FILTERS: { value: TransactionType | 'ALL'; label: string }[] = [
   { value: 'ALL', label: 'Tout' },
@@ -144,8 +145,8 @@ export default function HistoryScreen() {
           unitAmount,
           handsCount: selectedTx.handsCovered || 1,
           totalAmount: selectedTx.amount,
-          coverageStartDate: selectedTx.createdAtLocal.split('T')[0],
-          coverageEndDate: selectedTx.createdAtLocal.split('T')[0],
+          coverageStartDate: localDayOf(selectedTx.createdAtLocal),
+          coverageEndDate: localDayOf(selectedTx.createdAtLocal),
           createdAt: selectedTx.createdAtLocal,
         });
       }

@@ -40,6 +40,7 @@ import {
 import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
+import { localDateString } from '@/lib/dates';
 
 /** Members still to collect come first, completed cycles last. */
 const STATUS_ORDER: Record<MemberPaymentStatus, number> = {
@@ -193,7 +194,7 @@ export default function CollectScreen() {
   };
 
   // Coverage date calculation
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateString();
   const coveragePreview = calculateCoverageDate({
     todayStr,
     handsCovered: handsCount > 0 ? handsCount : 1,
