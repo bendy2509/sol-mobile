@@ -36,6 +36,7 @@ export default function DashboardScreen() {
     unitAmount: 250,
     totalPotAmount: 2500,
     handsCollectedToday: 0,
+    amountCollectedToday: 0,
     handsCollectedTotal: 0,
     totalHandsExpected: 10,
     daysRemaining: 0,

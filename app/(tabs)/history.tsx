@@ -22,6 +22,13 @@ import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDayOf } from '@/lib/dates';
 
+/** Each filter covers its whole family, legacy names included. */
+const FILTER_TYPES: Partial<Record<TransactionType | 'ALL', TransactionType[]>> = {
+  SOL_CONTRIBUTION: ['SOL_CONTRIBUTION', 'CONTRIBUTION', 'SABOTAY_DEPOSIT'],
+  SOL_PAYOUT: ['SOL_PAYOUT', 'HAND_PAYOUT', 'WITHDRAWAL'],
+  REVERSAL: ['REVERSAL'],
+};
+
 const FILTERS: { value: TransactionType | 'ALL'; label: string }[] = [
   { value: 'ALL', label: 'Tout' },
   { value: 'SOL_CONTRIBUTION', label: 'Entrées' },
@@ -51,9 +58,9 @@ export default function HistoryScreen() {
 
   const loadData = useCallback(async () => {
     try {
-      const typeParam = filterType === 'ALL' ? undefined : filterType;
+      const typesParam = FILTER_TYPES[filterType];
       const list = await getAllTransactions({
-        type: typeParam,
+        types: typesParam,
         limit: 150,
         collectorId: activeCollector?.id,
       });

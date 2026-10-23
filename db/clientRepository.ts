@@ -129,7 +129,7 @@ export async function getAllClients(options?: {
       handReceivedDate: r.hand_received_date || undefined,
       totalPaidAmount: totalPaid,
       paidHandsCount: paidHands,
-      paidUntilDate: r.paid_until_date || todayStr,
+      paidUntilDate: r.paid_until_date || '', // '' = not covered yet (never paid)
       qrCodeToken: r.qr_code_token,
       createdAt: r.created_at,
       syncStatus: r.sync_status || 'PENDING',
@@ -208,7 +208,7 @@ export async function getClientById(id: string): Promise<Client | null> {
     handReceivedDate: r.hand_received_date || undefined,
     totalPaidAmount: totalPaid,
     paidHandsCount: paidHands,
-    paidUntilDate: r.paid_until_date || todayStr,
+    paidUntilDate: r.paid_until_date || '', // '' = not covered yet (never paid)
     qrCodeToken: r.qr_code_token,
     createdAt: r.created_at,
     syncStatus: r.sync_status || 'PENDING',
@@ -287,7 +287,7 @@ export async function getClientByQrToken(qrCodeToken: string): Promise<Client | 
     handReceivedDate: r.hand_received_date || undefined,
     totalPaidAmount: totalPaid,
     paidHandsCount: paidHands,
-    paidUntilDate: r.paid_until_date || todayStr,
+    paidUntilDate: r.paid_until_date || '', // '' = not covered yet (never paid)
     qrCodeToken: r.qr_code_token,
     createdAt: r.created_at,
     syncStatus: r.sync_status || 'PENDING',
@@ -306,8 +306,6 @@ export async function createClient(data: {
   handsCount?: number;
   payoutRank?: number;
   payoutRanks?: string | number[];
-  initialDeposit?: number;
-  initialBalance?: number;
   businessId?: string;
   collectorId?: string;
 }): Promise<Client> {
@@ -351,8 +349,10 @@ export async function createClient(data: {
   const qrCodeToken = `SOL-${shortId}`;
   const now = new Date().toISOString();
   const todayStr = localDateString();
-  const initialBalance = data.initialDeposit !== undefined ? data.initialDeposit : data.initialBalance || 0;
-  const initialHandsCount = initialBalance > 0 ? Math.max(1, Math.floor(initialBalance / (data.dailyAmount || 1))) : 0;
+  // Nothing is paid at enrolment: the first contribution goes through createTransaction
+  // (cycle limits, coverage from today, audit log, receipt) like every other collection.
+  const initialBalance = 0;
+  const initialHandsCount = 0;
 
   const normalizedPhone = normalizePhoneNumber(data.phoneNumber);
 
@@ -388,30 +388,13 @@ export async function createClient(data: {
       null, // hand_received_date
       initialBalance, // total_paid_amount
       initialHandsCount, // paid_hands_count
-      todayStr, // paid_until_date
+      null, // paid_until_date: not covered until the first payment (was today, which pushed
+      //      the first payment's coverage to tomorrow and showed the member as paid)
       qrCodeToken,
       now,
       'PENDING',
     ]
   );
-
-  // If initial deposit > 0, record initial transaction
-  if (initialBalance > 0) {
-    const txId = uuidv4();
-    await db.runAsync(
-      `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status)
-       VALUES (?, ?, ?, NULL, ?, ?, ?, 'CONTRIBUTION', 'CASH', 'Dépôt initial', ?, 'PENDING')`,
-      [
-        txId,
-        id,
-        collectorId,
-        businessId,
-        initialBalance,
-        initialHandsCount,
-        now,
-      ]
-    );
-  }
 
   // Update business total_slots if active business exists with exact DB sum
   if (activeBusiness) {
@@ -450,7 +433,7 @@ export async function createClient(data: {
     handReceivedDate: undefined,
     totalPaidAmount: initialBalance,
     paidHandsCount: initialHandsCount,
-    paidUntilDate: todayStr,
+    paidUntilDate: '', // not covered until the first payment
     qrCodeToken,
     createdAt: now,
     syncStatus: 'PENDING',
