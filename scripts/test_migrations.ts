@@ -100,6 +100,20 @@ const throws = async (fn: () => Promise<unknown>, part: string) => {
   const legacy = await db.getAllAsync(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('sol_groups', 'sol_group_members')`);
   assert(legacy.length === 0, 'Empty unused sol_groups tables are dropped');
 
+  // v7: a member enrolled without paying loses the false « covered today »
+  const v7 = open();
+  legacySchema(v7);
+  v7.raw.exec(`ALTER TABLE clients ADD COLUMN paid_until_date TEXT;
+    ALTER TABLE clients ADD COLUMN paid_hands_count INTEGER DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN total_paid_amount REAL DEFAULT 0;
+    UPDATE clients SET paid_until_date = '2026-01-01', paid_hands_count = 1, total_paid_amount = 250 WHERE id = 'k1';
+    INSERT INTO clients (id, collector_id, full_name, phone_number, qr_code_token, created_at, paid_until_date) VALUES ('k2', 'c1', 'Bendy', '+509 2', 'Q2', '2026-01-05', '2026-01-05');`);
+  await runVersionedMigrations(v7);
+  const k2 = await v7.getFirstAsync<{ paid_until_date: string | null }>(`SELECT paid_until_date FROM clients WHERE id = 'k2'`);
+  const k1 = await v7.getFirstAsync<{ paid_until_date: string | null }>(`SELECT paid_until_date FROM clients WHERE id = 'k1'`);
+  assert(k2?.paid_until_date === null, 'A member who never paid has no coverage date any more');
+  assert(k1?.paid_until_date === '2026-01-01', 'A member who paid keeps their coverage date');
+
   // 2. Running again changes nothing
   const again = await runVersionedMigrations(db);
   assert(again.applied.length === 0 && again.to === LATEST_SCHEMA_VERSION, 'A second start applies nothing');

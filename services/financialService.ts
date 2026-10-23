@@ -449,6 +449,18 @@ export function calculateClientPaymentStatus(params: {
     };
   }
 
+  // Never paid anything yet (just enrolled): the hand is to collect, not late
+  if (!paidUntilDate && !hasPaidToday && currentBalance <= 0) {
+    return {
+      status: 'UNPAID_TODAY',
+      overdueRoundsCount: 0,
+      handsCoveredAhead: 0,
+      installmentsAhead: 0,
+      installmentsOverdue: 1,
+      nextDueDate,
+    };
+  }
+
   if (hasPaidToday || paidUntilDate === todayStr) {
     return {
       status: 'PAID_TODAY',
@@ -465,6 +477,19 @@ export function calculateClientPaymentStatus(params: {
     const untilMs = new Date(paidUntilDate).getTime();
     const overdueDays = Math.max(1, Math.round((todayMs - untilMs) / (24 * 60 * 60 * 1000)));
     const missingHands = Math.max(1, Math.ceil((unit - (currentBalance % unit)) / unit));
+
+    // Covered until yesterday: only today's hand is missing. It is « À encaisser » during the
+    // day; « En retard » starts the next day (manager's rule, 22 Oct 2026).
+    if (overdueDays === 1) {
+      return {
+        status: 'UNPAID_TODAY',
+        overdueRoundsCount: 0,
+        handsCoveredAhead: 0,
+        installmentsAhead: 0,
+        installmentsOverdue: 1,
+        nextDueDate,
+      };
+    }
 
     return {
       status: 'OVERDUE',

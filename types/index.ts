@@ -249,7 +249,8 @@ export interface SyncLogEntry {
 export interface DashboardMetrics {
   unitAmount: number; // Montant unitaire d'une main (ex: 250 HTG)
   totalPotAmount: number; // Cagnotte complète (unitAmount * totalSlots, ex: 2 500 HTG)
-  handsCollectedToday: number; // Nombre total de mains collectées aujourd'hui
+  handsCollectedToday: number; // Nombre total de mains collectées aujourd'hui (somme des mains couvertes)
+  amountCollectedToday: number; // Montant réellement encaissé aujourd'hui (somme des cotisations)
   handsCollectedTotal: number; // Total cumulé des mains du cycle
   totalHandsExpected: number; // Total attendu sur le cycle (totalSlots)
   daysRemaining: number; // Nombre de jours restants avant la clôture

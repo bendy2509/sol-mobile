@@ -153,7 +153,7 @@ export async function getMembersWithPaymentStatus(options?: {
       handReceivedDate: r.hand_received_date || undefined,
       totalPaidAmount: totalPaid,
       paidHandsCount: paidHands,
-      paidUntilDate: paidUntil || todayStr,
+      paidUntilDate: paidUntil || '', // '' = not covered yet (never paid)
       qrCodeToken: r.qr_code_token,
       createdAt: r.created_at,
       syncStatus: (r.sync_status as any) || 'PENDING',

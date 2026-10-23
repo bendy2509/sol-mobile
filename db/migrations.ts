@@ -227,6 +227,24 @@ export const MIGRATIONS: Migration[] = [
       for (const table of legacy) await db.execAsync(`DROP TABLE ${table}`);
     },
   },
+  {
+    version: 7,
+    name: 'unpaid-members-no-coverage',
+    // Older builds set paid_until_date to the enrolment day for a member who paid nothing: the
+    // member showed « Payé aujourd'hui » and the first payment covered the next day. Members
+    // with no contribution at all lose that date (counters already say nothing was paid).
+    async up(db) {
+      await db.runAsync(
+        `UPDATE clients SET paid_until_date = NULL
+         WHERE COALESCE(paid_hands_count, 0) = 0
+           AND COALESCE(total_paid_amount, 0) = 0
+           AND id NOT IN (
+             SELECT client_id FROM transactions
+             WHERE type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND COALESCE(is_reversed, 0) = 0
+           )`
+      );
+    },
+  },
 ];
 
 /** Warning recorded by migration 6 when an unused legacy table still holds rows. */
