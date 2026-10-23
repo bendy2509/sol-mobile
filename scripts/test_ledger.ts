@@ -4,7 +4,16 @@ declare const process: { env: Record<string, string | undefined>; exit(code: num
 // Haiti's time zone, so « 21:30 local » is a different UTC day (set before any Date is built)
 process.env.TZ = 'America/Port-au-Prince';
 
-import { calculateClientPaymentStatus, calculateCoverageDate, reconstructClientFinancialTimeline } from '../services/financialService';
+import {
+  calculateClientPaymentStatus,
+  calculateCoverageDate,
+  calculateCycleContributionLimits,
+  calculateCycleTotalHands,
+  calculateMemberDuePerRound,
+  calculateMemberTotalCyclePot,
+  calculatePotAmount,
+  reconstructClientFinancialTimeline,
+} from '../services/financialService';
 import { ClientTotals, diffClientTotals } from '../services/ledgerConsistency';
 import { localDateString, localDayOf } from '../lib/dates';
 import { Transaction } from '../types';
@@ -97,6 +106,29 @@ assert(diffClientTotals({ ...ledger, hasReceivedHand: 1 as unknown as boolean },
 const eveningPaidUntil = calculateCoverageDate({ todayStr: localDayOf('2026-10-23T01:30:00.000Z'), handsCovered: 1, frequency: 'DAILY', currentPaidUntilDate: null }).paidUntilDate;
 const status = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: eveningPaidUntil, hasPaidToday: true, currentBalance: 250, unitAmount: 250 });
 assert(status.status === 'PAID_TODAY', 'Paid at 21:30: the member shows « Payé aujourd’hui » that evening, not « en avance »');
+
+// 6. The sol rule, with the manager's own example: 500 G a hand, Bendy 1 hand, Servilus 3 hands
+const members = [{ handsCount: 1 }, { handsCount: 3 }];
+const totalHands = calculateCycleTotalHands(members);
+assert(totalHands === 4, 'Bendy (1) + Servilus (3) = 4 hands in the sol');
+assert(calculatePotAmount(totalHands, 500) === 2000, 'Each hand drawn receives 4 × 500 G = 2 000 G');
+const bendy = calculateCycleContributionLimits({ currentPaidHands: 0, totalCycleHands: totalHands, memberHandsCount: 1, unitAmount: 500 });
+assert(bendy.maxAllowedHands === 4 && bendy.maxPotAmount === 2000, 'Bendy pays 4 hands = 2 000 G over the cycle');
+assert(calculateMemberTotalCyclePot(1, totalHands, 500) === 2000, 'Bendy receives 2 000 G: what he pays');
+const servilus = calculateCycleContributionLimits({ currentPaidHands: 0, totalCycleHands: totalHands, memberHandsCount: 3, unitAmount: 500 });
+assert(servilus.maxAllowedHands === 12 && servilus.maxPotAmount === 6000, 'Servilus pays 3 × 2 000 G = 6 000 G over the cycle');
+assert(calculateMemberTotalCyclePot(3, totalHands, 500) === 6000, 'Servilus receives 3 hands × 2 000 G = 6 000 G: what he pays');
+assert(calculateMemberDuePerRound(3, 500) === 1500, 'Servilus pays 1 500 G per round (3 hands)');
+const capped = calculateCycleContributionLimits({ currentPaidHands: 4, totalCycleHands: totalHands, memberHandsCount: 1, unitAmount: 500 });
+assert(capped.isCycleCompleted && capped.remainingHands === 0, 'Once Bendy has paid his 2 000 G, no further collection is accepted');
+
+// 7. A member just enrolled, nothing paid yet
+const fresh = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: null, hasPaidToday: false, currentBalance: 0, unitAmount: 500 });
+assert(fresh.status === 'UNPAID_TODAY', 'A member who never paid is « À encaisser », not « Payé aujourd’hui » nor « en retard »');
+const firstPayment = calculateCoverageDate({ todayStr: '2026-10-22', handsCovered: 1, frequency: 'DAILY', currentPaidUntilDate: null });
+assert(firstPayment.paidUntilDate === '2026-10-22', 'The first payment of a new member covers today, not tomorrow');
+const oldBehaviour = calculateCoverageDate({ todayStr: '2026-10-22', handsCovered: 1, frequency: 'DAILY', currentPaidUntilDate: '2026-10-22' });
+assert(oldBehaviour.paidUntilDate === '2026-10-23', '(Why it mattered: a false « covered today » pushed that payment to tomorrow)');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);

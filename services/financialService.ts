@@ -449,6 +449,18 @@ export function calculateClientPaymentStatus(params: {
     };
   }
 
+  // Never paid anything yet (just enrolled): the hand is to collect, not late
+  if (!paidUntilDate && !hasPaidToday && currentBalance <= 0) {
+    return {
+      status: 'UNPAID_TODAY',
+      overdueRoundsCount: 0,
+      handsCoveredAhead: 0,
+      installmentsAhead: 0,
+      installmentsOverdue: 1,
+      nextDueDate,
+    };
+  }
+
   if (hasPaidToday || paidUntilDate === todayStr) {
     return {
       status: 'PAID_TODAY',

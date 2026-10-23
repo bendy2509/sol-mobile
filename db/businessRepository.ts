@@ -366,6 +366,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       unitAmount: 0,
       totalPotAmount: 0,
       handsCollectedToday: 0,
+      amountCollectedToday: 0,
       handsCollectedTotal: 0,
       totalHandsExpected: 0,
       daysRemaining: 0,
@@ -393,14 +394,17 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const unitAmount = business.contributionAmount;
   const totalSlots = business.totalSlots;
 
-  // 1. Hands collected today (count of transactions)
-  const todayTxRow = await db.getFirstAsync<{ count: number; total: number }>(
-    `SELECT count(*) as count, COALESCE(SUM(amount), 0) as total FROM transactions 
-     WHERE collector_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
+  // 1. Collected today: the real amounts and hands of every contribution. (Counting operations
+  //    hid money: 3 hands paid at once showed as « 1 main ».)
+  const todayTxRow = await db.getFirstAsync<{ count: number; total: number; hands: number }>(
+    `SELECT count(*) as count, COALESCE(SUM(amount), 0) as total, COALESCE(SUM(COALESCE(hands_covered, 1)), 0) as hands
+     FROM transactions
+     WHERE collector_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION')
        AND is_reversed = 0 AND created_at_local >= ?`,
     [collectorId, startOfDayIso]
   );
-  const handsCollectedToday = todayTxRow?.count || 0;
+  const handsCollectedToday = Number(todayTxRow?.hands || 0);
+  const amountCollectedToday = Number(todayTxRow?.total || 0);
 
   // 2. Cash in drawer today (In minus Payouts)
   const cashTodayRow = await db.getFirstAsync<{ total_in: number; total_out: number }>(
@@ -534,7 +538,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
         handReceivedDate: undefined,
         totalPaidAmount: Number(m.total_paid_amount || m.current_balance || 0),
         paidHandsCount: Number(m.paid_hands_count || 0),
-        paidUntilDate: m.paid_until_date || todayStr,
+        paidUntilDate: m.paid_until_date || '', // '' = not covered yet (never paid)
         qrCodeToken: m.qr_code_token,
         createdAt: m.created_at,
         syncStatus: 'SYNCED',
@@ -574,6 +578,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     unitAmount,
     totalPotAmount,
     handsCollectedToday,
+    amountCollectedToday,
     handsCollectedTotal,
     totalHandsExpected: effectiveChildrenCount,
     daysRemaining,

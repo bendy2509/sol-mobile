@@ -274,6 +274,8 @@ export async function getTransactions(options?: {
   collectorId?: string;
   businessId?: string;
   type?: TransactionType;
+  /** Several types at once (a filter family such as every kind of contribution). */
+  types?: TransactionType[];
   syncStatus?: SyncStatus;
   limit?: number;
   allCollectors?: boolean;
@@ -327,6 +329,12 @@ export async function getTransactions(options?: {
   if (options?.type) {
     query += ` AND t.type = ?`;
     params.push(options.type);
+  }
+
+  if (options?.types?.length) {
+    // Written as literals from a fixed whitelist: the web storage adapter reads them
+    const allowed = options.types.filter((ty) => /^[A-Z_]+$/.test(ty));
+    if (allowed.length) query += ` AND t.type IN (${allowed.map((ty) => `'${ty}'`).join(', ')})`;
   }
 
   if (options?.syncStatus) {

@@ -491,7 +491,8 @@ class WebSQLiteAdapter {
 
       if (cleanSql.toLowerCase().includes('count(*)')) {
         const total = filtered.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-        return [{ count: filtered.length, total }] as any;
+        const hands = filtered.reduce((acc, t) => acc + (Number(t.hands_covered) || 1), 0);
+        return [{ count: filtered.length, total, hands }] as any;
       }
 
       if (cleanSql.toUpperCase().includes('SUM(AMOUNT)') || cleanSql.includes('SUM(amount)')) {

@@ -150,7 +150,6 @@ export default function NewClientScreen() {
         handsCount: effectiveHandsCount,
         payoutRank: assignedRank,
         payoutRanks: computedRanks,
-        initialDeposit: 0,
         collectorId,
         businessId: business?.id,
       });
