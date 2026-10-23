@@ -4,7 +4,7 @@ import { BusinessConfig, ClosedCycle, CycleStatus, DashboardMetrics, Member, Pay
 import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusinessId } from './sqlite';
 import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalculations';
 import { recordAuditLog } from '@/services/auditService';
-import { calculateCycleTotalHands } from '@/services/financialService';
+import { calculateCycleTotalHands, calculateClientPaymentStatus } from '@/services/financialService';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString } from '@/lib/dates';
 
@@ -506,9 +506,19 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     const hasPaidToday = paidTodayClientIds.has(m.id);
     const isCoveredInAdvance = m.paid_until_date && m.paid_until_date >= todayStr;
 
+    // Same rule as the member badges: today's hand alone is « À encaisser », late only from the
+    // next day (calculateClientPaymentStatus)
+    const status = calculateClientPaymentStatus({
+      todayStr,
+      paidUntilDate: m.paid_until_date || null,
+      hasPaidToday,
+      currentBalance: Number(m.current_balance || 0),
+      unitAmount,
+    }).status;
+
     if (hasPaidToday || isCoveredInAdvance) {
       paidTodayCount++;
-    } else {
+    } else if (status === 'OVERDUE') {
       overdueMembersCount++;
       const missingHands = Math.max(
         1,

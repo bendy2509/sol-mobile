@@ -130,6 +130,14 @@ assert(firstPayment.paidUntilDate === '2026-10-22', 'The first payment of a new 
 const oldBehaviour = calculateCoverageDate({ todayStr: '2026-10-22', handsCovered: 1, frequency: 'DAILY', currentPaidUntilDate: '2026-10-22' });
 assert(oldBehaviour.paidUntilDate === '2026-10-23', '(Why it mattered: a false « covered today » pushed that payment to tomorrow)');
 
+// 8. Today's hand is « À encaisser », late only from the next day (manager's rule)
+const dueToday = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: '2026-10-21', hasPaidToday: false, currentBalance: 500, unitAmount: 500 });
+assert(dueToday.status === 'UNPAID_TODAY' && dueToday.overdueRoundsCount === 0, 'Covered until yesterday: « À encaisser » during the day');
+const lateSinceYesterday = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: '2026-10-20', hasPaidToday: false, currentBalance: 0, unitAmount: 500 });
+assert(lateSinceYesterday.status === 'OVERDUE' && lateSinceYesterday.overdueRoundsCount === 2, 'Yesterday’s hand unpaid: « En retard · 2 tours » (yesterday and today)');
+const paidThisMorning = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: '2026-10-22', hasPaidToday: true, currentBalance: 500, unitAmount: 500 });
+assert(paidThisMorning.status === 'PAID_TODAY', 'Paid today: « Payé aujourd’hui »');
+
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);
 console.log('==================================================');
