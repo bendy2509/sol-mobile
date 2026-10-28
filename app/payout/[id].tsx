@@ -153,8 +153,8 @@ export default function PayoutScreen() {
                 const pdfUri = await generatePayoutReceiptPdf({
                   transactionId: tx.id,
                   businessName: business?.name || 'SOL Mobile',
-                  collectorName: activeCollector?.fullName || 'Agent SOL',
-                  collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+                  collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+                  collectorPhone: activeCollector?.phoneNumber || '',
                   collectorZone: activeCollector?.zone,
                   clientName: client.fullName,
                   clientPhone: client.phoneNumber,

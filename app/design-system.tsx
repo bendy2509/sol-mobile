@@ -92,21 +92,21 @@ export default function DesignSystemScreen() {
         <Card padding="none">
           <ListItem
             leading={<Avatar rank={1} />}
-            title="Marie-Carmel Joseph"
+            title="Bendy SERVILUS"
             meta={<StatusBadge status="HAND_RECEIVED" appearance="inline" />}
             trailing={<AmountText amount={2500} size="small" />}
             onPress={() => {}}
           />
           <ListItem
             leading={<Avatar rank={2} highlighted />}
-            title="Jean-Robert Estimé"
+            title="SERVILUS"
             meta={<StatusBadge status="PAID_TODAY" appearance="inline" />}
             trailing={<AmountText amount={1750} size="small" />}
             onPress={() => {}}
           />
           <ListItem
-            leading={<Avatar name="Dieula Saint-Juste" />}
-            title="Dieula Saint-Juste"
+            leading={<Avatar name="B. Servilus" />}
+            title="B. Servilus"
             meta={<StatusBadge status="OVERDUE" detail="1 tour" appearance="inline" />}
             trailing={<AmountText amount={750} size="small" />}
             divider={false}

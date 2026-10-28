@@ -324,8 +324,8 @@ export default function ClientDetailScreen() {
                     const pdfUri = await generatePayoutReceiptPdf({
                       transactionId: tx.id,
                       businessName: business?.name || 'SOL Mobile',
-                      collectorName: activeCollector?.fullName || 'Agent SOL',
-                      collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+                      collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+                      collectorPhone: activeCollector?.phoneNumber || '',
                       collectorZone: activeCollector?.zone,
                       clientName: client.fullName,
                       clientPhone: client.phoneNumber,
@@ -500,8 +500,8 @@ export default function ClientDetailScreen() {
         fileUri = await generatePayoutReceiptPdf({
           transactionId: selectedTx.id,
           businessName: business?.name || 'SOL Mobile',
-          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+          collectorPhone: activeCollector?.phoneNumber || '',
           collectorZone: activeCollector?.zone,
           clientName: client.fullName,
           clientPhone: client.phoneNumber,
@@ -519,8 +519,8 @@ export default function ClientDetailScreen() {
         fileUri = await generateContributionReceiptPdf({
           transactionId: selectedTx.id,
           businessName: business?.name || 'SOL Mobile',
-          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+          collectorPhone: activeCollector?.phoneNumber || '',
           collectorZone: activeCollector?.zone,
           clientName: client.fullName,
           clientPhone: client.phoneNumber,
@@ -589,7 +589,7 @@ export default function ClientDetailScreen() {
             collectorId: activeCollector?.id,
           });
           triggerSuccessFeedback();
-          Alert.alert(t('Opération Rectifiée'), t('L\'opération a été annulée et le solde/échéance de l\'adhérent a été recalculé.'));
+          Alert.alert(t('Opération annulée'), t('L\'opération a été annulée et le solde/échéance de l\'adhérent a été recalculé.'));
           loadClientData();
         } catch (err: any) {
           triggerErrorFeedback();

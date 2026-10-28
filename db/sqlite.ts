@@ -9,6 +9,7 @@ import { hashPin, verifyPinHash } from '@/lib/crypto';
 import { runVersionedMigrations } from './migrations';
 import { parseInsert } from './sqlInsertParser';
 import { localDateString } from '@/lib/dates';
+import { buildCycleRounds, paidUntilFromHands } from '@/services/scheduleService';
 import { DEMO_BUSINESS_NAME, DEMO_COLLECTOR_ID, DEMO_PHONE, DEMO_PIN, isUntouchedDemoAccount, shouldSeedDemo } from './demoAccount';
 
 // Web In-Memory / LocalStorage State Interface for Web Testing
@@ -877,61 +878,53 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
     const day = 24 * 60 * 60 * 1000;
     const isoDay = (offsetDays: number) => localDateString(new Date(Date.now() + offsetDays * day));
     // The demo carnet opened 2 days ago: its account, members and past operations carry that
-    // time, so today's dashboard starts empty and the statuses (late, ahead) make sense.
+    // time, so today's dashboard starts empty and the statuses (late, partial, ahead) make sense.
     const now = new Date(Date.now() - 2 * day).toISOString();
 
-    // 1. Seed Active Demo Collector with encrypted 4-digit PIN '1234'
+    // 1. Demo manager (PIN 1234)
     await db.runAsync(
       `INSERT INTO collectors (id, full_name, phone_number, pin_hash, status, zone, created_at)
        VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?)`,
-      [
-        collectorId,
-        'Jean-Baptiste Pierre',
-        DEMO_PHONE,
-        hashPin(DEMO_PIN), // Encrypted PIN
-        'Marché Salomon (Port-au-Prince)',
-        now,
-      ]
+      [collectorId, 'Bendy SERVILUS', DEMO_PHONE, hashPin(DEMO_PIN), 'Marché de Pétion-Ville', now]
     );
 
-    // 2. Seed the demo carnet: a daily sol of 4 members × 1 hand × 250 HTG (pot 1 000 HTG),
-    //    started 2 days ago, so 3 hands are due today and the figures stay consistent.
+    // 2. A daily sol of 250 HTG a hand, started 2 days ago. Bendy 1 hand, SERVILUS 2 hands,
+    //    BS 1 hand, B. Servilus 1 hand: 5 hands = 5 rounds, pot 1 250 HTG a round.
     const businessId = uuidv4();
     const unit = 250;
+    const totalHands = 5;
     const startDate = isoDay(-2);
-    const endDate = isoDay(1);
+    const rounds = buildCycleRounds(startDate, 'DAILY', totalHands);
 
     await db.runAsync(
       `INSERT INTO business_configs (id, collector_id, name, type, contribution_amount, frequency, total_slots, start_date, end_date, status, cycle_status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [businessId, collectorId, DEMO_BUSINESS_NAME, 'SOL', unit, 'DAILY', 4, startDate, endDate, 'ACTIVE', 'ACTIVE', now]
+      [businessId, collectorId, DEMO_BUSINESS_NAME, 'SOL', unit, 'DAILY', totalHands, startDate, rounds[rounds.length - 1], 'ACTIVE', 'ACTIVE', now]
     );
 
     await setActiveBusinessId(businessId);
 
-    // 3. Seed Sample Children (Membres)
-    // paidHands ≤ 4 (the whole cycle); paid until = start + paidHands − 1 days
-    const member = (id: string, name: string, phone: string, rank: number, paidHands: number, token: string, hasHand = 0) => ({
+    // 3. Members: every one owes all their hands at every round since the start (3 rounds so far)
+    const member = (id: string, name: string, phone: string, ranks: number[], hands: number, paidHands: number, token: string, hasHand = 0) => ({
       id,
       name,
       phone,
-      type: 'SOL',
-      daily: unit,
+      ranks,
+      hands,
       // Same as the ledger replay: a hand received is paid out of the balance
-      balance: Math.max(0, paidHands * unit - (hasHand ? unit * 4 : 0)),
-      rank,
+      balance: Math.max(0, paidHands * unit - (hasHand ? unit * totalHands : 0)),
       hasHand,
       handDate: hasHand ? isoDay(-2) : null,
       totalPaid: paidHands * unit,
       paidHands,
-      paidUntil: isoDay(-2 + paidHands - 1),
+      paidUntil: paidUntilFromHands({ cycleStartDate: startDate, frequency: 'DAILY', memberHands: hands, paidHands, totalRounds: totalHands }),
       token,
     });
     const sampleClients = [
-      member('11111111-0000-0000-0000-000000000001', 'Marie-Carmel Joseph', '+50938112233', 1, 4, 'SOL-MCJ01', 1), // en avance, main reçue
-      member('22222222-0000-0000-0000-000000000002', 'Jean-Robert Estimé', '+50937445566', 2, 3, 'SOL-JRE02'), // à jour, reçoit la main
-      member('33333333-0000-0000-0000-000000000003', 'Dieula Saint-Juste', '+50946778899', 3, 1, 'SOL-DSJ03'), // 2 mains de retard
-      member('44444444-0000-0000-0000-000000000004', 'Fritzner Dorce', '+50931223344', 4, 2, 'SOL-FDO04'), // à encaisser aujourd'hui
+      member('11111111-0000-0000-0000-000000000001', 'Bendy', '+50938112233', [1], 1, 4, 'SOL-BS01', 1), // en avance, main reçue
+      member('22222222-0000-0000-0000-000000000002', 'SERVILUS', '+50937445566', [2, 3], 2, 5, 'SOL-BS02'), // 2 mains : partiel aujourd'hui
+      member('33333333-0000-0000-0000-000000000003', 'BS', '+50946778899', [4], 1, 1, 'SOL-BS03'), // 1 tour de retard
+      member('44444444-0000-0000-0000-000000000004', 'B. Servilus', '+50931223344', [5], 1, 2, 'SOL-BS04'), // à encaisser aujourd'hui
     ];
 
     for (const c of sampleClients) {
@@ -944,12 +937,12 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
           collectorId,
           c.name,
           c.phone,
-          c.type,
-          c.daily,
+          'SOL',
+          unit,
           c.balance,
-          c.rank,
-          String(c.rank),
-          1,
+          c.ranks[0],
+          c.ranks.join(','),
+          c.hands,
           c.hasHand ? 1 : 0,
           c.hasHand,
           c.hasHand,
@@ -962,7 +955,6 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
         ]
       );
 
-
       await db.runAsync(
         `INSERT INTO transactions (id, client_id, collector_id, sol_group_id, business_id, amount, hands_covered, type, payment_method, note, created_at_local, sync_status)
          VALUES (?, ?, ?, NULL, ?, ?, ?, 'SOL_CONTRIBUTION', 'CASH', 'Cotisation régulière', ?, 'SYNCED')`,
@@ -974,7 +966,7 @@ async function seedInitialData(db: UniversalSQLiteDatabase): Promise<void> {
            VALUES (?, ?, ?, NULL, ?, ?, 1, 'SOL_PAYOUT', 'CASH', 'Remise de la main (démo)', ?, 'SYNCED')`,
           // 30 s after the contribution: the replay order is unambiguous (still within the
           // seed window that lets a production phone recognise and remove the demo)
-          [uuidv4(), c.id, collectorId, businessId, unit * sampleClients.length, new Date(Date.parse(now) + 30_000).toISOString()]
+          [uuidv4(), c.id, collectorId, businessId, unit * totalHands, new Date(Date.parse(now) + 30_000).toISOString()]
         );
       }
     }

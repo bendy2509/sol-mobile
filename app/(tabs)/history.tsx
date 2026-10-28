@@ -125,11 +125,11 @@ export default function HistoryScreen() {
         pdfUri = await generatePayoutReceiptPdf({
           transactionId: selectedTx.id,
           businessName: business?.name || 'SOL Mobile',
-          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+          collectorPhone: activeCollector?.phoneNumber || '',
           collectorZone: activeCollector?.zone,
           clientName: selectedTx.clientName || client?.fullName || 'Adhérent',
-          clientPhone: selectedTx.clientPhone || client?.phoneNumber || '+509 XX XX XXXX',
+          clientPhone: selectedTx.clientPhone || client?.phoneNumber || '',
           payoutRank: client?.payoutRank || undefined,
           totalPotAmount: selectedTx.amount,
           registeredChildrenCount: business?.totalSlots || 10,
@@ -144,11 +144,11 @@ export default function HistoryScreen() {
         pdfUri = await generateContributionReceiptPdf({
           transactionId: selectedTx.id,
           businessName: business?.name || 'SOL Mobile',
-          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+          collectorPhone: activeCollector?.phoneNumber || '',
           collectorZone: activeCollector?.zone,
           clientName: selectedTx.clientName || client?.fullName || 'Adhérent',
-          clientPhone: selectedTx.clientPhone || client?.phoneNumber || '+509 XX XX XXXX',
+          clientPhone: selectedTx.clientPhone || client?.phoneNumber || '',
           payoutRank: client?.payoutRank || undefined,
           qrCodeToken: client?.qrCodeToken || `SOL-${selectedTx.id.slice(0, 6)}`,
           unitAmount,
@@ -196,7 +196,7 @@ export default function HistoryScreen() {
 
   const handleConfirmCancelReason = () => {
     if (!cancelReason.trim()) {
-      Alert.alert(t('Motif requis'), t('Veuillez saisir le motif obligatoire de l\'annulation.'));
+      Alert.alert(t('Motif obligatoire'), t('Veuillez saisir le motif obligatoire de l\'annulation.'));
       return;
     }
     setIsCancelPromptOpen(false);
@@ -216,7 +216,7 @@ export default function HistoryScreen() {
       });
       triggerSuccessFeedback();
       Alert.alert(
-        t('Opération Annulée avec Succès'),
+        t('Opération annulée'),
         t('La transaction #{0} a été annulée. Une écriture d\'annulation certifiée a été inscrite à l\'audit et le solde de l\'adhérent a été recalculé.', selectedTx.id.slice(0, 8))
       );
       loadData();

@@ -274,8 +274,8 @@ export default function CollectScreen() {
       const pdfUri = await generateContributionReceiptPdf({
         transactionId: lastTx.id,
         businessName: business?.name || 'SOL Mobile',
-        collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-        collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+        collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+        collectorPhone: activeCollector?.phoneNumber || '',
         collectorZone: activeCollector?.zone,
         clientName: selectedClient.fullName,
         clientPhone: selectedClient.phoneNumber,

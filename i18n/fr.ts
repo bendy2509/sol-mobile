@@ -28,7 +28,7 @@ export const fr = {
   'settings.textSize.normal': 'Normale',
   'settings.textSize.large': 'Grande',
   'settings.preview': 'Aperçu',
-  'settings.preview.body': 'Cotisation de Marie-Carmel, 2 mains',
+  'settings.preview.body': 'Cotisation de SERVILUS, 2 mains',
   'settings.profile': 'Profil',
   'settings.profile.name': 'Nom',
   'settings.profile.phone': 'Téléphone',

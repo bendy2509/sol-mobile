@@ -884,4 +884,6 @@ export const htPhrases: Record<string, string> = {
   'Clôturé le {0}': 'Fèmen {0}',
   'Le cycle n\'a pas pu être archivé : clôture annulée.': 'Sik la pa t ka achive : fèmti a anile.',
   '{0} adhérents · {1} par main': '{0} manm · {1} pa men',
+  'Opération annulée': 'Operasyon anile',
+  'Code QR (ex : SOL-BS01)': 'Kòd QR (egz : SOL-BS01)',
 };

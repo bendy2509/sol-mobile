@@ -87,7 +87,7 @@ export default function CycleManagementScreen() {
       if (!pdfData) {
         pdfData = {
           businessName: cycle.businessName,
-          collectorName: activeCollector?.fullName || 'Responsable SOL',
+          collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
           collectorPhone: activeCollector?.phoneNumber || '',
           collectorZone: activeCollector?.zone,
           unitAmount: cycle.unitAmount,

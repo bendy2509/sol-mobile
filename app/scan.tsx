@@ -169,7 +169,7 @@ export default function ScanScreen() {
             <Card padding="sm" style={styles.manualCard}>
               <TextInput
                 style={styles.manualInput}
-                placeholder={t('Code QR (ex : SOL-CLT-MARIECARMEL)')}
+                placeholder={t('Code QR (ex : SOL-BS01)')}
                 placeholderTextColor={theme.colors.textPlaceholder}
                 value={manualCode}
                 onChangeText={setManualCode}
