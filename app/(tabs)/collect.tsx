@@ -131,10 +131,15 @@ export default function CollectScreen() {
       const l = limitsFor(client);
       setSelectedClient(client);
       setLastTx(null);
-      setHandsCount(l.remainingHands > 0 ? (l.memberHands > 1 ? Math.min(l.remainingHands, l.memberHands) : 1) : 0);
+      // Preselect what is owed up to today (late hands + today's missing hands, e.g. the second
+      // hand of a partial round); a member up to date gets one full round
+      const member = statusById[client.id];
+      const owed = (member?.lateHands || 0) + (member?.missingHandsToday || 0);
+      const preset = owed > 0 ? owed : l.memberHands;
+      setHandsCount(l.remainingHands > 0 ? Math.min(l.remainingHands, preset) : 0);
       setIsSheetOpen(true);
     },
-    [limitsFor]
+    [limitsFor, statusById]
   );
 
   useFocusEffect(

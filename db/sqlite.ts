@@ -360,6 +360,11 @@ class WebSQLiteAdapter {
     const cleanSql = sql.trim();
     const upperSql = cleanSql.toUpperCase();
 
+    // The web store has no SQLite file to check (the Diagnostic screen read « anomalie »)
+    if (cleanSql.includes('PRAGMA integrity_check')) {
+      return [{ integrity_check: 'ok' }] as any;
+    }
+
     if (cleanSql.includes('PRAGMA table_info')) {
       if (cleanSql.includes('clients')) {
         return [
@@ -468,6 +473,12 @@ class WebSQLiteAdapter {
         }
         if (cleanSql.includes("type != 'REVERSAL'")) {
           filtered = filtered.filter((t) => t.type !== 'REVERSAL');
+        }
+        // A lookup by its own id (not client_id / collector_id)
+        const idMatch = /(^|[^_\w.])(?:t\.)?id = \?/.exec(cleanSql);
+        if (idMatch) {
+          const idParam = params[(cleanSql.slice(0, idMatch.index + idMatch[0].length).match(/\?/g) || []).length - 1];
+          filtered = filtered.filter((t) => t.id === idParam);
         }
         if (cleanSql.includes('collector_id = ?')) {
           const colParam = paramAt('collector_id = ?');

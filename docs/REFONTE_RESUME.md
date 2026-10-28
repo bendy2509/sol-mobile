@@ -59,7 +59,7 @@ Branche `design/refonte-ui`, octobre 2026. Direction retenue : **A « Registre s
 |---|---|
 | `npx tsc --noEmit` | 0 erreur |
 | `scripts/test_financial_rules.ts` | 118 / 118 |
-| `scripts/test-financial-rules.ts` | 19 / 19 |
+| `npm test` (toutes les suites, voir `docs/AUDIT_COHERENCE.md`) | 281 / 281 |
 | `scripts/test_crypto.ts` | 9 / 9 |
 | `scripts/test_security.ts` | 30 / 30 |
 | Hex, `fontSize` ou `fontWeight` dans `app/` et `components/` | 0 |
