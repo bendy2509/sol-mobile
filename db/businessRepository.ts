@@ -7,7 +7,7 @@ import { recordAuditLog } from '@/services/auditService';
 import { calculateCycleTotalHands, calculateClientPaymentStatus } from '@/services/financialService';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString, localDayOf, localDayStartIso } from '@/lib/dates';
-import { buildCycleRounds, computeMemberSchedule, getCycleDates } from '@/services/scheduleService';
+import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates, parsePayoutRanks } from '@/services/scheduleService';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -695,7 +695,7 @@ export async function saveClosedCycleSnapshot(
   // 4. Detailed snapshot for ManagerBusinessReportPdfData
   const pdfDataSnapshot = {
     businessName: business.name,
-    collectorName: collector?.full_name || 'Responsable SOL',
+    collectorName: collector?.full_name || 'Bendy SERVILUS',
     collectorPhone: collector?.phone_number || '',
     collectorZone: collector?.zone,
     unitAmount,
@@ -713,6 +713,14 @@ export async function saveClosedCycleSnapshot(
     netReserveBalance,
     completionRate,
     members: membersSnapshot,
+    payoutCalendar: buildPayoutCalendar(
+      rounds,
+      clientRows.map((c, i) => ({
+        fullName: c.full_name,
+        ranks: parsePayoutRanks(c.payout_ranks, c.payout_rank || i + 1),
+        receivedDates: membersSnapshot[i].receivedPayoutDates,
+      }))
+    ),
     generatedAt: now,
     reason: reason || 'Clôture et archivage du cycle SOL',
   };

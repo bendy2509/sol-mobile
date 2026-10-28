@@ -69,9 +69,45 @@ export interface ManagerBusinessReportPdfData {
     phoneNumber: string;
     totalPaid: number;
     handsCovered: number;
+    /** A_JOUR / EN_AVANCE / A_ENCAISSER / RETARD, or a member status (PAID_TODAY…). */
     coverageStatus: string;
     hasReceivedPayout: boolean;
+    handsCount?: number;
+    totalDue?: number;
+    plannedPayoutDates?: string[];
+    receivedPayoutDates?: string[];
   }>;
+  generatedAt: string;
+  /** Closing instant of an archived cycle. */
+  closedAt?: string;
+  currentRound?: number;
+  /** Owed up to today and not collected (late + today's hands). */
+  remainingToCollect?: number;
+  /** Who receives at each round (scheduleService.buildPayoutCalendar). */
+  payoutCalendar?: Array<{ round: number; date: string; fullName: string; receivedOn: string | null }>;
+}
+
+export interface MemberStatementPdfData {
+  businessName: string;
+  collectorName: string;
+  collectorPhone: string;
+  collectorZone?: string;
+  clientName: string;
+  clientPhone: string;
+  qrCodeToken: string;
+  payoutRanks: number[];
+  handsCount: number;
+  unitAmount: number;
+  cycleStartDate: string;
+  cycleEndDate: string;
+  rounds: Array<{ index: number; date: string; dueHands: number; paidHands: number; state: string }>;
+  paidUntilDate: string | null;
+  nextDueDate: string | null;
+  totalPaid: number;
+  totalDue: number;
+  lateHands: number;
+  payouts: Array<{ round: number; date: string; receivedOn: string | null }>;
+  operations: Array<{ date: string; label: string; amount: number; hands: number; ref: string; reversed: boolean }>;
   generatedAt: string;
 }
 
@@ -88,7 +124,53 @@ export interface CashClosurePdfData {
   discrepancyReason?: string;
   status: string;
   generatedAt: string;
+  /** Members not fully paid for the day, closed anyway by the manager. */
+  unpaidMembers?: Array<{ fullName: string; missingHands: number; amount: number; state: string }>;
+  closureNote?: string;
 }
+
+/** Escapes text placed in the HTML templates (names, notes). */
+function esc(value: unknown): string {
+  return String(value ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string);
+}
+
+/** One vocabulary for statuses on paper, whatever the source (live status or archive). */
+function statusBadge(status: string): { label: string; cls: string } {
+  switch (status) {
+    case 'A_JOUR':
+    case 'À JOUR':
+    case 'PAID_TODAY':
+    case 'PAID':
+      return { label: 'À jour', cls: 'badge-paid' };
+    case 'EN_AVANCE':
+    case 'PAID_IN_ADVANCE':
+      return { label: 'En avance', cls: 'badge-advance' };
+    case 'A_ENCAISSER':
+    case 'UNPAID_TODAY':
+    case 'DUE_TODAY':
+      return { label: 'À encaisser', cls: 'badge-pending' };
+    case 'PARTIAL':
+      return { label: 'Partiel', cls: 'badge-pending' };
+    case 'UPCOMING':
+      return { label: 'À venir', cls: 'badge-muted' };
+    default:
+      return { label: 'En retard', cls: 'badge-late' };
+  }
+}
+
+/** Badges shared by the report and the member statement. */
+const STATUS_BADGE_CSS = `
+    .badge-status { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 8.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px; }
+    .badge-paid { background-color: #E6F4EC; color: #0B6E47; }
+    .badge-advance { background-color: #EBEEFA; color: #1F3FB8; }
+    .badge-late { background-color: #FEF2F2; color: #B91C1C; }
+    .badge-pending { background-color: #FBF1DF; color: #8A5300; }
+    .badge-muted { background-color: #F4F5F8; color: #6B7385; }
+    .section-title { font-size: 11px; font-weight: 900; text-transform: uppercase; color: #141B2D; letter-spacing: 0.5px; margin: 6px 0; }
+    .period-band { display: flex; justify-content: space-between; gap: 10px; background: #141B2D; color: #FFFFFF; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+    .period-band .k { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #C3CCF2; }
+    .period-band .v { font-size: 14px; font-weight: 900; }
+`;
 
 /**
  * Generates an SVG vector barcode for receipts and audit trails.
@@ -144,9 +226,30 @@ async function printHtmlOnce(html: string): Promise<void> {
   }
 }
 
+/**
+ * Web: expo-print only calls window.print(), which printed the app screen, not the document.
+ * The document goes into a hidden frame and that frame is printed.
+ */
+function printHtmlOnWeb(html: string): Promise<void> {
+  return new Promise((resolve) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    frame.onload = () => {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+      // Leave the frame long enough for the print dialog to read it
+      setTimeout(() => frame.remove(), 60_000);
+      resolve();
+    };
+    frame.srcdoc = html;
+    document.body.appendChild(frame);
+  });
+}
+
 async function renderHtmlDocument(html: string): Promise<string> {
   if (Platform.OS === 'web') {
-    await printHtmlOnce(html);
+    await printHtmlOnWeb(html);
     return 'web-printed';
   }
 
@@ -785,26 +888,7 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
       font-weight: 900;
       margin-top: 2px;
     }
-    .badge-status {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 8.5px;
-      font-weight: 800;
-      text-transform: uppercase;
-    }
-    .badge-paid {
-      background-color: #E6F4EC;
-      color: #0B6E47;
-    }
-    .badge-late {
-      background-color: #FEF2F2;
-      color: #B91C1C;
-    }
-    .badge-pending {
-      background-color: #FBF1DF;
-      color: #8A5300;
-    }
+    ${STATUS_BADGE_CSS}
   </style>
 </head>
 <body>
@@ -817,23 +901,28 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
         <div class="brand-logo-text">SOL <span>MOBILE</span></div>
         <div class="brand-subline">RAPPORT OFFICIEL D'ÉVOLUTION & AUDIT DE CARNET</div>
         <div style="font-size: 14px; font-weight: 900; color: #141B2D; margin-top: 4px;">
-          ${data.businessName || 'Carnet Tontinier'} ${data.cycleNumber ? `• Cycle #${data.cycleNumber}` : ''}
+          ${esc(data.businessName || 'Carnet Tontinier')} ${data.cycleNumber ? `• Cycle #${data.cycleNumber}` : ''}
         </div>
         <div style="font-size: 11px; color: #4A5368; margin-top: 2px;">
-          Gestionnaire : <strong>${data.collectorName}</strong> (${data.collectorPhone}) • Zone : <strong>${data.collectorZone || 'Standard'}</strong>
+          Gestionnaire : <strong>${esc(data.collectorName)}</strong> (${esc(data.collectorPhone)})${data.collectorZone ? ` • Zone : <strong>${esc(data.collectorZone)}</strong>` : ''}
         </div>
       </td>
       <td style="text-align: right;">
-        <div class="doc-badge badge-blue">AUDIT DE CYCLE</div>
+        <div class="doc-badge ${data.closedAt ? 'badge-amber' : 'badge-blue'}">${data.closedAt ? 'BILAN DE CYCLE CLÔTURÉ' : 'RAPPORT DE CYCLE'}</div>
         <div style="font-size: 10px; color: #4A5368; margin-top: 6px; font-weight: 600;">
-          Période : <strong>${formatDateShort(data.cycleStartDate)} au ${formatDateShort(data.cycleEndDate)}</strong>
-        </div>
-        <div style="font-size: 10px; color: #4A5368; font-weight: 600;">
           Édité le : <strong>${formatDate(data.generatedAt)}</strong>
         </div>
       </td>
     </tr>
   </table>
+
+  <!-- Period: start, planned end, round, closing -->
+  <div class="period-band">
+    <div><div class="k">Début</div><div class="v">${formatDateShort(data.cycleStartDate)}</div></div>
+    <div><div class="k">Fin prévue</div><div class="v">${formatDateShort(data.cycleEndDate)}</div></div>
+    <div><div class="k">Tours</div><div class="v">${data.currentRound ? `${data.currentRound} / ${data.totalSlots}` : `${data.totalSlots}`}</div></div>
+    <div><div class="k">${data.closedAt ? 'Clôturé le' : 'Main'}</div><div class="v">${data.closedAt ? formatDateShort(data.closedAt) : formatCurrency(data.unitAmount)}</div></div>
+  </div>
 
   <!-- KPI Matrix -->
   <div class="kpi-grid">
@@ -858,9 +947,13 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
       <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Fonds conservés en réserve</div>
     </div>
     <div class="kpi-tile">
-      <div class="kpi-tile-label">Effectif Adhérents</div>
-      <div class="kpi-tile-val" style="color: #141B2D;">${data.registeredChildrenCount} adhérents</div>
-      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">Membres inscrits au carnet</div>
+      <div class="kpi-tile-label">${data.remainingToCollect !== undefined ? 'Reste à encaisser' : 'Effectif Adhérents'}</div>
+      <div class="kpi-tile-val" style="color: ${data.remainingToCollect ? '#B91C1C' : '#141B2D'};">${
+        data.remainingToCollect !== undefined ? formatCurrency(data.remainingToCollect) : `${data.registeredChildrenCount} adhérents`
+      }</div>
+      <div style="font-size: 9px; color: #4A5368; font-weight: 600;">${
+        data.remainingToCollect !== undefined ? `Dû à ce jour · ${data.registeredChildrenCount} adhérents` : 'Membres inscrits au carnet'
+      }</div>
     </div>
     <div class="kpi-tile">
       <div class="kpi-tile-label">Taux de Recouvrement</div>
@@ -872,47 +965,73 @@ export async function generateManagerBusinessReportPdf(data: ManagerBusinessRepo
   </div>
 
   <!-- Members Roster Table -->
-  <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #141B2D; letter-spacing: 0.5px; margin-bottom: 6px;">
-    État Nominatif des Adhérents & Suivi des Cotisations
-  </div>
+  <div class="section-title">État nominatif des adhérents</div>
   <table class="table-clean">
     <thead>
       <tr>
-        <th style="width: 8%;">Rang</th>
-        <th style="width: 28%;">Nom & Prénom de l'Adhérent</th>
-        <th style="width: 16%;">Téléphone</th>
-        <th style="width: 14%; text-align: right;">Total Cotisé</th>
-        <th style="width: 12%; text-align: center;">Mains</th>
-        <th style="width: 11%; text-align: center;">Couverture</th>
-        <th style="width: 11%; text-align: center;">Main Tirée</th>
+        <th style="width: 7%;">Rang</th>
+        <th style="width: 27%;">Adhérent</th>
+        <th style="width: 8%; text-align: center;">Mains</th>
+        <th style="width: 22%; text-align: right;">Payé / Dû</th>
+        <th style="width: 14%; text-align: center;">Statut</th>
+        <th style="width: 22%; text-align: center;">Remise de la main</th>
       </tr>
     </thead>
     <tbody>
-      ${data.members.map((m) => `
+      ${data.members.map((m) => {
+        const badge = statusBadge(m.coverageStatus);
+        const planned = (m.plannedPayoutDates || []).map((d) => formatDateShort(d)).join(', ');
+        const received = (m.receivedPayoutDates || []).map((d) => formatDateShort(d)).join(', ');
+        return `
         <tr>
           <td><strong>#${m.rank}</strong></td>
-          <td><strong>${m.fullName}</strong></td>
-          <td>${m.phoneNumber || 'N/A'}</td>
-          <td style="text-align: right; color: #0B6E47; font-weight: 800;">${formatCurrency(m.totalPaid)}</td>
-          <td style="text-align: center; font-weight: 700;">${m.handsCovered}</td>
-          <td style="text-align: center;">
-            <span class="badge-status ${
-              m.coverageStatus === 'A_JOUR' || m.coverageStatus === 'EN_AVANCE'
-                ? 'badge-paid'
-                : 'badge-late'
-            }">
-              ${m.coverageStatus === 'A_JOUR' ? 'À JOUR' : m.coverageStatus === 'EN_AVANCE' ? 'AVANCE' : 'RETARD'}
-            </span>
-          </td>
-          <td style="text-align: center;">
-            <span class="badge-status ${m.hasReceivedPayout ? 'badge-paid' : 'badge-pending'}">
-              ${m.hasReceivedPayout ? 'PERÇUE' : 'ATTENTE'}
-            </span>
-          </td>
-        </tr>
-      `).join('')}
+          <td><strong>${esc(m.fullName)}</strong><div style="font-size: 9px; color: #6B7385;">${esc(m.phoneNumber || '')}</div></td>
+          <td style="text-align: center; font-weight: 700;">${m.handsCount || 1}</td>
+          <td style="text-align: right;"><strong style="color: #0B6E47;">${formatCurrency(m.totalPaid)}</strong>${
+            m.totalDue ? `<div style="font-size: 9px; color: #6B7385;">sur ${formatCurrency(m.totalDue)} · ${m.handsCovered} main(s)</div>` : ''
+          }</td>
+          <td style="text-align: center;"><span class="badge-status ${badge.cls}">${badge.label}</span></td>
+          <td style="text-align: center; font-size: 9.5px;">${
+            m.hasReceivedPayout
+              ? `<span class="badge-status badge-paid">Reçue${received ? ` le ${received}` : ''}</span>`
+              : planned
+              ? `Prévue le <strong>${planned}</strong>`
+              : '<span class="badge-status badge-muted">En attente</span>'
+          }</td>
+        </tr>`;
+      }).join('')}
     </tbody>
   </table>
+
+  ${
+    data.payoutCalendar && data.payoutCalendar.length
+      ? `
+  <div class="section-title">Calendrier des remises</div>
+  <table class="table-clean">
+    <thead>
+      <tr>
+        <th style="width: 12%;">Tour</th>
+        <th style="width: 22%;">Date prévue</th>
+        <th style="width: 40%;">Bénéficiaire</th>
+        <th style="width: 26%; text-align: center;">Remise</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${data.payoutCalendar.map((r) => `
+        <tr>
+          <td><strong>${r.round}</strong></td>
+          <td>${formatDateShort(r.date)}</td>
+          <td><strong>${esc(r.fullName)}</strong></td>
+          <td style="text-align: center;">${
+            r.receivedOn
+              ? `<span class="badge-status badge-paid">Remise le ${formatDateShort(r.receivedOn)}</span>`
+              : `<span class="badge-status badge-muted">À venir</span>`
+          }</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`
+      : ''
+  }
 
   <!-- Dual Signatures & Seal -->
   <table class="signatures-zone">
@@ -1037,6 +1156,37 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
       ${data.discrepancyReason ? `<div style="margin-top: 4px; font-weight: 600; font-size: 10px; color: #141B2D;">Justification consignée : <em>"${data.discrepancyReason}"</em></div>` : ''}
     </div>
 
+    ${
+      data.unpaidMembers && data.unpaidMembers.length
+        ? `
+    <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; color: #B91C1C; margin-bottom: 6px;">
+      Adhérents non payés à la clôture (${data.unpaidMembers.length}) · ${formatCurrency(data.unpaidMembers.reduce((sum, u) => sum + u.amount, 0))}
+    </div>
+    <table class="table-clean">
+      <thead>
+        <tr>
+          <th style="width: 50%;">Adhérent</th>
+          <th style="width: 15%; text-align: center;">Mains</th>
+          <th style="width: 20%; text-align: right;">Montant dû</th>
+          <th style="width: 15%; text-align: center;">État</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.unpaidMembers.map((u) => `
+          <tr>
+            <td><strong>${esc(u.fullName)}</strong></td>
+            <td style="text-align: center;">${u.missingHands}</td>
+            <td style="text-align: right; font-weight: 800;">${formatCurrency(u.amount)}</td>
+            <td style="text-align: center;">${u.state === 'LATE' ? 'En retard' : u.state === 'PARTIAL' ? 'Partiel' : 'Non payé'}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+    <div style="font-size: 10px; color: #4A5368; margin-bottom: 12px;">Caisse fermée par le gestionnaire malgré ces impayés${
+      data.closureNote ? ` — note : <em>${esc(data.closureNote)}</em>` : ''
+    }.</div>`
+        : `<div class="discrepancy-banner discrepancy-balanced">✓ Tous les adhérents avaient payé leur tour du ${formatDateShort(data.closureDate)}.</div>`
+    }
+
     <!-- Info Cards -->
     <table class="info-grid">
       <tr>
@@ -1062,7 +1212,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
             <div class="info-card-title">Détails d'Arrêté des Comptes</div>
             <div class="info-row">
               <span class="info-label">Statut Journalier :</span>
-              <span class="info-value" style="color: #0B6E47;">${data.status.toUpperCase()}</span>
+              <span class="info-value" style="color: #0B6E47;">${data.status === 'APPROVED' ? 'APPROUVÉE' : data.status === 'DRAFT' ? 'BROUILLON' : 'ENREGISTRÉE'}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Validation Sécurité :</span>
@@ -1108,6 +1258,132 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
         Procès-verbal officiel d'arrêté de caisse journalière. Les montants déclarés engagent la responsabilité pleine et entière du gestionnaire titulaire du carnet. Certifié par le système central SOL Mobile.
       </div>
     </div>
+  </div>
+${receiptNoteHtml()}
+</body>
+</html>
+  `.trim();
+
+  return await renderHtmlDocument(html);
+}
+
+/**
+ * Relevé de l'adhérent: identity, the cycle calendar round by round (paid, partial, late, to
+ * come), payout days and operations. Replaces the old « fiche » built on a contribution receipt.
+ */
+export async function generateMemberStatementPdf(data: MemberStatementPdfData): Promise<string> {
+  data = withReceiptName(data);
+  const barcodeSvg = generateBarcodeSvg(data.qrCodeToken || 'SOL');
+  const balance = data.totalDue - data.totalPaid;
+
+  const html = `
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>SOL – Relevé – ${esc(data.clientName)} – ${data.generatedAt.slice(0, 10)}</title>
+  <style>
+    ${BASE_PRINT_CSS}
+    ${STATUS_BADGE_CSS}
+  </style>
+</head>
+<body>
+  <div class="haitian-ribbon"></div>
+  <table class="header-table">
+    <tr>
+      <td>
+        <div class="brand-logo-text">SOL <span>MOBILE</span></div>
+        <div class="brand-subline">RELEVÉ DE L'ADHÉRENT</div>
+        <div style="font-size: 16px; font-weight: 900; margin-top: 4px;">${esc(data.clientName)}</div>
+        <div style="font-size: 11px; color: #4A5368;">${esc(data.clientPhone)} • ${data.handsCount} main(s) • Rang(s) ${data.payoutRanks.join(', ') || '—'}</div>
+      </td>
+      <td style="text-align: right;">
+        <div class="doc-badge badge-blue">${esc(data.businessName)}</div>
+        <div style="font-size: 10px; color: #4A5368; margin-top: 6px; font-weight: 600;">Gestionnaire : <strong>${esc(data.collectorName)}</strong></div>
+        <div style="font-size: 10px; color: #4A5368; font-weight: 600;">Édité le : <strong>${formatDate(data.generatedAt)}</strong></div>
+      </td>
+    </tr>
+  </table>
+
+  <div class="period-band">
+    <div><div class="k">Début</div><div class="v">${formatDateShort(data.cycleStartDate)}</div></div>
+    <div><div class="k">Fin prévue</div><div class="v">${formatDateShort(data.cycleEndDate)}</div></div>
+    <div><div class="k">Payé jusqu'au</div><div class="v">${data.paidUntilDate ? formatDateShort(data.paidUntilDate) : '—'}</div></div>
+    <div><div class="k">Prochaine échéance</div><div class="v">${data.nextDueDate ? formatDateShort(data.nextDueDate) : 'Soldé'}</div></div>
+  </div>
+
+  <table class="info-grid">
+    <tr>
+      <td style="width: 33%;"><div class="info-card"><div class="info-card-title">Cotisé</div><div style="font-size: 16px; font-weight: 900; color: #0B6E47;">${formatCurrency(data.totalPaid)}</div></div></td>
+      <td style="width: 33%;"><div class="info-card"><div class="info-card-title">Dû sur le cycle</div><div style="font-size: 16px; font-weight: 900;">${formatCurrency(data.totalDue)}</div><div style="font-size: 9px; color: #4A5368;">${data.handsCount} main(s) × ${data.rounds.length} tours × ${formatCurrency(data.unitAmount)}</div></div></td>
+      <td style="width: 33%;"><div class="info-card"><div class="info-card-title">${data.lateHands > 0 ? 'En retard' : 'Reste à verser'}</div><div style="font-size: 16px; font-weight: 900; color: ${data.lateHands > 0 ? '#B91C1C' : '#141B2D'};">${
+        data.lateHands > 0 ? `${data.lateHands} main(s) · ${formatCurrency(data.lateHands * data.unitAmount)}` : formatCurrency(Math.max(0, balance))
+      }</div></div></td>
+    </tr>
+  </table>
+
+  <div class="section-title">Échéancier</div>
+  <table class="table-clean">
+    <thead>
+      <tr>
+        <th style="width: 12%;">Tour</th>
+        <th style="width: 28%;">Date</th>
+        <th style="width: 25%; text-align: center;">Mains payées</th>
+        <th style="width: 35%; text-align: center;">État</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${data.rounds.map((r) => {
+        const badge = statusBadge(r.state);
+        const payout = data.payouts.find((p) => p.round === r.index);
+        return `
+        <tr>
+          <td><strong>${r.index}</strong></td>
+          <td>${formatDateShort(r.date)}${payout ? ' <span class="badge-status badge-advance">Reçoit la main</span>' : ''}</td>
+          <td style="text-align: center;">${r.paidHands} / ${r.dueHands}</td>
+          <td style="text-align: center;"><span class="badge-status ${badge.cls}">${badge.label}</span></td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
+
+  ${
+    data.payouts.length
+      ? `<div class="section-title">Remise de la main</div>
+  <table class="table-clean">
+    <tbody>
+      ${data.payouts.map((p) => `
+        <tr>
+          <td>Tour ${p.round} · prévue le <strong>${formatDateShort(p.date)}</strong></td>
+          <td style="text-align: right;">${p.receivedOn ? `<span class="badge-status badge-paid">Reçue le ${formatDateShort(p.receivedOn)}</span>` : '<span class="badge-status badge-muted">À venir</span>'}</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`
+      : ''
+  }
+
+  ${
+    data.operations.length
+      ? `<div class="section-title">Opérations du cycle</div>
+  <table class="table-clean">
+    <thead><tr><th>Date</th><th>Opération</th><th style="text-align: center;">Mains</th><th style="text-align: right;">Montant</th><th>Réf.</th></tr></thead>
+    <tbody>
+      ${data.operations.map((o) => `
+        <tr style="${o.reversed ? 'color: #6B7385; text-decoration: line-through;' : ''}">
+          <td>${formatDateShort(o.date)}</td>
+          <td>${esc(o.label)}</td>
+          <td style="text-align: center;">${o.hands || ''}</td>
+          <td style="text-align: right; font-weight: 800;">${formatCurrency(o.amount)}</td>
+          <td style="font-family: monospace; font-size: 9px;">${esc(o.ref)}</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`
+      : ''
+  }
+
+  <div class="security-seal">
+    <div class="barcode-wrapper">${barcodeSvg}</div>
+    <div style="font-size: 9.5px; font-weight: 700;">${esc(data.qrCodeToken)} • ${esc(data.collectorName)} ${esc(data.collectorPhone)}</div>
   </div>
 ${receiptNoteHtml()}
 </body>

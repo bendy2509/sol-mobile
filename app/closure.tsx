@@ -81,7 +81,7 @@ export default function CashClosureScreen() {
       const pdfUri = await generateCashClosureReceiptPdf({
         closureId: closure.id,
         businessName: activeBusiness?.name,
-        collectorName: activeCollector?.fullName || 'Gestionnaire Caisse',
+        collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
         collectorPhone: activeCollector?.phoneNumber || '',
         collectorZone: activeCollector?.zone,
         closureDate: closure.closureDate,
@@ -91,6 +91,8 @@ export default function CashClosureScreen() {
         discrepancyReason: closure.discrepancyReason,
         status: closure.status,
         generatedAt: closure.createdAt || new Date().toISOString(),
+        unpaidMembers: closure.unpaidMembers,
+        closureNote: closure.closureNote,
       });
       await sharePdfFile(pdfUri, `Bordereau Clôture - ${closure.closureDate}`);
     } catch (err: any) {

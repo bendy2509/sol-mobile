@@ -3,14 +3,14 @@ import { View, Pressable, StyleSheet, Alert, Linking, ActivityIndicator } from '
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getClientById, updateClientDetails, deleteClient, getAllClients } from '@/db/clientRepository';
-import { getTransactionsByClient, reverseTransaction } from '@/db/transactionRepository';
+import { getContributionCoverage, getTransactionsByClient, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } from '@/db/businessRepository';
 import { payoutMemberHand } from '@/db/memberRepository';
 import { useAuth } from '@/context/AuthContext';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import { MemberScheduleCard } from '@/components/MemberScheduleCard';
-import { buildCycleRounds } from '@/services/scheduleService';
+import { buildCycleRounds, buildMemberSchedule, buildPayoutCalendar, parsePayoutRanks } from '@/services/scheduleService';
 import {
   ActionMenu,
   AmountText,
@@ -34,7 +34,7 @@ import {
 import { BusinessConfig, Client, Transaction } from '@/types';
 import { formatCurrency, formatDate, formatDateShort } from '@/lib/formatters';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
-import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
+import { generateContributionReceiptPdf, generateMemberStatementPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { recordAuditLog } from '@/services/auditService';
 import {
   calculateCycleContributionLimits,
@@ -427,30 +427,54 @@ export default function ClientDetailScreen() {
           text: t('Télécharger PDF'),
           onPress: async () => {
             try {
-              const latestTx = transactions.length > 0 ? transactions[0] : null;
-              const unitVal = business?.contributionAmount || client.dailyAmount || 250;
-              const hands = client.paidHandsCount || 1;
-              const totalVal = client.totalPaidAmount || client.currentBalance;
-
-              const pdfUri = await generateContributionReceiptPdf({
-                transactionId: latestTx ? latestTx.id : 'LIVRET-INDIVIDUEL',
-                businessName: business?.name || 'SOL Mobile',
-                collectorName: activeCollector?.fullName || 'Agent SOL',
-                collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+              if (!business) throw new Error('no business');
+              // Relevé: the member's whole calendar (paid, partial, late, to come) and operations
+              const rounds = buildCycleRounds(business.startDate, business.frequency, totalCycleHands);
+              const schedule = buildMemberSchedule({ rounds, memberHands: memberHandsCount, paidHands: client.paidHandsCount || 0, todayStr: localDateString() });
+              const ranks = parsePayoutRanks(client.payoutRanks, client.payoutRank);
+              const cycleOps = transactions.filter((tx) => !isTransactionFromClosedCycle(tx.createdAtLocal, cycleBoundary));
+              const received = cycleOps
+                .filter((tx) => !tx.isReversed && (tx.type === 'SOL_PAYOUT' || tx.type === 'HAND_PAYOUT'))
+                .map((tx) => localDayOf(tx.createdAtLocal))
+                .sort();
+              const pdfUri = await generateMemberStatementPdf({
+                businessName: business.name,
+                collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+                collectorPhone: activeCollector?.phoneNumber || '',
                 collectorZone: activeCollector?.zone,
                 clientName: client.fullName,
                 clientPhone: client.phoneNumber,
-                payoutRank: client.payoutRank || undefined,
                 qrCodeToken: client.qrCodeToken,
-                unitAmount: unitVal,
-                handsCount: hands,
-                totalAmount: totalVal,
-                coverageStartDate: localDateString(),
-                coverageEndDate: client.paidUntilDate || localDateString(),
-                createdAt: latestTx ? latestTx.createdAtLocal : new Date().toISOString(),
+                payoutRanks: ranks,
+                handsCount: memberHandsCount,
+                unitAmount,
+                cycleStartDate: business.startDate,
+                cycleEndDate: rounds[rounds.length - 1] || business.endDate,
+                rounds: schedule.rounds,
+                paidUntilDate: schedule.paidUntilDate,
+                nextDueDate: schedule.nextDueDate,
+                totalPaid: client.totalPaidAmount || 0,
+                totalDue: schedule.totalDueHands * unitAmount,
+                lateHands: schedule.lateHands,
+                payouts: buildPayoutCalendar(rounds, [{ fullName: client.fullName, ranks, receivedDates: received }]).map((r) => ({
+                  round: r.round,
+                  date: r.date,
+                  receivedOn: r.receivedOn,
+                })),
+                operations: cycleOps
+                  .filter((tx) => tx.type !== 'REVERSAL')
+                  .map((tx) => ({
+                    date: localDayOf(tx.createdAtLocal),
+                    label: tx.type === 'SOL_PAYOUT' || tx.type === 'HAND_PAYOUT' ? 'Remise de la main' : 'Cotisation',
+                    amount: tx.amount,
+                    hands: tx.type === 'SOL_PAYOUT' || tx.type === 'HAND_PAYOUT' ? 0 : tx.handsCovered || 0,
+                    ref: tx.id.slice(0, 8).toUpperCase(),
+                    reversed: Boolean(tx.isReversed),
+                  })),
+                generatedAt: new Date().toISOString(),
               });
 
-              await sharePdfFile(pdfUri, `Fiche_SOL_${client.fullName.replace(/\s+/g, '_')}.pdf`);
+              await sharePdfFile(pdfUri, `Releve_SOL_${client.fullName.replace(/\s+/g, '_')}.pdf`);
             } catch (err: any) {
               Alert.alert(t('Erreur'), t('Impossible de générer le document PDF.'));
             }
@@ -490,6 +514,8 @@ export default function ClientDetailScreen() {
         });
       } else {
         const uAmount = unitAmount || Math.round(selectedTx.amount / (selectedTx.handsCovered || 1));
+        // Rounds this collection paid (cycle calendar), not the day it was recorded
+        const coverage = await getContributionCoverage(selectedTx.id);
         fileUri = await generateContributionReceiptPdf({
           transactionId: selectedTx.id,
           businessName: business?.name || 'SOL Mobile',
@@ -503,8 +529,8 @@ export default function ClientDetailScreen() {
           unitAmount: uAmount,
           handsCount: selectedTx.handsCovered || 1,
           totalAmount: selectedTx.amount,
-          coverageStartDate: localDayOf(selectedTx.createdAtLocal),
-          coverageEndDate: localDayOf(selectedTx.createdAtLocal),
+          coverageStartDate: coverage.startDate || localDayOf(selectedTx.createdAtLocal),
+          coverageEndDate: coverage.endDate || localDayOf(selectedTx.createdAtLocal),
           createdAt: selectedTx.createdAtLocal,
         });
       }

@@ -304,3 +304,62 @@ export function computeMemberSchedule(params: {
   const schedule = buildMemberSchedule({ rounds, memberHands: params.memberHands, paidHands: params.paidHands, todayStr: params.todayStr });
   return { ...schedule, status: statusFromSchedule(schedule, params.todayStr) };
 }
+
+/**
+ * Rounds paid by one collection: `handsPaid` hands added after `handsBefore` hands already paid
+ * in the cycle (oldest rounds first). Start and end are the first and last round touched.
+ */
+export function roundsCoveredBy(params: {
+  rounds: string[];
+  memberHands: number;
+  handsBefore: number;
+  handsPaid: number;
+}): { startDate: string | null; endDate: string | null } {
+  const h = Math.max(1, Number(params.memberHands) || 1);
+  const before = Math.max(0, Number(params.handsBefore) || 0);
+  const paid = Math.max(0, Number(params.handsPaid) || 0);
+  if (paid === 0 || !params.rounds.length) return { startDate: null, endDate: null };
+  const last = params.rounds.length - 1;
+  const first = Math.min(last, Math.floor(before / h));
+  const end = Math.min(last, Math.floor((before + paid - 1) / h));
+  return { startDate: params.rounds[first], endDate: params.rounds[end] };
+}
+
+export interface PayoutCalendarRow {
+  round: number;
+  date: string;
+  fullName: string;
+  /** Day the hand was actually paid out (null = not yet). */
+  receivedOn: string | null;
+}
+
+/**
+ * Who receives the pot at each round: round r goes to the member holding rank r. A member's
+ * k-th payout (by date) is matched to their k-th rank.
+ */
+export function buildPayoutCalendar(
+  rounds: string[],
+  members: Array<{ fullName: string; ranks: number[]; receivedDates?: string[] }>
+): PayoutCalendarRow[] {
+  const rows: PayoutCalendarRow[] = [];
+  for (const m of members) {
+    const ranks = [...m.ranks].filter((r) => r > 0).sort((a, b) => a - b);
+    const received = [...(m.receivedDates || [])].sort();
+    ranks.forEach((r, k) => {
+      if (rounds[r - 1]) rows.push({ round: r, date: rounds[r - 1], fullName: m.fullName, receivedOn: received[k] || null });
+    });
+  }
+  return rows.sort((a, b) => a.round - b.round);
+}
+
+/** Payout ranks of a member ("1, 5" or the single rank). */
+export function parsePayoutRanks(payoutRanks?: string | number[] | null, payoutRank?: number | null): number[] {
+  const list = Array.isArray(payoutRanks)
+    ? payoutRanks
+    : payoutRanks
+    ? String(payoutRanks).split(/[,;\s]+/)
+    : payoutRank
+    ? [payoutRank]
+    : [];
+  return list.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+}

@@ -17,8 +17,8 @@ import {
   reconstructClientFinancialTimeline,
 } from '@/services/financialService';
 import { recordAuditLog } from '@/services/auditService';
-import { paidUntilFromHands } from '@/services/scheduleService';
-import { localDateString } from '@/lib/dates';
+import { buildCycleRounds, paidUntilFromHands, roundsCoveredBy } from '@/services/scheduleService';
+import { localDateString, localDayOf } from '@/lib/dates';
 
 // In-memory Mutex to prevent double-submit collisions even during lag or double-clicking
 const inFlightTransactions = new Set<string>();
@@ -650,4 +650,43 @@ export async function reverseTransaction(params: {
     createdAtLocal: now,
     syncStatus: 'PENDING',
   };
+}
+
+/**
+ * Rounds a contribution paid, from the cycle calendar: the hands paid before it fill the oldest
+ * rounds, its own hands follow (a receipt shows « tours du 20/10 au 22/10 », not the payment day).
+ */
+export async function getContributionCoverage(txId: string): Promise<{ startDate: string | null; endDate: string | null }> {
+  const db = await getDatabase();
+  const tx = await db.getFirstAsync<{ id: string; client_id: string; collector_id: string; hands_covered: number | null; created_at_local: string }>(
+    `SELECT id, client_id, collector_id, hands_covered, created_at_local FROM transactions WHERE id = ?`,
+    [txId]
+  );
+  if (!tx) return { startDate: null, endDate: null };
+  const [business, boundary, totalCycleHands] = await Promise.all([
+    getActiveBusinessConfig(tx.collector_id),
+    getCurrentCycleBoundary(tx.collector_id),
+    getCycleHandsTotal(tx.collector_id),
+  ]);
+  // A closed-cycle contribution is dated by its own day (its cycle's calendar is archived)
+  if (!business || isTransactionFromClosedCycle(tx.created_at_local, boundary)) {
+    const day = localDayOf(tx.created_at_local);
+    return { startDate: day, endDate: day };
+  }
+  const client = await db.getFirstAsync<{ hands_count: number | null }>(`SELECT hands_count FROM clients WHERE id = ?`, [tx.client_id]);
+  const own = (await getTransactions({ clientId: tx.client_id, collectorId: tx.collector_id }))
+    .filter((t) => !isTransactionFromClosedCycle(t.createdAtLocal, boundary))
+    .filter((t) => !t.isReversed && (t.type === 'SOL_CONTRIBUTION' || t.type === 'CONTRIBUTION' || t.type === 'SABOTAY_DEPOSIT'))
+    .sort((a, b) => a.createdAtLocal.localeCompare(b.createdAtLocal) || a.id.localeCompare(b.id));
+  let handsBefore = 0;
+  for (const t of own) {
+    if (t.id === tx.id) break;
+    handsBefore += t.handsCovered || 0;
+  }
+  return roundsCoveredBy({
+    rounds: buildCycleRounds(business.startDate, business.frequency, totalCycleHands),
+    memberHands: Math.max(1, Number(client?.hands_count || 1)),
+    handsBefore,
+    handsPaid: Number(tx.hands_covered || 1),
+  });
 }

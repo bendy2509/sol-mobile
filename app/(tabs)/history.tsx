@@ -6,7 +6,7 @@ import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import { AmountText, BottomSheet, Button, Card, EmptyState, Icon, ListItem, Screen, SegmentedControl, Text, TextField, UiIconName } from '@/components/ui';
-import { getAllTransactions, reverseTransaction } from '@/db/transactionRepository';
+import { getAllTransactions, getContributionCoverage, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveCollector } from '@/db/sqlite';
 import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
 import { getClientById } from '@/db/clientRepository';
@@ -139,6 +139,8 @@ export default function HistoryScreen() {
         });
       } else {
         const unitAmount = business?.contributionAmount || Math.round(selectedTx.amount / (selectedTx.handsCovered || 1));
+        // Rounds this collection paid (cycle calendar), not the day it was recorded
+        const coverage = await getContributionCoverage(selectedTx.id);
         pdfUri = await generateContributionReceiptPdf({
           transactionId: selectedTx.id,
           businessName: business?.name || 'SOL Mobile',
@@ -152,8 +154,8 @@ export default function HistoryScreen() {
           unitAmount,
           handsCount: selectedTx.handsCovered || 1,
           totalAmount: selectedTx.amount,
-          coverageStartDate: localDayOf(selectedTx.createdAtLocal),
-          coverageEndDate: localDayOf(selectedTx.createdAtLocal),
+          coverageStartDate: coverage.startDate || localDayOf(selectedTx.createdAtLocal),
+          coverageEndDate: coverage.endDate || localDayOf(selectedTx.createdAtLocal),
           createdAt: selectedTx.createdAtLocal,
         });
       }
