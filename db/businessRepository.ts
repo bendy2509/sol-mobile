@@ -6,7 +6,7 @@ import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalcula
 import { recordAuditLog } from '@/services/auditService';
 import { calculateCycleTotalHands, calculateClientPaymentStatus } from '@/services/financialService';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
-import { localDateString } from '@/lib/dates';
+import { localDateString, localDayStartIso } from '@/lib/dates';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -442,7 +442,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
             hands_count, received_hands_count, has_received_hand, has_received_payout, hand_received_date, total_paid_amount, 
             paid_hands_count, paid_until_date, qr_code_token, created_at
      FROM clients 
-     WHERE collector_id = ?
+     WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)
      ORDER BY payout_rank ASC, full_name ASC`,
     [collectorId]
   );
@@ -470,7 +470,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   }
 
   // Count total non-reversed payout transactions for the current cycle to guarantee 100% reconciliation
-  const cycleStartIso = business.startDate ? new Date(business.startDate).toISOString() : startOfDayIso;
+  // Same boundary as history, reversals and the ledger (latest closure, else the local start day)
+  const cycleStartIso = (await getCurrentCycleBoundary(collectorId)) || startOfDayIso;
   const payoutTxRow = await db.getFirstAsync<{ count: number }>(
     `SELECT count(*) as count FROM transactions 
      WHERE collector_id = ? AND type IN ('HAND_PAYOUT', 'SOL_PAYOUT') AND is_reversed = 0 AND created_at_local >= ?`,
@@ -479,17 +480,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const totalPayoutTxCount = Number(payoutTxRow?.count || 0);
   const effectiveHandsTouched = Math.max(handsTouchedCount, totalPayoutTxCount);
 
-  // Batch query: All client IDs who paid today (1 fast query instead of looping N queries)
-  const todayTxRows = await db.getAllAsync<{ client_id: string }>(
-    `SELECT client_id FROM transactions 
-     WHERE collector_id = ? 
-       AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
-       AND is_reversed = 0 
-       AND created_at_local >= ?
-     GROUP BY client_id`,
-    [collectorId, startOfDayIso]
-  );
-  const paidTodayClientIds = new Set(todayTxRows.map((t) => t.client_id));
+  // Rounds in the cycle: one per hand of every enrolled member
+  const cycleHands = calculateCycleTotalHands(members);
 
   for (const m of members) {
     const parsedRanksCount = m.payout_ranks ? String(m.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
@@ -502,29 +494,28 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
         : 0;
     const hasTouched = receivedCount >= memberHandsCount;
 
-    // Check if member paid today
-    const hasPaidToday = paidTodayClientIds.has(m.id);
-    const isCoveredInAdvance = m.paid_until_date && m.paid_until_date >= todayStr;
-
-    // Same rule as the member badges: today's hand alone is « À encaisser », late only from the
-    // next day (calculateClientPaymentStatus)
-    const status = calculateClientPaymentStatus({
+    // Same rule as the member badges (cycle calendar): all the member's hands are due at every
+    // round; today's alone is « À encaisser », late only from the next day
+    const calc = calculateClientPaymentStatus({
       todayStr,
-      paidUntilDate: m.paid_until_date || null,
-      hasPaidToday,
       currentBalance: Number(m.current_balance || 0),
       unitAmount,
-    }).status;
+      schedule: {
+        cycleStartDate: business.startDate,
+        frequency: business.frequency,
+        totalCycleHands: cycleHands,
+        memberHands: memberHandsCount,
+        paidHands: Number(m.paid_hands_count || 0),
+      },
+    });
+    const status = calc.status;
+    const isCovered = status === 'PAID_TODAY' || status === 'PAID_IN_ADVANCE';
 
-    if (hasPaidToday || isCoveredInAdvance) {
+    if (isCovered) {
       paidTodayCount++;
     } else if (status === 'OVERDUE') {
       overdueMembersCount++;
-      const missingHands = Math.max(
-        1,
-        Math.ceil((unitAmount - (m.current_balance || 0)) / (unitAmount || 1))
-      );
-      overdueHandsCount += missingHands;
+      overdueHandsCount += calc.installmentsOverdue;
     }
 
     // Determine current payout beneficiary (next rank who hasn't received all hands)
@@ -552,7 +543,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
         qrCodeToken: m.qr_code_token,
         createdAt: m.created_at,
         syncStatus: 'SYNCED',
-        paymentStatusToday: (hasPaidToday || isCoveredInAdvance) ? 'PAID_TODAY' : 'UNPAID_TODAY',
+        paymentStatusToday: status,
         overdueRoundsCount: 0,
         totalPaidInCycle: Number(m.total_paid_amount || m.current_balance || 0),
         handsCoveredAhead: 0,
@@ -804,7 +795,8 @@ export async function getCurrentCycleBoundary(collectorIdParam?: string): Promis
   }
 
   const business = await getActiveBusinessConfig(collectorId);
-  return business?.startDate ? new Date(business.startDate).toISOString() : null;
+  // Local midnight of the start day (new Date('YYYY-MM-DD') is UTC midnight: 20:00 the evening before in Haiti)
+  return business?.startDate ? localDayStartIso(business.startDate) : null;
 }
 
 export async function getClosedCycles(collectorIdParam?: string): Promise<ClosedCycle[]> {
@@ -857,4 +849,18 @@ export async function getClosedCycles(collectorIdParam?: string): Promise<Closed
     snapshotData: r.snapshot_data,
     createdAt: r.created_at,
   }));
+}
+
+/**
+ * Total hands of the current cycle = number of rounds (sum of each enrolled member's hands,
+ * deleted members excluded).
+ */
+export async function getCycleHandsTotal(collectorIdParam?: string): Promise<number> {
+  const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+  const rows = await db.getAllAsync<{ hands_count: number | null; payout_ranks: string | null }>(
+    `SELECT hands_count, payout_ranks FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
+    [collectorId]
+  );
+  return calculateCycleTotalHands(rows);
 }

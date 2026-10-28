@@ -25,3 +25,9 @@ export function localDayOf(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value.split('T')[0] : localDateString(date);
 }
+
+/** Instant (ISO, UTC) of local midnight starting a calendar day `YYYY-MM-DD`. */
+export function localDayStartIso(day: string): string {
+  const [y, m, d] = day.split('T')[0].split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0).toISOString();
+}

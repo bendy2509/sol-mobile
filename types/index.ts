@@ -134,6 +134,12 @@ export interface Member extends MemberChild {
   totalPaidInCycle: number;
   handsCoveredAhead: number; // Nombre de jours/mains d'avance
   nextDueDate?: string;
+  /** Hands of today's round still to collect (services/scheduleService.ts). */
+  missingHandsToday?: number;
+  /** Hands owed on past rounds. */
+  lateHands?: number;
+  /** Today's round is paid for some of the member's hands, not all. */
+  isPartialToday?: boolean;
 }
 
 export type Client = Member;

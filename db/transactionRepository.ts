@@ -8,16 +8,16 @@ import {
   UserRole,
 } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
-import { getActiveBusinessConfig, getCurrentCycleBoundary } from './businessRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } from './businessRepository';
 import {
   isTransactionFromClosedCycle,
-  calculateCoverageDate,
   calculateHandsCount,
   calculateCycleContributionLimits,
   calculateCycleTotalHands,
   reconstructClientFinancialTimeline,
 } from '@/services/financialService';
 import { recordAuditLog } from '@/services/auditService';
+import { paidUntilFromHands } from '@/services/scheduleService';
 import { localDateString } from '@/lib/dates';
 
 // In-memory Mutex to prevent double-submit collisions even during lag or double-clicking
@@ -127,13 +127,13 @@ export async function createTransaction(data: {
     let newBalance = currentBalance;
     let newTotalPaid = currentTotalPaid;
     let newPaidHands = currentPaidHands;
-    let newPaidUntilDate = client.paid_until_date || todayStr;
+    let newPaidUntilDate: string | null = client.paid_until_date || null;
     let newReceivedHands = currentReceivedHands;
     let isFullyReceived = currentReceivedHands >= memberHandsCount ? 1 : 0;
 
     if (isContribution) {
-      const allClientsRows = await db.getAllAsync<{ hands_count: number | null }>(
-        `SELECT hands_count FROM clients WHERE collector_id = ?`,
+      const allClientsRows = await db.getAllAsync<{ hands_count: number | null; payout_ranks: string | null }>(
+        `SELECT hands_count, payout_ranks FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
         [collectorId]
       );
       const totalCycleHands = calculateCycleTotalHands(allClientsRows) || (activeBusiness?.totalSlots || 10);
@@ -161,14 +161,15 @@ export async function createTransaction(data: {
       newTotalPaid = currentTotalPaid + amount;
       newPaidHands = currentPaidHands + calculatedHandsCovered;
 
-      // Calculate exact coverage date using central financial service
-      const coverage = calculateCoverageDate({
-        todayStr,
-        handsCovered: calculatedHandsCovered,
+      // Hands fill the cycle's rounds oldest first, all the member's hands per round: 1 hand
+      // paid by a 2-hand member does not cover the day (services/scheduleService.ts)
+      newPaidUntilDate = paidUntilFromHands({
+        cycleStartDate: activeBusiness?.startDate || todayStr,
         frequency: activeBusiness?.frequency || 'DAILY',
-        currentPaidUntilDate: client.paid_until_date,
+        memberHands: memberHandsCount,
+        paidHands: newPaidHands,
+        totalRounds: totalCycleHands,
       });
-      newPaidUntilDate = coverage.paidUntilDate;
     } else if (isPayout) {
       if (currentReceivedHands >= memberHandsCount) {
         throw new Error(
@@ -563,6 +564,7 @@ export async function reverseTransaction(params: {
     frequency: activeBusiness?.frequency || 'DAILY',
     cycleStartDate: activeBusiness?.startDate || localDateString(),
     handsCount,
+    totalCycleHands: await getCycleHandsTotal(ownerCollectorId),
   });
 
   const actorLabel = isClosedCycleTx ? 'CYCLE CLÔTURÉ' : 'GESTIONNAIRE';

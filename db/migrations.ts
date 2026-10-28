@@ -10,6 +10,9 @@
  * Pure module: it only needs the four calls below, so it runs on expo-sqlite in the app and
  * on Node's built-in SQLite in scripts/test_migrations.ts.
  */
+import { calculateCycleTotalHands } from '../services/financialService';
+import { paidUntilFromHands } from '../services/scheduleService';
+
 export interface MigrationDb {
   execAsync(sql: string): Promise<void>;
   runAsync(sql: string, params?: unknown[]): Promise<unknown>;
@@ -243,6 +246,38 @@ export const MIGRATIONS: Migration[] = [
              WHERE type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') AND COALESCE(is_reversed, 0) = 0
            )`
       );
+    },
+  },
+  {
+    version: 8,
+    name: 'paid-until-from-cycle-calendar',
+    // The paid-until date used to advance one day per hand paid, whatever the member's hands:
+    // 1 hand paid by a 2-hand member covered the day. It now comes from the cycle calendar
+    // (services/scheduleService.ts): all the member's hands at every round since the cycle start.
+    async up(db) {
+      const businesses = await db.getAllAsync<{ collector_id: string; start_date: string; frequency: string }>(
+        `SELECT collector_id, start_date, frequency FROM business_configs b
+         WHERE created_at = (SELECT MAX(created_at) FROM business_configs WHERE collector_id = b.collector_id)`
+      );
+      for (const b of businesses) {
+        if (!b.start_date) continue;
+        const clients = await db.getAllAsync<{ id: string; hands_count: number | null; payout_ranks: string | null; paid_hands_count: number | null }>(
+          `SELECT id, hands_count, payout_ranks, paid_hands_count FROM clients
+           WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
+          [b.collector_id]
+        );
+        const totalRounds = calculateCycleTotalHands(clients);
+        for (const c of clients) {
+          const paidUntil = paidUntilFromHands({
+            cycleStartDate: b.start_date,
+            frequency: b.frequency,
+            memberHands: Math.max(1, Number(c.hands_count || 1)),
+            paidHands: Number(c.paid_hands_count || 0),
+            totalRounds,
+          });
+          await db.runAsync(`UPDATE clients SET paid_until_date = ? WHERE id = ?`, [paidUntil, c.id]);
+        }
+      }
     },
   },
 ];

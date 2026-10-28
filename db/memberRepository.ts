@@ -1,5 +1,5 @@
 import { FilterStatus, Member, MemberPaymentStatus, SortOption, Transaction } from '@/types';
-import { getActiveBusinessConfig } from './businessRepository';
+import { getActiveBusinessConfig, getCycleHandsTotal } from './businessRepository';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { createTransaction } from './transactionRepository';
 import { calculateClientPaymentStatus } from '@/services/financialService';
@@ -80,6 +80,8 @@ export async function getMembersWithPaymentStatus(options?: {
   }>(query, params);
 
   const unitAmount = business?.contributionAmount || 250;
+  // Rounds in the cycle, over every member (the list itself may be filtered by a search)
+  const cycleHands = await getCycleHandsTotal(collectorId);
   const members: Member[] = [];
 
   // Batch query 1: All clients who made a payment today (1 fast query instead of N queries)
@@ -122,12 +124,22 @@ export async function getMembersWithPaymentStatus(options?: {
     const paidHands = Number(r.paid_hands_count || Math.floor(balance / (unitAmount || 1)));
     const paidUntil = r.paid_until_date || null;
 
+    // Cycle calendar: all the member's hands are due at every round since the cycle start
     const calculated = calculateClientPaymentStatus({
       todayStr,
       paidUntilDate: paidUntil,
       hasPaidToday,
       currentBalance: balance,
       unitAmount,
+      schedule: business
+        ? {
+            cycleStartDate: business.startDate,
+            frequency: business.frequency,
+            totalCycleHands: cycleHands,
+            memberHands: handsCount,
+            paidHands: Number(r.paid_hands_count || 0),
+          }
+        : undefined,
     });
 
     const paymentStatusToday: MemberPaymentStatus = calculated.status;
@@ -162,6 +174,10 @@ export async function getMembersWithPaymentStatus(options?: {
       lastPaymentDate,
       totalPaidInCycle: totalPaid,
       handsCoveredAhead,
+      nextDueDate: calculated.nextDueDate,
+      missingHandsToday: calculated.missingHandsToday,
+      lateHands: calculated.lateHands,
+      isPartialToday: calculated.isPartialToday,
     });
   }
 

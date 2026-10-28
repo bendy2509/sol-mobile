@@ -830,4 +830,6 @@ export const htPhrases: Record<string, string> = {
   'Recalculer depuis les opérations': 'Rekalkile dapre operasyon yo',
   'Confirmer le recalcul': 'Konfime rekalkil la',
   'Votre code PIN valide la correction des totaux.': 'Kòd PIN ou valide koreksyon total yo.',
+  'partiel, {0} main{1}': 'pasyèl, {0} men',
+  '· tour du {0} partiel': '· tou {0} an pasyèl',
 };
