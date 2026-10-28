@@ -208,6 +208,9 @@ class WebSQLiteAdapter {
           attempts_count: Number(attempts_count || 0), last_error: last_error || null,
           created_at, synced_at: synced_at || null
         });
+      } else if (tableName === 'closed_cycles') {
+        const parsed = parseInsert(cleanSql, params);
+        if (parsed) this.data.closed_cycles.push(parsed.values);
       } else if (tableName === 'deleted_clients') {
         let id: string, qr_code_token: string | null = null, phone_number: string | null = null, collector_id: string, deleted_at: string, sync_status = 'PENDING';
         if (params.length >= 6) {
@@ -516,6 +519,15 @@ class WebSQLiteAdapter {
       });
 
       return txs as any;
+    }
+
+    if (upperSql.includes('FROM CLOSED_CYCLES')) {
+      if (!Array.isArray(this.data.closed_cycles)) this.data.closed_cycles = [];
+      const list = this.data.closed_cycles
+        .filter((c: any) => !cleanSql.includes('collector_id = ?') || c.collector_id === params[0])
+        .sort((a: any, b: any) => String(b.closed_at).localeCompare(String(a.closed_at)));
+      if (upperSql.includes('COUNT(*)')) return [{ cnt: list.length, n: list.length }] as any;
+      return list as any;
     }
 
     if (upperSql.includes('FROM CASH_CLOSURES')) {
@@ -1091,7 +1103,8 @@ export async function isClientPhoneTaken(
   const normalized = normalizePhoneNumber(phone);
 
   const rows = await db.getAllAsync<{ id: string; phone_number: string }>(
-    `SELECT id, phone_number FROM clients WHERE collector_id = ?`,
+    // Members of earlier cycles (tombstoned) can enrol again with the same number
+    `SELECT id, phone_number FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
     [collectorId]
   );
 

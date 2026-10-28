@@ -880,4 +880,8 @@ export const htPhrases: Record<string, string> = {
   'Approuvée': 'Apwouve',
   'Brouillon': 'Bouyon',
   'Enregistrée': 'Anrejistre',
+  'Du {0} au {1} (fin prévue)': 'Soti {0} rive {1} (fen prevwa)',
+  'Clôturé le {0}': 'Fèmen {0}',
+  'Le cycle n\'a pas pu être archivé : clôture annulée.': 'Sik la pa t ka achive : fèmti a anile.',
+  '{0} adhérents · {1} par main': '{0} manm · {1} pa men',
 };

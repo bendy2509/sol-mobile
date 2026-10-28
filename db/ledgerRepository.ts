@@ -41,7 +41,7 @@ export async function findLedgerDiscrepancies(collectorIdParam?: string): Promis
   const clients = await db.getAllAsync<ClientRow>(
     `SELECT id, full_name, hands_count, current_balance, total_paid_amount, paid_hands_count,
             received_hands_count, has_received_hand, paid_until_date
-     FROM clients WHERE collector_id = ?`,
+     FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
     [collectorId]
   );
   const allTxs = await getTransactions({ collectorId });

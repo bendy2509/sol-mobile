@@ -198,7 +198,7 @@ export default function CycleManagementScreen() {
       );
     } catch (err: any) {
       triggerErrorFeedback();
-      Alert.alert(t('Erreur'), err?.message || t('Impossible de renouveler le cycle. Veuillez réessayer.'));
+      Alert.alert(t('Erreur'), err?.message ? t(err.message) : t('Impossible de renouveler le cycle. Veuillez réessayer.'));
     } finally {
       setIsProcessing(false);
     }
@@ -289,11 +289,10 @@ export default function CycleManagementScreen() {
       <View style={styles.cardGap}>
         <Text variant="caption" tone="muted">{t('Cycle actuel')}</Text>
         <Text variant="heading">{business.name}</Text>
+        <Text variant="caption" tone="muted">{t('{0} adhérents · {1} par main', members.length, formatCurrency(business.contributionAmount))}</Text>
       </View>
       <StatStrip
         cells={[
-          { label: t('Adhérents'), value: String(members.length) },
-          { label: t('Par main'), value: formatCurrency(business.contributionAmount) },
           { label: t('Début'), value: formatDateShort(business.startDate) },
           { label: t('Fin prévue'), value: formatDateShort(getCycleDates(business.startDate, business.frequency, Math.max(1, calculateCycleTotalHands(members))).endDate) },
         ]}
@@ -435,10 +434,16 @@ export default function CycleManagementScreen() {
               </View>
               <View style={styles.periodRow}>
                 <Icon name="calendar" size={14} color={theme.colors.textMuted} />
-                <Text variant="caption" tone="muted">
-                  {formatDateShort(cycle.startDate)} → {formatDateShort(cycle.closedAt || cycle.endDate)}
+                <Text variant="caption" tone="muted" style={styles.flexShrink}>
+                  {t('Du {0} au {1} (fin prévue)', formatDateShort(cycle.startDate), formatDateShort(cycle.endDate))}
                 </Text>
               </View>
+              {cycle.closedAt ? (
+                <View style={styles.periodRow}>
+                  <Icon name="lock" size={14} color={theme.colors.textMuted} />
+                  <Text variant="caption" tone="muted">{t('Clôturé le {0}', formatDateShort(cycle.closedAt))}</Text>
+                </View>
+              ) : null}
               <View style={styles.statsGrid}>
                 <View style={styles.statCell}>
                   <Text variant="caption" tone="muted">{t('Cotisation')}</Text>

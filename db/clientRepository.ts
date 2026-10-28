@@ -2,7 +2,7 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { Client, ClientType, SyncStatus } from '@/types';
 import { getActiveCollectorId, getDatabase, isClientPhoneTaken } from './sqlite';
-import { assertEnrollmentOpen, getActiveBusinessConfig, getCycleHandsTotal, recomputeCycleShape } from './businessRepository';
+import { assertEnrollmentOpen, getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal, recomputeCycleShape } from './businessRepository';
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString } from '@/lib/dates';
@@ -526,9 +526,12 @@ export async function deleteClient(clientId: string): Promise<void> {
   // Removing a member changes the rounds (frozen after a payout) and would erase their
   // operations: no collection may disappear, so their operations must be reversed first
   await assertEnrollmentOpen(collectorId);
+  // Operations of the current cycle only: earlier cycles are archived
+  const boundary = await getCurrentCycleBoundary(collectorId);
   const ops = await db.getFirstAsync<{ count: number }>(
-    `SELECT count(*) as count FROM transactions WHERE client_id = ? AND type != 'REVERSAL' AND COALESCE(is_reversed, 0) = 0`,
-    [clientId]
+    `SELECT count(*) as count FROM transactions
+     WHERE client_id = ? AND type != 'REVERSAL' AND is_reversed = 0 AND created_at_local >= ?`,
+    [clientId, boundary || '']
   );
   if (Number(ops?.count || 0) > 0) {
     throw new Error(DELETE_WITH_OPERATIONS_MESSAGE);
