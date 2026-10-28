@@ -280,6 +280,14 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 9,
+    name: 'closure-unpaid-members',
+    // A cash closure keeps the members not fully paid that day (closed anyway by the manager)
+    async up(db) {
+      await addColumn(db, 'cash_closures', 'unpaid_snapshot', 'unpaid_snapshot TEXT');
+    },
+  },
 ];
 
 /** Warning recorded by migration 6 when an unused legacy table still holds rows. */

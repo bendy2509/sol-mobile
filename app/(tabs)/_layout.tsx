@@ -53,7 +53,6 @@ export default function TabLayout() {
       <Tabs.Screen name="sol" options={{ title: t('tabs.sol'), tabBarIcon: renderIcon('cycle') }} />
       <Tabs.Screen name="history" options={{ title: t('tabs.history'), tabBarIcon: renderIcon('history') }} />
       <Tabs.Screen name="settings" options={{ title: t('tabs.settings'), tabBarIcon: renderIcon('settings') }} />
-      <Tabs.Screen name="two" options={{ href: null }} />
     </Tabs>
   );
 }
