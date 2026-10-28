@@ -134,6 +134,12 @@ export interface Member extends MemberChild {
   totalPaidInCycle: number;
   handsCoveredAhead: number; // Nombre de jours/mains d'avance
   nextDueDate?: string;
+  /** Hands of today's round still to collect (services/scheduleService.ts). */
+  missingHandsToday?: number;
+  /** Hands owed on past rounds. */
+  lateHands?: number;
+  /** Today's round is paid for some of the member's hands, not all. */
+  isPartialToday?: boolean;
 }
 
 export type Client = Member;
@@ -175,6 +181,21 @@ export interface CashClosure {
   discrepancyReason?: string;
   status: 'DRAFT' | 'SUBMITTED' | 'APPROVED';
   createdAt: string;
+  /** Members not fully paid for the day when the cash was closed (closed anyway by the manager). */
+  unpaidMembers?: UnpaidMember[];
+  /** Manager's note when closing with unpaid members. */
+  closureNote?: string;
+}
+
+/** A member whose rounds up to the closure day are not fully paid. */
+export interface UnpaidMember {
+  clientId: string;
+  fullName: string;
+  /** Hands owed up to the day (late rounds + the day's round). */
+  missingHands: number;
+  amount: number;
+  /** PARTIAL: some of the day's hands paid; UNPAID: none of the day's hands; LATE: earlier rounds owed. */
+  state: 'PARTIAL' | 'UNPAID' | 'LATE';
 }
 
 export interface ClosedCycle {

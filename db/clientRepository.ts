@@ -2,9 +2,8 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { Client, ClientType, SyncStatus } from '@/types';
 import { getActiveCollectorId, getDatabase, isClientPhoneTaken } from './sqlite';
-import { getActiveBusinessConfig } from './businessRepository';
+import { assertEnrollmentOpen, getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal, recomputeCycleShape } from './businessRepository';
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
-import { calculateCycleEndDate } from '@/lib/dateCalculations';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString } from '@/lib/dates';
 
@@ -314,11 +313,10 @@ export async function createClient(data: {
   const activeBusiness = await getActiveBusinessConfig();
   const businessId = data.businessId || activeBusiness?.id || null;
 
-  const totalHandsRow = await db.getFirstAsync<{ total: number }>(
-    `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
-    [collectorId]
-  );
-  const currentTotalHands = Number(totalHandsRow?.total || 0);
+  // A hand already paid out fixes the pot: no new member until that payout is reversed
+  await assertEnrollmentOpen(collectorId);
+
+  const currentTotalHands = await getCycleHandsTotal(collectorId);
   const startingRank = currentTotalHands + 1;
   let handsCount = Math.max(1, Number(data.handsCount) || 1);
   if (data.payoutRanks) {
@@ -396,23 +394,8 @@ export async function createClient(data: {
     ]
   );
 
-  // Update business total_slots if active business exists with exact DB sum
-  if (activeBusiness) {
-    const allHandsRow = await db.getFirstAsync<{ total: number }>(
-      `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
-      [collectorId]
-    );
-    const updatedTotalSlots = Math.max(1, Number(allHandsRow?.total || 0));
-    const newEndDate = calculateCycleEndDate(
-      activeBusiness.startDate,
-      updatedTotalSlots,
-      activeBusiness.frequency
-    );
-    await db.runAsync(
-      `UPDATE business_configs SET total_slots = ?, end_date = ? WHERE id = ?`,
-      [updatedTotalSlots, newEndDate, activeBusiness.id]
-    );
-  }
+  // One round per hand: the cycle gains rounds and its end date moves
+  if (activeBusiness) await recomputeCycleShape(collectorId);
 
   return {
     id,
@@ -466,6 +449,20 @@ export async function updateClientDetails(
   const fields: string[] = [];
   const params: any[] = [];
 
+  // Hands and payout ranks shape every round's pot: frozen once a hand is paid out
+  if (data.handsCount !== undefined || data.payoutRanks !== undefined || data.payoutRank !== undefined) {
+    const current = await db.getFirstAsync<{ collector_id: string; hands_count: number | null; payout_rank: number | null; payout_ranks: string | null }>(
+      `SELECT collector_id, hands_count, payout_rank, payout_ranks FROM clients WHERE id = ?`,
+      [clientId]
+    );
+    const newRanks = data.payoutRanks === undefined ? undefined : Array.isArray(data.payoutRanks) ? data.payoutRanks.join(',') : String(data.payoutRanks);
+    const changes =
+      (data.handsCount !== undefined && Math.max(1, Number(data.handsCount) || 1) !== Math.max(1, Number(current?.hands_count || 1))) ||
+      (newRanks !== undefined && newRanks.replace(/\s/g, '') !== String(current?.payout_ranks || '').replace(/\s/g, '')) ||
+      (data.payoutRank !== undefined && Number(data.payoutRank) !== Number(current?.payout_rank));
+    if (changes) await assertEnrollmentOpen(current?.collector_id);
+  }
+
   if (data.fullName !== undefined) {
     fields.push('full_name = ?');
     params.push(data.fullName.trim());
@@ -503,34 +500,17 @@ export async function updateClientDetails(
 
   await db.runAsync(`UPDATE clients SET ${fields.join(', ')} WHERE id = ?`, params);
 
-  // Recalculate cycle total hands and update active business_configs
+  // Hands may have changed: rounds and end date follow
   try {
-    const clientRow = await db.getFirstAsync<{ collector_id: string }>(
-      `SELECT collector_id FROM clients WHERE id = ?`,
-      [clientId]
-    );
-    const collectorId = clientRow?.collector_id || (await getActiveCollectorId());
-    const activeBusiness = await getActiveBusinessConfig(collectorId);
-    if (activeBusiness) {
-      const allHandsRow = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
-        [collectorId]
-      );
-      const updatedTotalSlots = Math.max(1, Number(allHandsRow?.total || 0));
-      const newEndDate = calculateCycleEndDate(
-        activeBusiness.startDate,
-        updatedTotalSlots,
-        activeBusiness.frequency
-      );
-      await db.runAsync(
-        `UPDATE business_configs SET total_slots = ?, end_date = ? WHERE id = ?`,
-        [updatedTotalSlots, newEndDate, activeBusiness.id]
-      );
-    }
+    const clientRow = await db.getFirstAsync<{ collector_id: string }>(`SELECT collector_id FROM clients WHERE id = ?`, [clientId]);
+    await recomputeCycleShape(clientRow?.collector_id);
   } catch (bizErr) {
     console.warn('Could not recalculate cycle total slots after client update:', bizErr);
   }
 }
+
+export const DELETE_WITH_OPERATIONS_MESSAGE =
+  'Cet adhérent a des opérations enregistrées : annulez-les avant de le retirer du carnet.';
 
 export async function deleteClient(clientId: string): Promise<void> {
   const db = await getDatabase();
@@ -542,6 +522,21 @@ export async function deleteClient(clientId: string): Promise<void> {
     [clientId]
   );
   const collectorId = client?.collector_id || (await getActiveCollectorId());
+
+  // Removing a member changes the rounds (frozen after a payout) and would erase their
+  // operations: no collection may disappear, so their operations must be reversed first
+  await assertEnrollmentOpen(collectorId);
+  // Operations of the current cycle only: earlier cycles are archived
+  const boundary = await getCurrentCycleBoundary(collectorId);
+  const ops = await db.getFirstAsync<{ count: number }>(
+    `SELECT count(*) as count FROM transactions
+     WHERE client_id = ? AND type != 'REVERSAL' AND is_reversed = 0 AND created_at_local >= ?`,
+    [clientId, boundary || '']
+  );
+  if (Number(ops?.count || 0) > 0) {
+    throw new Error(DELETE_WITH_OPERATIONS_MESSAGE);
+  }
+
   const token = client?.qr_code_token || null;
   const phone = client?.phone_number || null;
 
@@ -557,25 +552,9 @@ export async function deleteClient(clientId: string): Promise<void> {
   // 4. Delete client locally
   await db.runAsync(`DELETE FROM clients WHERE id = ?`, [clientId]);
 
-  // 5. Update business total_slots if active business exists
+  // 5. The cycle loses this member's rounds
   try {
-    const activeBusiness = await getActiveBusinessConfig(collectorId);
-    if (activeBusiness) {
-      const allHandsRow = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
-        [collectorId]
-      );
-      const updatedTotalSlots = Math.max(1, Number(allHandsRow?.total || 0));
-      const newEndDate = calculateCycleEndDate(
-        activeBusiness.startDate,
-        updatedTotalSlots,
-        activeBusiness.frequency
-      );
-      await db.runAsync(
-        `UPDATE business_configs SET total_slots = ?, end_date = ? WHERE id = ?`,
-        [updatedTotalSlots, newEndDate, activeBusiness.id]
-      );
-    }
+    await recomputeCycleShape(collectorId);
   } catch (bizErr) {
     console.warn('Could not update cycle total slots after deletion:', bizErr);
   }

@@ -114,6 +114,23 @@ const throws = async (fn: () => Promise<unknown>, part: string) => {
   assert(k2?.paid_until_date === null, 'A member who never paid has no coverage date any more');
   assert(k1?.paid_until_date === '2026-01-01', 'A member who paid keeps their coverage date');
 
+  // v8: paid-until comes from the cycle calendar (all the member's hands at every round)
+  const v8 = open();
+  legacySchema(v8);
+  v8.raw.exec(`ALTER TABLE clients ADD COLUMN paid_until_date TEXT;
+    ALTER TABLE clients ADD COLUMN paid_hands_count INTEGER DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN total_paid_amount REAL DEFAULT 0;
+    ALTER TABLE clients ADD COLUMN hands_count INTEGER DEFAULT 1;
+    INSERT INTO business_configs VALUES ('b1', 'c1', 'Sol BS', 'SOL', 500, 'DAILY', 3, '2026-01-01', '2026-01-03', 'ACTIVE', '2026-01-01T08:00:00Z');
+    UPDATE clients SET hands_count = 2, paid_hands_count = 1, total_paid_amount = 500, paid_until_date = '2026-01-01' WHERE id = 'k1';
+    INSERT INTO clients (id, collector_id, full_name, phone_number, qr_code_token, created_at, hands_count, paid_hands_count, total_paid_amount, paid_until_date)
+      VALUES ('k3', 'c1', 'SERVILUS', '+509 3', 'Q3', '2026-01-01', 1, 2, 1000, '2026-01-01');`);
+  await runVersionedMigrations(v8);
+  const k1v8 = await v8.getFirstAsync<{ paid_until_date: string | null }>(`SELECT paid_until_date FROM clients WHERE id = 'k1'`);
+  const k3v8 = await v8.getFirstAsync<{ paid_until_date: string | null }>(`SELECT paid_until_date FROM clients WHERE id = 'k3'`);
+  assert(k1v8?.paid_until_date === null, '2 hands, 1 paid: the first round is not covered any more');
+  assert(k3v8?.paid_until_date === '2026-01-02', '1 hand, 2 paid: covered until the second round');
+
   // 2. Running again changes nothing
   const again = await runVersionedMigrations(db);
   assert(again.applied.length === 0 && again.to === LATEST_SCHEMA_VERSION, 'A second start applies nothing');

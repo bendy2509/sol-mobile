@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
+import { buildCycleRounds } from '@/services/scheduleService';
 import { View, TextInput, Pressable, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 
 import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
@@ -22,7 +22,7 @@ import {
   Text,
 } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
@@ -63,20 +63,8 @@ export default function SolMatrixScreen() {
       setMembers(memberList);
 
       // Direct SQL SUM for guaranteed accuracy — avoids ORM mapping issues
-      try {
-        const db = await getDatabase();
-        const collectorId = await getActiveCollectorId();
-        const row = await db.getFirstAsync<{ total: number }>(
-          `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
-          [collectorId]
-        );
-        const totalFromSql = Number(row?.total || 0);
-        const totalFromMembers = calculateCycleTotalHands(memberList);
-        setDbTotalHands(Math.max(1, totalFromMembers, totalFromSql));
-      } catch {
-        // Fallback to JS calculation if direct query fails
-        setDbTotalHands(Math.max(1, calculateCycleTotalHands(memberList)));
-      }
+      // Rounds in the cycle: same count as the dashboard, payouts and statuses (deleted members excluded)
+      setDbTotalHands(Math.max(1, await getCycleHandsTotal()));
     } catch (err) {
       console.warn('Error loading Sol matrix:', err);
     }
@@ -156,6 +144,8 @@ export default function SolMatrixScreen() {
     0
   );
   const currentRound = Math.min(totalHandsCount, totalHandsTouched + 1);
+  // Round days of the cycle: rank r receives on the day of round r
+  const cycleRounds = business ? buildCycleRounds(business.startDate, business.frequency, totalHandsCount) : [];
 
   const progressRatio = totalHandsTouched / (totalHandsCount || 1);
   const isCycleDone = totalHandsTouched >= totalHandsCount && totalHandsCount > 0;
@@ -219,6 +209,11 @@ export default function SolMatrixScreen() {
             <Text variant="caption" tone="onHeroMuted">{t('Tour {0} sur {1}', currentRound, totalHandsCount)}
             </Text>
           </View>
+          {cycleRounds.length > 0 && (
+            <Text variant="caption" tone="onHeroMuted">
+              {t('Du {0} au {1}', formatDateShort(cycleRounds[0]), formatDateShort(cycleRounds[cycleRounds.length - 1]))}
+            </Text>
+          )}
         </View>
       </Card>
 
@@ -251,6 +246,8 @@ export default function SolMatrixScreen() {
               .map((r) => Number(r.trim()))
               .filter((n) => !isNaN(n) && n > 0);
             const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
+            const payoutDays = ranksList.map((r) => cycleRounds[r - 1]).filter(Boolean);
+            const payoutDaysText = payoutDays.length ? t('Reçoit le {0}', payoutDays.map((d) => formatDateShort(d)).join(', ')) : null;
             const isMulti = memberHandsCount > 1;
             const isLast = index === members.length - 1;
             const payoutLabel = isMulti ? t('Remettre la main {0}/{1}', receivedCount + 1, memberHandsCount) : t('Remettre la main');
@@ -281,6 +278,9 @@ export default function SolMatrixScreen() {
                       )}
                       {!isNextTurn && !hasReceived && !isMulti && (
                         <Text variant="caption" tone="muted">{t('En attente de son tour')}</Text>
+                      )}
+                      {!hasReceived && payoutDaysText && (
+                        <Text variant="caption" tone="muted">{payoutDaysText}</Text>
                       )}
                     </View>
                   }

@@ -30,7 +30,7 @@ export const ht: Dictionary = {
   'settings.textSize.normal': 'Nòmal',
   'settings.textSize.large': 'Gwo',
   'settings.preview': 'Apèsi',
-  'settings.preview.body': 'Kotizasyon Marie-Carmel, 2 men',
+  'settings.preview.body': 'Kotizasyon SERVILUS, 2 men',
   'settings.profile': 'Pwofil',
   'settings.profile.name': 'Non',
   'settings.profile.phone': 'Telefòn',

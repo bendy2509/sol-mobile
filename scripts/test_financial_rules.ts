@@ -194,7 +194,8 @@ const timelineReversed = reconstructClientFinancialTimeline({
 
 assert(timelineReversed.totalPaidAmount === 500, 'After reversal of tx-2, total paid = 500 HTG', `Got ${timelineReversed.totalPaidAmount}`);
 assert(timelineReversed.paidHandsCount === 2, 'After reversal of tx-2, paid hands count = 2', `Got ${timelineReversed.paidHandsCount}`);
-assert(timelineReversed.paidUntilDate === '2026-08-03', 'After reversal of tx-2, paid until recalculated to 2026-08-03', `Got ${timelineReversed.paidUntilDate}`);
+// Cycle calendar: the 2 hands left fill the rounds from the cycle start (1 and 2 August)
+assert(timelineReversed.paidUntilDate === '2026-08-02', 'After reversal of tx-2, paid until recalculated to 2026-08-02 (rounds of 1 and 2 August)', `Got ${timelineReversed.paidUntilDate}`);
 
 // 7. Cycle Contribution Ceiling & Limits Tests (Strict Max Pot Rule)
 // Scenario: Sol of 12 slots * 2500 HTG (Total Pot = 30,000 HTG)

@@ -1,5 +1,6 @@
 import { Frequency, PaymentFrequency } from '../types';
 import { localDateString } from './dates';
+import { getCycleDates } from '@/services/scheduleService';
 
 /**
  * Returns the exact interval duration in days for any SOL / Sabotay frequency.
@@ -44,118 +45,16 @@ export function calculateCycleTotalDays(
 }
 
 /**
- * Calculates the exact end date of a Sol/Sabotay cycle based on start date,
- * number of participants ("enfants"), and payment frequency.
+ * End date of a Sol/Sabotay cycle: the day of its last round (one round per hand), counted in
+ * local calendar days from the start date (services/scheduleService.ts).
  */
 export function calculateCycleEndDate(
   startDateStr: string,
   totalSlots: number,
   frequency: PaymentFrequency | Frequency | string
 ): string {
-  const slots = Math.max(1, Number(totalSlots) || 1);
-  const start = new Date(startDateStr || localDateString());
-
-  // Ensure start is valid
-  if (isNaN(start.getTime())) {
-    return localDateString();
-  }
-
-  const result = new Date(start);
-
-  switch (frequency) {
-    case 'DAILY': {
-      // 1 hand per day -> slots days
-      result.setDate(result.getDate() + slots - 1);
-      break;
-    }
-
-    case 'WED_SAT': {
-      // 2 hands per week (every Wednesday and Saturday)
-      let count = 0;
-      const current = new Date(start);
-
-      while (count < slots) {
-        const dayOfWeek = current.getDay(); // 0 = Sunday, 3 = Wednesday, 6 = Saturday
-        if (dayOfWeek === 3 || dayOfWeek === 6) {
-          count++;
-          if (count === slots) {
-            result.setTime(current.getTime());
-            break;
-          }
-        }
-        current.setDate(current.getDate() + 1);
-      }
-      break;
-    }
-
-    case 'WEEKLY_WED': {
-      // Every Wednesday -> slots weeks
-      let count = 0;
-      const current = new Date(start);
-
-      while (count < slots) {
-        if (current.getDay() === 3) {
-          count++;
-          if (count === slots) {
-            result.setTime(current.getTime());
-            break;
-          }
-        }
-        current.setDate(current.getDate() + 1);
-      }
-      break;
-    }
-
-    case 'WEEKLY_SAT': {
-      // Every Saturday -> slots weeks
-      let count = 0;
-      const current = new Date(start);
-
-      while (count < slots) {
-        if (current.getDay() === 6) {
-          count++;
-          if (count === slots) {
-            result.setTime(current.getTime());
-            break;
-          }
-        }
-        current.setDate(current.getDate() + 1);
-      }
-      break;
-    }
-
-    case '8J':
-    case '8_DAYS': {
-      // Every 8 days: slots * 8 days
-      result.setDate(result.getDate() + (slots - 1) * 8);
-      break;
-    }
-
-    case '15J':
-    case '15_DAYS': {
-      // Every 15 days (Quinzaine): slots * 15 days
-      result.setDate(result.getDate() + (slots - 1) * 15);
-      break;
-    }
-
-    case 'MONTHLY': {
-      // Monthly: slots * 1 month (~30 days each)
-      const targetMonth = result.getMonth() + (slots - 1);
-      const originalDay = result.getDate();
-      result.setMonth(targetMonth);
-      if (result.getDate() !== originalDay) {
-        result.setDate(0); // Safely handle month boundary
-      }
-      break;
-    }
-
-    default: {
-      result.setDate(result.getDate() + slots - 1);
-      break;
-    }
-  }
-
-  return result.toISOString().split('T')[0];
+  const start = /^\d{4}-\d{2}-\d{2}/.test(startDateStr || '') ? startDateStr : localDateString();
+  return getCycleDates(start, frequency, Math.max(1, Number(totalSlots) || 1)).endDate;
 }
 
 /**

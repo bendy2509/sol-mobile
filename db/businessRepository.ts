@@ -6,7 +6,8 @@ import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalcula
 import { recordAuditLog } from '@/services/auditService';
 import { calculateCycleTotalHands, calculateClientPaymentStatus } from '@/services/financialService';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
-import { localDateString } from '@/lib/dates';
+import { localDateString, localDayOf, localDayStartIso } from '@/lib/dates';
+import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates, parsePayoutRanks } from '@/services/scheduleService';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -167,17 +168,12 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
     }),
   });
 
-  // 2. Archive complete state of the closed cycle for manager history and PDF downloads
-  try {
-    await saveClosedCycleSnapshot(collectorId, params.businessId, params.reason);
-  } catch (archiveErr) {
-    console.warn('Notice: Could not archive closed cycle snapshot:', archiveErr);
-  }
+  // 2. Archive the closed cycle first (history, dates, PDF). Without its archive the cycle's
+  //    operations could no longer be told apart from the new cycle's: the renewal stops here.
+  const archived = await saveClosedCycleSnapshot(collectorId, params.businessId, params.reason);
+  if (!archived) throw new Error("Le cycle n'a pas pu être archivé : clôture annulée.");
 
   if (params.mode === 'RENEW_SAME_MEMBERS') {
-    // Purge any clients that were previously deleted so they can never resurface
-    await db.runAsync(`DELETE FROM clients WHERE id IN (SELECT id FROM deleted_clients)`);
-
     // A. Reset financial timeline counters for all remaining active children of this collector
     await db.runAsync(
       `UPDATE clients 
@@ -188,12 +184,12 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
            has_received_hand = 0,
            has_received_payout = 0,
            hand_received_date = NULL,
-           paid_until_date = ?,
+           paid_until_date = NULL,
            daily_amount = ?,
            sync_status = 'PENDING'
        WHERE (collector_id = ? OR business_id = ?)
          AND id NOT IN (SELECT id FROM deleted_clients)`,
-      [todayStr, unitAmount, collectorId, params.businessId]
+      [unitAmount, collectorId, params.businessId]
     );
 
     // Calculate dynamic end date based on actual registered hands (excluding deleted)
@@ -204,7 +200,8 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
          AND id NOT IN (SELECT id FROM deleted_clients)`,
       [collectorId, params.businessId]
     );
-    const totalCycleHands = Math.max(1, Number(totalHandsRow?.total || 0), params.totalSlots || 10);
+    // One round per hand of the members kept (not the old slot count)
+    const totalCycleHands = Math.max(1, Number(totalHandsRow?.total || 0));
     const endDate = calculateCycleEndDate(todayStr, totalCycleHands, frequency);
 
     // Update business config with new cycle info
@@ -253,6 +250,9 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
     );
 
     for (const ec of existingClients) {
+      // Members already removed keep their first tombstone
+      const alreadyGone = await db.getFirstAsync<{ id: string }>(`SELECT id FROM deleted_clients WHERE id = ?`, [ec.id]);
+      if (alreadyGone) continue;
       await db.runAsync(
         `INSERT OR REPLACE INTO deleted_clients (id, qr_code_token, phone_number, collector_id, deleted_at, sync_status)
          VALUES (?, ?, ?, ?, ?, 'PENDING')`,
@@ -261,7 +261,6 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
 
       if (isCloudSyncActive) {
         try {
-          await supabase.from('transactions').delete().eq('client_id', ec.id);
           if (ec.qr_code_token) {
             await supabase.from('clients').delete().or(`id.eq.${ec.id},qr_code_token.eq.${ec.qr_code_token}`);
           } else {
@@ -273,14 +272,11 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
       }
     }
 
-    // Delete transactions and clients locally
-    await db.runAsync(
-      `DELETE FROM transactions WHERE client_id IN (SELECT id FROM clients WHERE collector_id = ? OR business_id = ?)`,
-      [collectorId, params.businessId]
-    );
-    await db.runAsync(`DELETE FROM clients WHERE collector_id = ? OR business_id = ?`, [collectorId, params.businessId]);
+    // Operations and member rows stay: the closed cycle's history and PDF keep their names and
+    // amounts. The tombstones above take the members out of the new cycle.
 
-    const totalSlots = Math.max(1, Number(params.totalSlots) || 10);
+    // No member yet: one round until the first enrolment (recomputeCycleShape follows the hands)
+    const totalSlots = 1;
     const endDate = calculateCycleEndDate(todayStr, totalSlots, frequency);
 
     await db.runAsync(
@@ -320,35 +316,6 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
       createdAt: now,
     };
   }
-}
-
-/**
- * Closes the active cycle formally with verification and audit trail.
- */
-export async function closeCycle(params: {
-  businessId: string;
-  userId: string;
-  userRole: 'MANAGER';
-  reason: string;
-}): Promise<void> {
-  const { businessId, userId, userRole, reason } = params;
-  const db = await getDatabase();
-
-  await db.runAsync(
-    `UPDATE business_configs 
-     SET status = 'COMPLETED', cycle_status = 'CLOSED' 
-     WHERE id = ?`,
-    [businessId]
-  );
-
-  await recordAuditLog({
-    userId,
-    userRole,
-    action: 'CLOSE_CYCLE',
-    entityType: 'BUSINESS',
-    entityId: businessId,
-    reason: reason || 'Clôture définitive du cycle SOL',
-  });
 }
 
 export async function getDashboardMetrics(): Promise<DashboardMetrics> {
@@ -442,7 +409,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
             hands_count, received_hands_count, has_received_hand, has_received_payout, hand_received_date, total_paid_amount, 
             paid_hands_count, paid_until_date, qr_code_token, created_at
      FROM clients 
-     WHERE collector_id = ?
+     WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)
      ORDER BY payout_rank ASC, full_name ASC`,
     [collectorId]
   );
@@ -470,7 +437,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   }
 
   // Count total non-reversed payout transactions for the current cycle to guarantee 100% reconciliation
-  const cycleStartIso = business.startDate ? new Date(business.startDate).toISOString() : startOfDayIso;
+  // Same boundary as history, reversals and the ledger (latest closure, else the local start day)
+  const cycleStartIso = (await getCurrentCycleBoundary(collectorId)) || startOfDayIso;
   const payoutTxRow = await db.getFirstAsync<{ count: number }>(
     `SELECT count(*) as count FROM transactions 
      WHERE collector_id = ? AND type IN ('HAND_PAYOUT', 'SOL_PAYOUT') AND is_reversed = 0 AND created_at_local >= ?`,
@@ -479,17 +447,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const totalPayoutTxCount = Number(payoutTxRow?.count || 0);
   const effectiveHandsTouched = Math.max(handsTouchedCount, totalPayoutTxCount);
 
-  // Batch query: All client IDs who paid today (1 fast query instead of looping N queries)
-  const todayTxRows = await db.getAllAsync<{ client_id: string }>(
-    `SELECT client_id FROM transactions 
-     WHERE collector_id = ? 
-       AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION') 
-       AND is_reversed = 0 
-       AND created_at_local >= ?
-     GROUP BY client_id`,
-    [collectorId, startOfDayIso]
-  );
-  const paidTodayClientIds = new Set(todayTxRows.map((t) => t.client_id));
+  // Rounds in the cycle: one per hand of every enrolled member
+  const cycleHands = calculateCycleTotalHands(members);
 
   for (const m of members) {
     const parsedRanksCount = m.payout_ranks ? String(m.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
@@ -502,29 +461,28 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
         : 0;
     const hasTouched = receivedCount >= memberHandsCount;
 
-    // Check if member paid today
-    const hasPaidToday = paidTodayClientIds.has(m.id);
-    const isCoveredInAdvance = m.paid_until_date && m.paid_until_date >= todayStr;
-
-    // Same rule as the member badges: today's hand alone is « À encaisser », late only from the
-    // next day (calculateClientPaymentStatus)
-    const status = calculateClientPaymentStatus({
+    // Same rule as the member badges (cycle calendar): all the member's hands are due at every
+    // round; today's alone is « À encaisser », late only from the next day
+    const calc = calculateClientPaymentStatus({
       todayStr,
-      paidUntilDate: m.paid_until_date || null,
-      hasPaidToday,
       currentBalance: Number(m.current_balance || 0),
       unitAmount,
-    }).status;
+      schedule: {
+        cycleStartDate: business.startDate,
+        frequency: business.frequency,
+        totalCycleHands: cycleHands,
+        memberHands: memberHandsCount,
+        paidHands: Number(m.paid_hands_count || 0),
+      },
+    });
+    const status = calc.status;
+    const isCovered = status === 'PAID_TODAY' || status === 'PAID_IN_ADVANCE';
 
-    if (hasPaidToday || isCoveredInAdvance) {
+    if (isCovered) {
       paidTodayCount++;
     } else if (status === 'OVERDUE') {
       overdueMembersCount++;
-      const missingHands = Math.max(
-        1,
-        Math.ceil((unitAmount - (m.current_balance || 0)) / (unitAmount || 1))
-      );
-      overdueHandsCount += missingHands;
+      overdueHandsCount += calc.installmentsOverdue;
     }
 
     // Determine current payout beneficiary (next rank who hasn't received all hands)
@@ -552,7 +510,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
         qrCodeToken: m.qr_code_token,
         createdAt: m.created_at,
         syncStatus: 'SYNCED',
-        paymentStatusToday: (hasPaidToday || isCoveredInAdvance) ? 'PAID_TODAY' : 'UNPAID_TODAY',
+        paymentStatusToday: status,
         overdueRoundsCount: 0,
         totalPaidInCycle: Number(m.total_paid_amount || m.current_balance || 0),
         handsCoveredAhead: 0,
@@ -643,6 +601,7 @@ export async function saveClosedCycleSnapshot(
     full_name: string;
     phone_number: string;
     payout_rank: number | null;
+    payout_ranks: string | null;
     hands_count: number;
     received_hands_count: number;
     has_received_hand: number;
@@ -651,7 +610,7 @@ export async function saveClosedCycleSnapshot(
     current_balance: number;
     paid_hands_count: number;
   }>(
-    `SELECT id, full_name, phone_number, payout_rank, hands_count, received_hands_count, has_received_hand, has_received_payout, total_paid_amount, current_balance, paid_hands_count
+    `SELECT id, full_name, phone_number, payout_rank, payout_ranks, hands_count, received_hands_count, has_received_hand, has_received_payout, total_paid_amount, current_balance, paid_hands_count
      FROM clients 
      WHERE (collector_id = ? OR business_id = ?) 
        AND id NOT IN (SELECT id FROM deleted_clients)
@@ -660,39 +619,71 @@ export async function saveClosedCycleSnapshot(
   );
 
   const unitAmount = business.contributionAmount || 250;
-  let totalCycleHands = 0;
-  let totalCashCollected = 0;
-  let totalDistributed = 0;
+  const closeDay = localDateString();
+  // Rounds of the cycle (one per hand) and its planned end: the same calendar as the screens
+  const totalCycleHands = Math.max(1, calculateCycleTotalHands(clientRows));
+  const rounds = buildCycleRounds(business.startDate, business.frequency, totalCycleHands);
+  const plannedEndDate = rounds[rounds.length - 1] || business.endDate;
+
+  // The cycle's operations (since its boundary), not the stored counters: what was really
+  // collected and paid out, payout by payout
+  const boundary = await getCurrentCycleBoundary(collectorId);
+  const cycleTxs = await db.getAllAsync<{ client_id: string; type: string; amount: number; created_at_local: string }>(
+    `SELECT client_id, type, amount, created_at_local FROM transactions
+     WHERE collector_id = ? AND is_reversed = 0 AND created_at_local >= ?`,
+    [collectorId, boundary || '']
+  );
+  const isContribution = (type: string) => type === 'CONTRIBUTION' || type === 'SOL_CONTRIBUTION' || type === 'SABOTAY_DEPOSIT';
+  const isPayout = (type: string) => type === 'HAND_PAYOUT' || type === 'SOL_PAYOUT';
+  const totalCashCollected = cycleTxs.filter((t) => isContribution(t.type)).reduce((sum, t) => sum + Number(t.amount || 0), 0);
+  const totalDistributed = cycleTxs.filter((t) => isPayout(t.type)).reduce((sum, t) => sum + Number(t.amount || 0), 0);
   let handsCollectedTotal = 0;
+  let handsDueTotal = 0;
 
   const membersSnapshot = clientRows.map((c, index) => {
     const hCount = Math.max(1, Number(c.hands_count || 1));
-    const paidAmount = Number(c.total_paid_amount || c.current_balance || 0);
+    const paidAmount = Number(c.total_paid_amount || 0);
+    const handsCovered = Number(c.paid_hands_count || 0);
     const hasReceived = (c.received_hands_count || 0) >= hCount || c.has_received_payout === 1 || c.has_received_hand === 1;
-    const handsCovered = Number(c.paid_hands_count || Math.floor(paidAmount / (unitAmount || 1)));
-
-    totalCycleHands += hCount;
-    totalCashCollected += paidAmount;
+    const ranks = (c.payout_ranks ? String(c.payout_ranks).split(/[,;\s]+/) : [String(c.payout_rank || index + 1)])
+      .map(Number)
+      .filter((n) => n > 0);
+    const schedule = computeMemberSchedule({
+      cycleStartDate: business.startDate,
+      frequency: business.frequency,
+      totalCycleHands,
+      memberHands: hCount,
+      paidHands: handsCovered,
+      todayStr: closeDay,
+    });
     handsCollectedTotal += handsCovered;
-    if (hasReceived) {
-      totalDistributed += unitAmount * totalCycleHands;
-    }
+    handsDueTotal += hCount * totalCycleHands;
 
     return {
-      rank: c.payout_rank || (index + 1),
+      rank: c.payout_rank || index + 1,
       fullName: c.full_name,
       phoneNumber: c.phone_number,
+      handsCount: hCount,
       totalPaid: paidAmount,
       handsCovered,
-      coverageStatus: handsCovered >= hCount ? 'À JOUR' : 'RETARD',
+      totalDue: hCount * totalCycleHands * unitAmount,
+      // Status on the closing day, from the cycle calendar
+      coverageStatus:
+        schedule.lateHands + schedule.missingHandsToday > 0 ? 'RETARD' : schedule.handsAhead > 0 ? 'EN_AVANCE' : 'A_JOUR',
       hasReceivedPayout: hasReceived,
+      plannedPayoutDates: ranks.map((r) => rounds[r - 1]).filter(Boolean),
+      receivedPayoutDates: cycleTxs
+        .filter((t) => t.client_id === c.id && isPayout(t.type))
+        .map((t) => localDayOf(t.created_at_local))
+        .sort(),
     };
   });
 
-  const effectiveHands = totalCycleHands > 0 ? totalCycleHands : (business.totalSlots || 10);
+  const effectiveHands = totalCycleHands;
   const totalPotAmount = unitAmount * effectiveHands;
   const netReserveBalance = totalCashCollected - totalDistributed;
-  const completionRate = effectiveHands > 0 ? Math.min(100, (handsCollectedTotal / (effectiveHands * effectiveHands)) * 100) : 0;
+  // Paid over due for the whole cycle (each member owes their hands at every round)
+  const completionRate = handsDueTotal > 0 ? Math.min(100, (handsCollectedTotal / handsDueTotal) * 100) : 0;
 
   // 3. Determine cycle number
   const countRow = await db.getFirstAsync<{ cnt: number }>(
@@ -704,7 +695,7 @@ export async function saveClosedCycleSnapshot(
   // 4. Detailed snapshot for ManagerBusinessReportPdfData
   const pdfDataSnapshot = {
     businessName: business.name,
-    collectorName: collector?.full_name || 'Responsable SOL',
+    collectorName: collector?.full_name || 'Bendy SERVILUS',
     collectorPhone: collector?.phone_number || '',
     collectorZone: collector?.zone,
     unitAmount,
@@ -712,7 +703,9 @@ export async function saveClosedCycleSnapshot(
     registeredChildrenCount: clientRows.length,
     totalPotAmount,
     cycleStartDate: business.startDate,
-    cycleEndDate: business.endDate,
+    cycleEndDate: plannedEndDate,
+    closedAt: now,
+    frequency: business.frequency,
     cycleNumber,
     handsCollectedTotal,
     totalCashCollected,
@@ -720,6 +713,14 @@ export async function saveClosedCycleSnapshot(
     netReserveBalance,
     completionRate,
     members: membersSnapshot,
+    payoutCalendar: buildPayoutCalendar(
+      rounds,
+      clientRows.map((c, i) => ({
+        fullName: c.full_name,
+        ranks: parsePayoutRanks(c.payout_ranks, c.payout_rank || i + 1),
+        receivedDates: membersSnapshot[i].receivedPayoutDates,
+      }))
+    ),
     generatedAt: now,
     reason: reason || 'Clôture et archivage du cycle SOL',
   };
@@ -741,10 +742,10 @@ export async function saveClosedCycleSnapshot(
       business.name,
       cycleNumber,
       business.startDate,
-      business.endDate,
+      plannedEndDate,
       now,
       unitAmount,
-      business.totalSlots,
+      effectiveHands,
       effectiveHands,
       totalPotAmount,
       totalCashCollected,
@@ -764,10 +765,10 @@ export async function saveClosedCycleSnapshot(
     businessName: business.name,
     cycleNumber,
     startDate: business.startDate,
-    endDate: business.endDate,
+    endDate: plannedEndDate,
     closedAt: now,
     unitAmount,
-    totalSlots: business.totalSlots,
+    totalSlots: effectiveHands,
     totalHands: effectiveHands,
     totalPot: totalPotAmount,
     totalCollected: totalCashCollected,
@@ -804,7 +805,8 @@ export async function getCurrentCycleBoundary(collectorIdParam?: string): Promis
   }
 
   const business = await getActiveBusinessConfig(collectorId);
-  return business?.startDate ? new Date(business.startDate).toISOString() : null;
+  // Local midnight of the start day (new Date('YYYY-MM-DD') is UTC midnight: 20:00 the evening before in Haiti)
+  return business?.startDate ? localDayStartIso(business.startDate) : null;
 }
 
 export async function getClosedCycles(collectorIdParam?: string): Promise<ClosedCycle[]> {
@@ -857,4 +859,145 @@ export async function getClosedCycles(collectorIdParam?: string): Promise<Closed
     snapshotData: r.snapshot_data,
     createdAt: r.created_at,
   }));
+}
+
+/**
+ * Total hands of the current cycle = number of rounds (sum of each enrolled member's hands,
+ * deleted members excluded).
+ */
+export async function getCycleHandsTotal(collectorIdParam?: string): Promise<number> {
+  const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+  const rows = await db.getAllAsync<{ hands_count: number | null; payout_ranks: string | null }>(
+    `SELECT hands_count, payout_ranks FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
+    [collectorId]
+  );
+  return calculateCycleTotalHands(rows);
+}
+
+/**
+ * Recomputes the shape of the active cycle from its members: one round per hand
+ * (total_slots) and the end date = day of the last round (services/scheduleService.ts).
+ * Called after every change of members or hands, so stored and displayed dates agree.
+ */
+export async function recomputeCycleShape(collectorIdParam?: string): Promise<{ totalSlots: number; endDate: string } | null> {
+  const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+  const business = await getActiveBusinessConfig(collectorId);
+  if (!business) return null;
+  const totalSlots = Math.max(1, await getCycleHandsTotal(collectorId));
+  const { endDate } = getCycleDates(business.startDate, business.frequency, totalSlots);
+  await db.runAsync(`UPDATE business_configs SET total_slots = ?, end_date = ? WHERE id = ?`, [totalSlots, endDate, business.id]);
+  return { totalSlots, endDate };
+}
+
+export interface EnrollmentLock {
+  /** A hand was paid out in the current cycle: members and hands can no longer change. */
+  locked: boolean;
+  /** Day of the first payout of the cycle (local). */
+  since: string | null;
+  payouts: number;
+}
+
+/**
+ * Once a hand is paid out, the pot of every round is fixed: adding a member, changing hands
+ * or removing a member would change what the next members receive. The lock lifts when every
+ * payout of the cycle is reversed.
+ */
+export async function getEnrollmentLock(collectorIdParam?: string): Promise<EnrollmentLock> {
+  const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+  const boundary = await getCurrentCycleBoundary(collectorId);
+  const row = await db.getFirstAsync<{ count: number; first: string | null }>(
+    `SELECT count(*) as count, MIN(created_at_local) as first FROM transactions
+     WHERE collector_id = ? AND type IN ('HAND_PAYOUT', 'SOL_PAYOUT') AND COALESCE(is_reversed, 0) = 0
+       AND created_at_local >= ?`,
+    [collectorId, boundary || '']
+  );
+  const payouts = Number(row?.count || 0);
+  return { locked: payouts > 0, since: row?.first ? localDayOf(row.first) : null, payouts };
+}
+
+/** Error raised by a member change refused because a hand was already paid out. */
+export const ENROLLMENT_LOCKED_MESSAGE =
+  'Une main a déjà été remise dans ce cycle : les adhérents et leurs mains ne peuvent plus changer. Annulez la remise pour modifier.';
+
+export async function assertEnrollmentOpen(collectorIdParam?: string): Promise<void> {
+  if ((await getEnrollmentLock(collectorIdParam)).locked) throw new Error(ENROLLMENT_LOCKED_MESSAGE);
+}
+
+/** Amount, frequency and start date of a cycle stop changing at its first collection. */
+export const SETTINGS_LOCKED_MESSAGE =
+  'Des encaissements existent dans ce cycle : le montant par main, la fréquence et la date de début ne changent plus. Clôturez le cycle pour en ouvrir un nouveau avec d’autres paramètres.';
+
+export async function getSettingsLock(collectorIdParam?: string): Promise<{ locked: boolean; collections: number }> {
+  const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+  const boundary = await getCurrentCycleBoundary(collectorId);
+  const row = await db.getFirstAsync<{ count: number }>(
+    `SELECT count(*) as count FROM transactions
+     WHERE collector_id = ? AND type IN ('CONTRIBUTION', 'SABOTAY_DEPOSIT', 'SOL_CONTRIBUTION')
+       AND COALESCE(is_reversed, 0) = 0 AND created_at_local >= ?`,
+    [collectorId, boundary || '']
+  );
+  const collections = Number(row?.count || 0);
+  return { locked: collections > 0, collections };
+}
+
+/**
+ * Edits the active carnet in place (it used to create a new one). The name and type always
+ * change; amount, frequency and start date only while the cycle has no collection. Slots and
+ * end date are never typed: they follow the members' hands (recomputeCycleShape).
+ */
+export async function updateActiveBusinessSettings(data: {
+  name: string;
+  type: BusinessConfig['type'];
+  contributionAmount: number;
+  frequency: PaymentFrequency;
+  startDate: string;
+}): Promise<BusinessConfig> {
+  const db = await getDatabase();
+  const collectorId = await getActiveCollectorId();
+  const business = await getActiveBusinessConfig(collectorId);
+  if (!business) throw new Error('Aucun carnet actif.');
+
+  const rulesChange =
+    Number(data.contributionAmount) !== Number(business.contributionAmount) ||
+    data.frequency !== business.frequency ||
+    data.startDate !== business.startDate;
+  if (rulesChange && (await getSettingsLock(collectorId)).locked) throw new Error(SETTINGS_LOCKED_MESSAGE);
+
+  await db.runAsync(
+    `UPDATE business_configs SET name = ?, type = ?, contribution_amount = ?, frequency = ?, start_date = ? WHERE id = ?`,
+    [data.name.trim(), data.type, data.contributionAmount, data.frequency, data.startDate, business.id]
+  );
+  if (Number(data.contributionAmount) !== Number(business.contributionAmount)) {
+    // Each member owes the carnet's amount per hand
+    await db.runAsync(
+      `UPDATE clients SET daily_amount = ?, sync_status = 'PENDING' WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
+      [data.contributionAmount, collectorId]
+    );
+  }
+  if (rulesChange) {
+    await recordAuditLog({
+      userId: collectorId,
+      userRole: 'MANAGER',
+      action: 'UPDATE_BOOK',
+      entityType: 'BUSINESS',
+      entityId: business.id,
+      oldData: { contributionAmount: business.contributionAmount, frequency: business.frequency, startDate: business.startDate },
+      newData: { contributionAmount: data.contributionAmount, frequency: data.frequency, startDate: data.startDate },
+      reason: 'Paramètres du carnet modifiés avant le premier encaissement',
+    }).catch(() => {});
+  }
+  await recomputeCycleShape(collectorId);
+  return (await getActiveBusinessConfig(collectorId)) as BusinessConfig;
+}
+
+/** Pot of one hand: amount per hand × hands in the cycle (0 without an active carnet). */
+export async function getHandPotAmount(collectorIdParam?: string): Promise<number> {
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+  const business = await getActiveBusinessConfig(collectorId);
+  if (!business) return 0;
+  return Number(business.contributionAmount) * (await getCycleHandsTotal(collectorId));
 }

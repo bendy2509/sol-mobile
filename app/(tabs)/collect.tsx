@@ -16,22 +16,21 @@ import {
   ProgressBar,
   Screen,
   StatusBadge,
+  memberStatusDetail,
   Text,
 } from '@/components/ui';
 import { getClientById, getAllClients } from '@/db/clientRepository';
 import { createTransaction } from '@/db/transactionRepository';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
-import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 
 import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
-import { BusinessConfig, Client, MemberPaymentStatus, Transaction } from '@/types';
+import { BusinessConfig, Client, Member, MemberPaymentStatus, Transaction } from '@/types';
 import { formatCurrency, formatDateShort, formatDayMonth } from '@/lib/formatters';
 import { extractRaw8Digits } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import {
-  calculateCoverageDate,
   calculateContributionAmount,
   calculateCycleContributionLimits,
   calculateCycleTotalHands,
@@ -41,6 +40,7 @@ import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfServ
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDateString } from '@/lib/dates';
+import { buildCycleRounds } from '@/services/scheduleService';
 
 /** Members still to collect come first, completed cycles last. */
 const STATUS_ORDER: Record<MemberPaymentStatus, number> = {
@@ -67,7 +67,7 @@ export default function CollectScreen() {
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [allClients, setAllClients] = useState<Client[]>([]);
-  const [statusById, setStatusById] = useState<Record<string, MemberPaymentStatus>>({});
+  const [statusById, setStatusById] = useState<Record<string, Member>>({});
   const [handsCount, setHandsCount] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -76,11 +76,11 @@ export default function CollectScreen() {
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [lastTx, setLastTx] = useState<Transaction | null>(null);
   /** Figures of the last collection, frozen before the member is reloaded (receipt + success state). */
-  const [lastReceipt, setLastReceipt] = useState<{ handsCount: number; unitAmount: number; totalAmount: number; start: string; end: string } | null>(null);
+  const [lastReceipt, setLastReceipt] = useState<{ handsCount: number; unitAmount: number; totalAmount: number; start: string; end: string; coverageText: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
-  const unitAmount = selectedClient?.dailyAmount || business?.contributionAmount || 250;
+  const unitAmount = business?.contributionAmount || selectedClient?.dailyAmount || 250;
   const totalAmount = calculateContributionAmount(handsCount, unitAmount);
 
   const loadData = useCallback(async () => {
@@ -92,22 +92,11 @@ export default function CollectScreen() {
       ]);
       setBusiness(biz);
       setAllClients(list);
-      setStatusById(Object.fromEntries(members.map((m) => [m.id, m.paymentStatusToday])));
+      setStatusById(Object.fromEntries(members.map((m) => [m.id, m])));
 
       // Direct SQL SUM for guaranteed accuracy
-      try {
-        const db = await getDatabase();
-        const collectorId = await getActiveCollectorId();
-        const row = await db.getFirstAsync<{ total: number }>(
-          `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
-          [collectorId]
-        );
-        const totalFromSql = Number(row?.total || 0);
-        const totalFromList = calculateCycleTotalHands(list);
-        setDbTotalHands(Math.max(1, totalFromList, totalFromSql));
-      } catch {
-        setDbTotalHands(Math.max(1, calculateCycleTotalHands(list)));
-      }
+      // Rounds in the cycle: same count as the dashboard, payouts and statuses (deleted members excluded)
+      setDbTotalHands(Math.max(1, await getCycleHandsTotal()));
       return list;
     } catch (err) {
       console.warn('Error loading collect data:', err);
@@ -121,7 +110,7 @@ export default function CollectScreen() {
 
   const limitsFor = useCallback(
     (client: Client) => {
-      const unit = client.dailyAmount || business?.contributionAmount || 250;
+      const unit = business?.contributionAmount || client.dailyAmount || 250;
       const balance = Number(client.currentBalance || 0);
       const totalPaid = Number(client.totalPaidAmount || balance);
       const paidHands = Math.max(Number(client.paidHandsCount || 0), calculateHandsCovered(balance, unit), calculateHandsCovered(totalPaid, unit));
@@ -142,10 +131,15 @@ export default function CollectScreen() {
       const l = limitsFor(client);
       setSelectedClient(client);
       setLastTx(null);
-      setHandsCount(l.remainingHands > 0 ? (l.memberHands > 1 ? Math.min(l.remainingHands, l.memberHands) : 1) : 0);
+      // Preselect what is owed up to today (late hands + today's missing hands, e.g. the second
+      // hand of a partial round); a member up to date gets one full round
+      const member = statusById[client.id];
+      const owed = (member?.lateHands || 0) + (member?.missingHandsToday || 0);
+      const preset = owed > 0 ? owed : l.memberHands;
+      setHandsCount(l.remainingHands > 0 ? Math.min(l.remainingHands, preset) : 0);
       setIsSheetOpen(true);
     },
-    [limitsFor]
+    [limitsFor, statusById]
   );
 
   useFocusEffect(
@@ -193,16 +187,24 @@ export default function CollectScreen() {
     if (handsCount > 1) setHandsCount(handsCount - 1);
   };
 
-  // Coverage date calculation
+  // Coverage from the cycle calendar: every round needs all the member's hands, oldest first
   const todayStr = localDateString();
-  const coveragePreview = calculateCoverageDate({
-    todayStr,
-    handsCovered: handsCount > 0 ? handsCount : 1,
-    frequency: business?.frequency || 'DAILY',
-    currentPaidUntilDate: selectedClient?.paidUntilDate,
-  });
-  const previewStartDateStr = coveragePreview.startDate;
-  const previewDateStr = coveragePreview.paidUntilDate;
+  const cycleRounds = useMemo(
+    () => (business ? buildCycleRounds(business.startDate, business.frequency, totalCycleHands) : []),
+    [business, totalCycleHands]
+  );
+  const paidAfter = currentPaidHands + (handsCount > 0 ? handsCount : 1);
+  const fullRoundsAfter = Math.min(cycleRounds.length, Math.floor(paidAfter / memberHandsCount));
+  const previewStartDateStr = cycleRounds[Math.floor(currentPaidHands / memberHandsCount)] || todayStr;
+  const previewDateStr = fullRoundsAfter > 0 ? cycleRounds[fullRoundsAfter - 1] : '';
+  // Hands left over for the next round (1 hand of a 2-hand member): that round stays partial
+  const previewPartialDate = paidAfter % memberHandsCount !== 0 ? cycleRounds[fullRoundsAfter] || '' : '';
+  const coverageText = [
+    previewDateStr ? `${t('· couvert jusqu\'au')} ${formatDateShort(previewDateStr)}` : '',
+    previewPartialDate ? t('· tour du {0} partiel', formatDateShort(previewPartialDate)) : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   const handleOpenPinValidation = () => {
     if (isReadOnly) {
@@ -249,11 +251,11 @@ export default function CollectScreen() {
         handsCovered: handsCount,
         type: 'SOL_CONTRIBUTION',
         paymentMethod: 'CASH',
-        note: `Encaissement de ${handsCount} main(s) de ${formatCurrency(unitAmount)} (Couvre jusqu'au ${formatDateShort(previewDateStr)})`,
+        note: `Encaissement de ${handsCount} main(s) de ${formatCurrency(unitAmount)}${previewDateStr ? ` (Couvre jusqu'au ${formatDateShort(previewDateStr)})` : ''}${previewPartialDate ? ` (Tour du ${formatDateShort(previewPartialDate)} partiel)` : ''}`,
       });
 
       triggerSuccessFeedback();
-      setLastReceipt({ handsCount, unitAmount, totalAmount, start: previewStartDateStr, end: previewDateStr });
+      setLastReceipt({ handsCount, unitAmount, totalAmount, start: previewStartDateStr, end: previewDateStr || previewPartialDate || previewStartDateStr, coverageText });
       setLastTx(tx);
       setIsSheetOpen(true);
 
@@ -277,8 +279,8 @@ export default function CollectScreen() {
       const pdfUri = await generateContributionReceiptPdf({
         transactionId: lastTx.id,
         businessName: business?.name || 'SOL Mobile',
-        collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-        collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+        collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+        collectorPhone: activeCollector?.phoneNumber || '',
         collectorZone: activeCollector?.zone,
         clientName: selectedClient.fullName,
         clientPhone: selectedClient.phoneNumber,
@@ -315,7 +317,7 @@ export default function CollectScreen() {
           (rawQ.length >= 4 && extractRaw8Digits(c.phoneNumber).includes(rawQ)) ||
           (c.payoutRank && c.payoutRank.toString() === q)
       )
-      .map((client) => ({ client, l: limitsFor(client), status: statusById[client.id] }))
+      .map((client) => ({ client, l: limitsFor(client), member: statusById[client.id], status: statusById[client.id]?.paymentStatusToday }))
       .sort((a, b) => {
         if (a.l.isCycleCompleted !== b.l.isCycleCompleted) return a.l.isCycleCompleted ? 1 : -1;
         return (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9);
@@ -326,7 +328,7 @@ export default function CollectScreen() {
   const handsLabel = t('{0} main{1}', handsCount, handsCount > 1 ? 's' : '');
 
   const renderRow = ({ item, index }: { item: (typeof rows)[number]; index: number }) => {
-    const { client, l, status } = item;
+    const { client, l, status, member } = item;
     return (
       <View style={[styles.rowBg, index === 0 && styles.rowFirst, index === rows.length - 1 && styles.rowLast]}>
       <ListItem
@@ -340,7 +342,7 @@ export default function CollectScreen() {
           l.isCycleCompleted ? (
             <StatusBadge status="HAND_RECEIVED" label={t('Complet')} appearance="inline" />
           ) : status ? (
-            <StatusBadge status={status} appearance="inline" />
+            <StatusBadge status={status} detail={member ? memberStatusDetail(member) : undefined} appearance="inline" />
           ) : null
         }
       />
@@ -462,8 +464,8 @@ export default function CollectScreen() {
             <Text variant="heading" align="center" accessibilityRole="header">{t('Encaissement enregistré')}</Text>
             <AmountText amount={lastTx.amount} size="hero" align="center" />
             <Text variant="body" tone="muted" align="center">
-              {selectedClient.fullName} · {lastReceipt?.handsCount}{' '}{t('main')}{(lastReceipt?.handsCount ?? 1) > 1 ? 's' : ''}{' '}{t('· couvert jusqu\'au')}{' '}
-              {formatDateShort(lastReceipt?.end ?? previewDateStr)}
+              {selectedClient.fullName} · {lastReceipt?.handsCount}{' '}{t('main')}{(lastReceipt?.handsCount ?? 1) > 1 ? 's' : ''}{' '}
+              {lastReceipt?.coverageText ?? coverageText}
             </Text>
             <Text variant="caption" tone="muted" align="center" selectable>{t('Réf. #{0}', lastTx.id.slice(0, 8))}
             </Text>
@@ -478,7 +480,7 @@ export default function CollectScreen() {
             <View style={styles.amountBlock}>
               <AmountText amount={totalAmount} size="hero" align="center" />
               <Text variant="caption" tone="muted" align="center">
-                {handsLabel} × {formatCurrency(unitAmount)}{' '}{t('· couvert jusqu\'au')}{' '}{formatDateShort(previewDateStr)}
+                {handsLabel} × {formatCurrency(unitAmount)} {coverageText}
               </Text>
             </View>
 

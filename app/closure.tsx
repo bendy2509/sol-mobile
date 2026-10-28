@@ -4,10 +4,11 @@ import { useRouter } from 'expo-router';
 
 import { Header } from '@/components/Header';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { AmountText, Button, Card, EmptyState, Icon, Screen, SectionHeader, Text, TextField } from '@/components/ui';
-import { createCashClosure, getCashClosures } from '@/db/cashClosureRepository';
+import { AmountText, Button, Card, Dialog, EmptyState, Icon, Screen, SectionHeader, StatusBadge, Text, TextField } from '@/components/ui';
+import { createCashClosure, getCashClosures, getClosureForDate, getUnpaidForDate } from '@/db/cashClosureRepository';
 import { getTodayStats } from '@/db/transactionRepository';
-import { CashClosure, DashboardStats } from '@/types';
+import { CashClosure, DashboardStats, UnpaidMember } from '@/types';
+import { localDateString } from '@/lib/dates';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useAuth } from '@/context/AuthContext';
@@ -38,15 +39,25 @@ export default function CashClosureScreen() {
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  // Members not fully paid for today: the manager closes anyway or keeps the cash open
+  const [unpaid, setUnpaid] = useState<UnpaidMember[]>([]);
+  const [existingToday, setExistingToday] = useState<CashClosure | null>(null);
+  const [isUnpaidDialogOpen, setIsUnpaidDialogOpen] = useState(false);
+  const [closureNote, setClosureNote] = useState('');
+  const todayStr = localDateString();
 
   const loadData = useCallback(async () => {
     try {
-      const [stats, history] = await Promise.all([
+      const [stats, history, unpaidList, todayClosure] = await Promise.all([
         getTodayStats(),
         getCashClosures(),
+        getUnpaidForDate(),
+        getClosureForDate(),
       ]);
       setTodayStats(stats);
       setClosureHistory(history);
+      setUnpaid(unpaidList);
+      setExistingToday(todayClosure);
       setDeclaredCash(stats.totalCollectedToday.toString());
     } catch (err) {
       console.warn('Failed to load closure data:', err);
@@ -61,6 +72,7 @@ export default function CashClosureScreen() {
   const numDeclared = parseFloat(declaredCash) || 0;
   const discrepancy = numDeclared - theoreticalBalance;
   const hasDiscrepancy = Math.abs(discrepancy) > 0.01;
+  const unpaidTotal = unpaid.reduce((sum, u) => sum + u.amount, 0);
 
   const handleShareClosurePdf = async (closure: CashClosure) => {
     setIsExportingPdf(true);
@@ -69,7 +81,7 @@ export default function CashClosureScreen() {
       const pdfUri = await generateCashClosureReceiptPdf({
         closureId: closure.id,
         businessName: activeBusiness?.name,
-        collectorName: activeCollector?.fullName || 'Gestionnaire Caisse',
+        collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
         collectorPhone: activeCollector?.phoneNumber || '',
         collectorZone: activeCollector?.zone,
         closureDate: closure.closureDate,
@@ -79,6 +91,8 @@ export default function CashClosureScreen() {
         discrepancyReason: closure.discrepancyReason,
         status: closure.status,
         generatedAt: closure.createdAt || new Date().toISOString(),
+        unpaidMembers: closure.unpaidMembers,
+        closureNote: closure.closureNote,
       });
       await sharePdfFile(pdfUri, `Bordereau Clôture - ${closure.closureDate}`);
     } catch (err: any) {
@@ -105,8 +119,26 @@ export default function CashClosureScreen() {
     }
 
     triggerMediumImpact();
+    // Not everyone paid for today: list them, the manager decides (close anyway / keep open)
+    if (unpaid.length > 0 || existingToday) {
+      setIsUnpaidDialogOpen(true);
+      return;
+    }
     setIsPinModalOpen(true);
   };
+
+  const handleCloseAnyway = () => {
+    setIsUnpaidDialogOpen(false);
+    setIsPinModalOpen(true);
+  };
+
+  const handleKeepOpen = () => {
+    triggerLightImpact();
+    setIsUnpaidDialogOpen(false);
+  };
+
+  const unpaidStateLabel = (u: UnpaidMember) =>
+    u.state === 'LATE' ? t('En retard') : u.state === 'PARTIAL' ? t('Partiel') : t('Non payé');
 
   const handlePinSuccessSubmit = async () => {
     setIsPinModalOpen(false);
@@ -116,6 +148,8 @@ export default function CashClosureScreen() {
       const createdClosure = await createCashClosure({
         totalCashDeclared: numDeclared,
         discrepancyReason: hasDiscrepancy ? discrepancyNote.trim() : undefined,
+        unpaidMembers: unpaid,
+        closureNote: closureNote.trim() || undefined,
       });
 
       triggerSuccessFeedback();
@@ -131,6 +165,7 @@ export default function CashClosureScreen() {
         ]
       );
       setDiscrepancyNote('');
+      setClosureNote('');
       loadData();
     } catch (err: any) {
       Alert.alert(t('Erreur'), err?.message || t('Échec de la clôture de caisse.'));
@@ -177,6 +212,40 @@ export default function CashClosureScreen() {
             <AmountText amount={todayStats.withdrawalsToday} size="small" sign="debit" tone="danger" />
           </View>
         </Card>
+
+        {/* Who paid today */}
+        {unpaid.length === 0 ? (
+          <Card tone="success">
+            <View style={styles.noticeRow}>
+              <Icon name="check" size={22} color={theme.colors.success} strokeWidth={2.5} />
+              <Text variant="body" tone="success" style={styles.flexShrink}>
+                {t('Tous les adhérents ont payé pour le {0}.', formatDateShort(todayStr))}
+              </Text>
+            </View>
+          </Card>
+        ) : (
+          <Card style={styles.cardGap}>
+            <View style={styles.summaryRow}>
+              <Text variant="subheading" style={styles.flexShrink}>{t('Non payés pour le {0}', formatDateShort(todayStr))}</Text>
+              <AmountText amount={unpaidTotal} size="small" tone="warning" />
+            </View>
+            {unpaid.map((u) => (
+              <View key={u.clientId} style={[styles.summaryRow, styles.unpaidRow]}>
+                <View style={styles.flexShrink}>
+                  <Text variant="bodyStrong" numberOfLines={1}>{u.fullName}</Text>
+                  <Text variant="caption" tone="muted">{t('{0} main(s) · {1}', u.missingHands, formatCurrency(u.amount))}</Text>
+                </View>
+                <StatusBadge status={u.state === 'LATE' ? 'OVERDUE' : 'UNPAID_TODAY'} label={unpaidStateLabel(u)} appearance="inline" />
+              </View>
+            ))}
+            <TextField
+              label={t('Note de clôture (facultative)')}
+              placeholder={t('Ex : SERVILUS paiera demain matin')}
+              value={closureNote}
+              onChangeText={setClosureNote}
+            />
+          </Card>
+        )}
 
         {/* Declared cash */}
         <Card style={styles.cardGap}>
@@ -253,7 +322,7 @@ export default function CashClosureScreen() {
                   </Text>
                   <View style={styles.statusChip}>
                     <Text variant="label" tone="muted">
-                      {item.status}
+                      {item.status === 'APPROVED' ? t('Approuvée') : item.status === 'DRAFT' ? t('Brouillon') : t('Enregistrée')}
                     </Text>
                   </View>
                 </View>
@@ -275,6 +344,14 @@ export default function CashClosureScreen() {
                   <Text variant="caption" tone="muted">{t('Motif : {0}', item.discrepancyReason)}
                   </Text>
                 )}
+                {item.unpaidMembers && item.unpaidMembers.length > 0 && (
+                  <Text variant="caption" tone="warning">
+                    {t('Fermée avec {0} adhérent(s) non payé(s) : {1}', item.unpaidMembers.length, item.unpaidMembers.map((u) => u.fullName).join(', '))}
+                  </Text>
+                )}
+                {item.closureNote && (
+                  <Text variant="caption" tone="muted">{t('Note : {0}', item.closureNote)}</Text>
+                )}
                 <Button
                   label={t('Bordereau PDF')}
                   icon="printer"
@@ -287,6 +364,39 @@ export default function CashClosureScreen() {
             );
           })
         )}
+
+        <Dialog
+          visible={isUnpaidDialogOpen}
+          onClose={handleKeepOpen}
+          icon="alert"
+          tone="danger"
+          title={unpaid.length > 0 ? t('Tout le monde n\'a pas payé') : t('Caisse déjà clôturée aujourd\'hui')}
+          actions={
+            <View style={styles.dialogActions}>
+              <Button label={t('Laisser la caisse ouverte')} variant="secondary" fullWidth onPress={handleKeepOpen} />
+              <Button label={t('Fermer quand même')} icon="lock" fullWidth onPress={handleCloseAnyway} />
+            </View>
+          }
+        >
+          <View style={styles.cardGap}>
+            {existingToday && (
+              <Text variant="body">{t('Une clôture existe déjà pour le {0}. Une nouvelle clôture sera ajoutée.', formatDateShort(todayStr))}</Text>
+            )}
+            {unpaid.length > 0 && (
+              <>
+                <Text variant="body">
+                  {t('{0} adhérent(s) n\'ont pas tout payé pour le {1} (total {2}) :', unpaid.length, formatDateShort(todayStr), formatCurrency(unpaidTotal))}
+                </Text>
+                {unpaid.map((u) => (
+                  <Text key={u.clientId} variant="bodyStrong">
+                    • {u.fullName} — {t('{0} main(s) · {1}', u.missingHands, formatCurrency(u.amount))} ({unpaidStateLabel(u)})
+                  </Text>
+                ))}
+                <Text variant="caption" tone="muted">{t('La liste sera enregistrée avec la clôture et imprimée sur le bordereau.')}</Text>
+              </>
+            )}
+          </View>
+        </Dialog>
 
         {/* 4-Digit PIN Verification Modal */}
         <PinVerificationModal
@@ -324,6 +434,8 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
 
     noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
     discrepancyTitle: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm, flexWrap: 'wrap' },
+    unpaidRow: { alignItems: 'center', paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider },
+    dialogActions: { gap: spacing.sm, width: '100%' },
     statusChip: {
       minHeight: spacing.xxl,
       justifyContent: 'center',

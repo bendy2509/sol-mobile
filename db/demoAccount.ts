@@ -15,7 +15,9 @@ export const DEMO_CLIENT_IDS = [
   '33333333-0000-0000-0000-000000000003',
   '44444444-0000-0000-0000-000000000004',
 ] as const;
-export const DEMO_BUSINESS_NAME = 'Sol Mache Klnik 2026';
+export const DEMO_BUSINESS_NAME = 'Sol BS 2026';
+/** Names the demo carnet had in earlier builds (a leftover from them is still recognised). */
+const DEMO_BUSINESS_NAMES = new Set([DEMO_BUSINESS_NAME, 'Sol Mache Klnik 2026']);
 
 export interface DemoCheckInput {
   collector: { id: string; phone_number: string; created_at: string } | null;
@@ -38,7 +40,7 @@ export function isUntouchedDemoAccount(input: DemoCheckInput): boolean {
   if (!collector || collector.id !== DEMO_COLLECTOR_ID || collector.phone_number !== DEMO_PHONE) return false;
   if (!input.pinIsDefault) return false;
   if (input.otherRecordsCount > 0) return false;
-  if (input.businesses.some((b) => b.name !== DEMO_BUSINESS_NAME) || input.businesses.length > 1) return false;
+  if (input.businesses.some((b) => !DEMO_BUSINESS_NAMES.has(b.name)) || input.businesses.length > 1) return false;
   if (input.clientIds.some((id) => !(DEMO_CLIENT_IDS as readonly string[]).includes(id))) return false;
 
   const createdAt = Date.parse(collector.created_at);

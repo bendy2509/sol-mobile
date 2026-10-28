@@ -1,5 +1,6 @@
 import { Frequency, MemberPaymentStatus, PaymentFrequency, Transaction } from '../types';
 import { localDayOf } from '@/lib/dates';
+import { computeMemberSchedule, paidUntilFromHands } from './scheduleService';
 
 /**
  * Calculates the total payout pot of a Sol/Sabotay cycle.
@@ -316,6 +317,8 @@ export function reconstructClientFinancialTimeline(params: {
   frequency: PaymentFrequency | Frequency;
   cycleStartDate: string;
   handsCount?: number;
+  /** Rounds in the cycle (total hands): paid-until never goes past the last round. */
+  totalCycleHands?: number;
 }): {
   currentBalance: number;
   totalPaidAmount: number;
@@ -323,7 +326,8 @@ export function reconstructClientFinancialTimeline(params: {
   receivedHandsCount: number;
   hasReceivedHand: boolean;
   handReceivedDate: string | null;
-  paidUntilDate: string;
+  /** Day of the last round fully paid; null = not even the first round is fully paid. */
+  paidUntilDate: string | null;
 } {
   const { transactions, unitAmount, frequency, cycleStartDate, handsCount } = params;
   const unit = Math.max(1, Number(unitAmount) || 250);
@@ -334,7 +338,6 @@ export function reconstructClientFinancialTimeline(params: {
   let paidHandsCount = 0;
   let receivedHandsCount = 0;
   let handReceivedDate: string | null = null;
-  let currentPaidUntilDate: string | null = null;
 
   // Sort chronological ascending
   const sortedTxs = [...transactions].sort(
@@ -375,16 +378,6 @@ export function reconstructClientFinancialTimeline(params: {
       currentBalance += tx.amount;
       totalPaidAmount += tx.amount;
       paidHandsCount += hands;
-
-      // The operation's local day (a collection at 21:00 in Haiti belongs to that day)
-      const txDateStr = localDayOf(tx.createdAtLocal);
-      const cov = calculateCoverageDate({
-        todayStr: txDateStr,
-        handsCovered: hands,
-        frequency,
-        currentPaidUntilDate,
-      });
-      currentPaidUntilDate = cov.paidUntilDate;
     } else if (isPayout) {
       currentBalance = Math.max(0, currentBalance - tx.amount);
       receivedHandsCount += 1;
@@ -401,7 +394,15 @@ export function reconstructClientFinancialTimeline(params: {
     receivedHandsCount,
     hasReceivedHand,
     handReceivedDate,
-    paidUntilDate: currentPaidUntilDate || cycleStartDate,
+    // Hands fill the cycle's rounds oldest first, all the member's hands per round
+    // (services/scheduleService.ts); the day of each payment does not move the coverage.
+    paidUntilDate: paidUntilFromHands({
+      cycleStartDate,
+      frequency,
+      memberHands: totalSubscribedHands,
+      paidHands: paidHandsCount,
+      totalRounds: params.totalCycleHands,
+    }),
   };
 }
 
@@ -414,6 +415,18 @@ export function calculateClientPaymentStatus(params: {
   hasPaidToday?: boolean;
   currentBalance: number;
   unitAmount: number;
+  /**
+   * The member's place in the cycle calendar. When given, the status comes from the
+   * schedule (all the member's hands due at every round since the cycle start); the other
+   * fields are then ignored.
+   */
+  schedule?: {
+    cycleStartDate: string;
+    frequency: PaymentFrequency | Frequency;
+    totalCycleHands: number;
+    memberHands: number;
+    paidHands: number;
+  };
 }): {
   status: MemberPaymentStatus;
   overdueRoundsCount: number;
@@ -421,21 +434,28 @@ export function calculateClientPaymentStatus(params: {
   installmentsAhead: number;
   installmentsOverdue: number;
   nextDueDate: string;
+  missingHandsToday?: number;
+  lateHands?: number;
+  isPartialToday?: boolean;
 } {
+  if (params.schedule) {
+    return computeMemberSchedule({ ...params.schedule, todayStr: params.todayStr }).status;
+  }
   const { todayStr, paidUntilDate, hasPaidToday, currentBalance, unitAmount } = params;
   const unit = Math.max(1, Number(unitAmount) || 250);
 
   // Compute next due date
   let nextDueDate = todayStr;
   if (paidUntilDate) {
-    const until = new Date(paidUntilDate);
+    // Local days on both sides (new Date('YYYY-MM-DD') is UTC midnight: the evening before in Haiti)
+    const until = parseYMD(paidUntilDate);
     until.setDate(until.getDate() + 1);
-    nextDueDate = until.toISOString().split('T')[0];
+    nextDueDate = formatYMD(until);
   }
 
   if (paidUntilDate && paidUntilDate > todayStr) {
-    const todayMs = new Date(todayStr).getTime();
-    const untilMs = new Date(paidUntilDate).getTime();
+    const todayMs = parseYMD(todayStr).getTime();
+    const untilMs = parseYMD(paidUntilDate).getTime();
     const advanceDays = Math.max(1, Math.round((untilMs - todayMs) / (24 * 60 * 60 * 1000)));
     const advanceHands = Math.max(1, Math.floor(currentBalance / unit));
 
@@ -473,8 +493,8 @@ export function calculateClientPaymentStatus(params: {
   }
 
   if (paidUntilDate && paidUntilDate < todayStr) {
-    const todayMs = new Date(todayStr).getTime();
-    const untilMs = new Date(paidUntilDate).getTime();
+    const todayMs = parseYMD(todayStr).getTime();
+    const untilMs = parseYMD(paidUntilDate).getTime();
     const overdueDays = Math.max(1, Math.round((todayMs - untilMs) / (24 * 60 * 60 * 1000)));
     const missingHands = Math.max(1, Math.ceil((unit - (currentBalance % unit)) / unit));
 

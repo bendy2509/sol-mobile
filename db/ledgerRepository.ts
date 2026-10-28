@@ -1,4 +1,4 @@
-import { getActiveBusinessConfig, getCurrentCycleBoundary } from './businessRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } from './businessRepository';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { getTransactions } from './transactionRepository';
 import { recordAuditLog } from '@/services/auditService';
@@ -32,12 +32,16 @@ interface ClientRow {
 export async function findLedgerDiscrepancies(collectorIdParam?: string): Promise<LedgerDiscrepancy[]> {
   const db = await getDatabase();
   const collectorId = collectorIdParam || (await getActiveCollectorId());
-  const [business, boundary] = await Promise.all([getActiveBusinessConfig(collectorId), getCurrentCycleBoundary(collectorId)]);
+  const [business, boundary, cycleHands] = await Promise.all([
+    getActiveBusinessConfig(collectorId),
+    getCurrentCycleBoundary(collectorId),
+    getCycleHandsTotal(collectorId),
+  ]);
 
   const clients = await db.getAllAsync<ClientRow>(
     `SELECT id, full_name, hands_count, current_balance, total_paid_amount, paid_hands_count,
             received_hands_count, has_received_hand, paid_until_date
-     FROM clients WHERE collector_id = ?`,
+     FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
     [collectorId]
   );
   const allTxs = await getTransactions({ collectorId });
@@ -52,6 +56,7 @@ export async function findLedgerDiscrepancies(collectorIdParam?: string): Promis
       frequency: business?.frequency || 'DAILY',
       cycleStartDate: business?.startDate || localDateString(),
       handsCount: Math.max(1, Number(c.hands_count || 1)),
+      totalCycleHands: cycleHands,
     });
     // A member with no operation yet has no coverage date: nothing to compare there
     const ledger = { ...rebuilt, paidUntilDate: own.length ? rebuilt.paidUntilDate : c.paid_until_date };

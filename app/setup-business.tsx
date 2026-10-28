@@ -2,9 +2,15 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { View, StyleSheet, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { saveBusinessConfig } from '@/db/businessRepository';
-import { BusinessType, PaymentFrequency } from '@/types';
-import { calculateCycleEndDate, getFrequencyLabel, calculateCycleTotalDays, getFrequencyIntervalDays } from '@/lib/dateCalculations';
+import {
+  getActiveBusinessConfig,
+  getCycleHandsTotal,
+  getSettingsLock,
+  saveBusinessConfig,
+  updateActiveBusinessSettings,
+} from '@/db/businessRepository';
+import { BusinessConfig, BusinessType, PaymentFrequency } from '@/types';
+import { getCycleDates } from '@/services/scheduleService';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { AmountText, Button, Card, Icon, ListItem, Screen, SectionHeader, Text, TextField, UiIconName } from '@/components/ui';
@@ -21,34 +27,41 @@ export default function SetupBusinessScreen() {
 
   const todayStr = localDateString();
 
-  const [businessType, setBusinessType] = useState<BusinessType>('SABOTAY');
-  const [name, setName] = useState('Sabotay Marché Cluny 2026');
-  const [contributionAmount, setContributionAmount] = useState('250');
+  const [businessType, setBusinessType] = useState<BusinessType>('SOL');
+  const [name, setName] = useState('');
+  const [contributionAmount, setContributionAmount] = useState('500');
   const [frequency, setFrequency] = useState<PaymentFrequency>('DAILY');
-  const [totalSlots, setTotalSlots] = useState('12');
   const [startDate, setStartDate] = useState(todayStr);
-  const [endDate, setEndDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // The active carnet is edited in place; its rules lock at the first collection of the cycle
+  const [existing, setExisting] = useState<BusinessConfig | null>(null);
+  const [rulesLocked, setRulesLocked] = useState(false);
+  const [cycleHands, setCycleHands] = useState(0);
 
-  // Automatically recalculate end date when startDate, totalSlots or frequency change
   useEffect(() => {
-    const slots = parseInt(totalSlots, 10) || 1;
-    const computedEnd = calculateCycleEndDate(startDate, slots, frequency);
-    setEndDate(computedEnd);
-  }, [startDate, totalSlots, frequency]);
+    (async () => {
+      const [biz, lock, hands] = await Promise.all([getActiveBusinessConfig(), getSettingsLock(), getCycleHandsTotal()]);
+      setCycleHands(hands);
+      setRulesLocked(lock.locked);
+      if (biz) {
+        setExisting(biz);
+        setBusinessType(biz.type);
+        setName(biz.name);
+        setContributionAmount(String(biz.contributionAmount));
+        setFrequency(biz.frequency);
+        setStartDate(biz.startDate);
+      }
+    })().catch(() => {});
+  }, []);
+
+  // One round per hand: the end date follows the members' hands, never typed
+  const rounds = Math.max(1, cycleHands);
+  const validStart = /^\d{4}-\d{2}-\d{2}$/.test(startDate);
+  const endDate = validStart ? getCycleDates(startDate, frequency, rounds).endDate : '';
 
   const handleTypeChange = (type: BusinessType) => {
     triggerLightImpact();
     setBusinessType(type);
-    if (type === 'SABOTAY') {
-      setName('Sabotay Marché Cluny 2026');
-      setContributionAmount('250');
-      setFrequency('DAILY');
-    } else {
-      setName('Sol Marché Salomon #1');
-      setContributionAmount('1000');
-      setFrequency('WED_SAT');
-    }
   };
 
   const frequencyOptions: { key: PaymentFrequency; label: string; desc: string }[] = [
@@ -73,37 +86,39 @@ export default function SetupBusinessScreen() {
       return;
     }
 
-    const numSlots = parseInt(totalSlots, 10);
-    if (isNaN(numSlots) || numSlots <= 0) {
-      Alert.alert(t('Nombre de membres invalide'), t('Le nombre de participants doit être supérieur à 0.'));
+    if (!validStart) {
+      Alert.alert(t('Date invalide'), t('Format AAAA-MM-JJ'));
       return;
     }
 
     setIsSubmitting(true);
     try {
-      await saveBusinessConfig({
-        collectorId: '',
-        name: name.trim(),
-        type: businessType,
-        contributionAmount: numAmount,
-        frequency,
-        totalSlots: numSlots,
-        startDate: startDate || todayStr,
-        endDate: endDate || todayStr,
-        status: 'ACTIVE',
-      });
+      if (existing) {
+        await updateActiveBusinessSettings({ name: name.trim(), type: businessType, contributionAmount: numAmount, frequency, startDate });
+      } else {
+        await saveBusinessConfig({
+          collectorId: '',
+          name: name.trim(),
+          type: businessType,
+          contributionAmount: numAmount,
+          frequency,
+          totalSlots: rounds,
+          startDate,
+          endDate,
+          status: 'ACTIVE',
+        });
+      }
 
       triggerSuccessFeedback();
       router.replace('/(tabs)' as any);
     } catch (err: any) {
-      Alert.alert(t('Erreur'), err?.message || t('Impossible d\'enregistrer la configuration.'));
+      Alert.alert(t('Erreur'), err?.message ? t(err.message) : t('Impossible d\'enregistrer la configuration.'));
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const estimatedDays = calculateCycleTotalDays(parseInt(totalSlots, 10) || 1, frequency);
-  const estimatedPot = (Number(contributionAmount) || 0) * (parseInt(totalSlots, 10) || 0);
+  const estimatedPot = (Number(contributionAmount) || 0) * rounds;
 
   const typeOptions: { key: BusinessType; label: string; desc: string; icon: UiIconName }[] = [
     { key: 'SABOTAY', label: t('Sabotay'), desc: t("Collecte d'épargne quotidienne flexible sur le marché"), icon: 'cash' },
@@ -121,7 +136,7 @@ export default function SetupBusinessScreen() {
             icon="check"
             loading={isSubmitting}
             disabled={isSubmitting}
-            label={isSubmitting ? t('Enregistrement…') : t('Valider et lancer l\'activité')}
+            label={isSubmitting ? t('Enregistrement…') : existing ? t('Enregistrer le carnet') : t('Valider et lancer l\'activité')}
             onPress={handleSubmit}
           />
         }
@@ -158,13 +173,25 @@ export default function SetupBusinessScreen() {
           </View>
         </View>
 
+        {rulesLocked && (
+          <Card tone="sunken" style={styles.computedCard}>
+            <View style={styles.computedHead}>
+              <Icon name="lock" size={18} color={theme.colors.textMuted} />
+              <Text variant="label">{t('Paramètres verrouillés')}</Text>
+            </View>
+            <Text variant="caption" tone="muted">
+              {t('Des encaissements existent dans ce cycle : le montant par main, la fréquence et la date de début ne changent plus. Clôturez le cycle pour en ouvrir un nouveau avec d’autres paramètres.')}
+            </Text>
+          </Card>
+        )}
+
         {/* Basic Parameters */}
         <View style={styles.section}>
           <SectionHeader title={t('2. Paramètres du carnet')} />
           <Card style={styles.fieldsCard}>
             <TextField
               label={t('Nom du groupe ou du carnet *')}
-              placeholder={t('Ex : Sabotay Marché Cluny 2026')}
+              placeholder={t('Ex : Sol BS 2026')}
               value={name}
               onChangeText={setName}
             />
@@ -174,6 +201,7 @@ export default function SetupBusinessScreen() {
               value={contributionAmount}
               onChangeText={setContributionAmount}
               keyboardType="numeric"
+              editable={!rulesLocked}
             />
           </Card>
         </View>
@@ -193,10 +221,14 @@ export default function SetupBusinessScreen() {
                   divider={index < frequencyOptions.length - 1}
                   trailing={isSelected ? <Icon name="check" size={20} color={theme.colors.primary} /> : undefined}
                   accessibilityLabel={`${opt.label}, ${opt.desc}${isSelected ? t(', sélectionné') : ''}`}
-                  onPress={() => {
-                    triggerLightImpact();
-                    setFrequency(opt.key);
-                  }}
+                  onPress={
+                    rulesLocked
+                      ? undefined
+                      : () => {
+                          triggerLightImpact();
+                          setFrequency(opt.key);
+                        }
+                  }
                 />
               );
             })}
@@ -208,19 +240,12 @@ export default function SetupBusinessScreen() {
           <SectionHeader title={t('4. Cycle')} />
           <Card style={styles.fieldsCard}>
             <TextField
-              label={t('Capacité initiale estimée (optionnelle)')}
-              placeholder={t('Ex : 10')}
-              value={totalSlots}
-              onChangeText={setTotalSlots}
-              keyboardType="number-pad"
-              helper={t('Le nombre de mains n\'est pas figé : chaque enfant inscrit ajoute les mains qu\'il souscrit (ex : 3 enfants d\'1 main + 1 enfant de 3 mains = 4 enfants et 6 mains).')}
-            />
-            <TextField
               label={t('Date de début du cycle *')}
               placeholder={t('AAAA-MM-JJ')}
               value={startDate}
               onChangeText={setStartDate}
               helper={t('Format AAAA-MM-JJ')}
+              editable={!rulesLocked}
             />
           </Card>
 
@@ -229,12 +254,16 @@ export default function SetupBusinessScreen() {
               <Icon name="calendar" size={18} color={theme.colors.primary} />
               <Text variant="label" tone="primary">{t('Durée du cycle et date de fin')}</Text>
             </View>
-            <Text variant="heading">{t('{0} jours de cycle estimés', estimatedDays)}</Text>
-            <Text variant="caption" tone="muted">{t('S\'ajustera au nombre effectif de mains souscrites par les enfants.')}</Text>
+            <Text variant="heading">{t('{0} tours · un par main', rounds)}</Text>
+            <Text variant="caption" tone="muted">{t('Le nombre de tours suit les mains des adhérents inscrits : chaque main ajoute un tour et repousse la date de fin.')}</Text>
             <View style={styles.divider} />
             <View style={styles.row}>
+              <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Début')}</Text>
+              <Text variant="bodyStrong">{validStart ? formatDateShort(startDate) : '—'}</Text>
+            </View>
+            <View style={styles.row}>
               <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Fin prévisionnelle')}</Text>
-              <Text variant="bodyStrong">{formatDateShort(endDate)}</Text>
+              <Text variant="bodyStrong">{endDate ? formatDateShort(endDate) : '—'}</Text>
             </View>
             <View style={styles.row}>
               <Text variant="body" tone="muted" style={styles.flexShrink}>{t('Cagnotte estimée (po)')}</Text>

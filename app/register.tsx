@@ -27,7 +27,7 @@ export default function RegisterScreen() {
   const [pinConfirm, setPinConfirm] = useState('');
 
   // Step 2: Business / Sol Configuration
-  const [businessName, setBusinessName] = useState('Sol Mache Klnik');
+  const [businessName, setBusinessName] = useState('');
   const [businessType, setBusinessType] = useState<BusinessType>('SABOTAY');
   const [unitAmount, setUnitAmount] = useState('250');
   const [frequency, setFrequency] = useState<Frequency>('DAILY');
@@ -181,7 +181,7 @@ export default function RegisterScreen() {
               <Card style={styles.fieldsCard}>
                 <TextField
                   label={t('Nom complet du gestionnaire')}
-                  placeholder={t('Ex : Jean-Baptiste Pierre')}
+                  placeholder={t('Ex : Bendy SERVILUS')}
                   value={fullName}
                   onChangeText={setFullName}
                   autoCapitalize="words"
@@ -242,7 +242,7 @@ export default function RegisterScreen() {
               <Card style={styles.fieldsCard}>
                 <TextField
                   label={t('Nom du SOL / carnet')}
-                  placeholder={t('Ex : Sol Mache Klnik')}
+                  placeholder={t('Ex : Sol BS 2026')}
                   value={businessName}
                   onChangeText={setBusinessName}
                 />

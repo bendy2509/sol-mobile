@@ -57,6 +57,7 @@ assert(
 );
 assert(!isUntouchedDemoAccount({ ...untouched, otherRecordsCount: 1 }), 'A cash closure or closed cycle means real use: kept');
 assert(!isUntouchedDemoAccount({ ...untouched, businesses: [{ name: 'Sol Marché Salomon' }] }), 'A renamed or other carnet means real use: kept');
+assert(isUntouchedDemoAccount({ ...untouched, businesses: [{ name: 'Sol Mache Klnik 2026' }] }), 'A demo left by an earlier build (old carnet name) is still recognised');
 assert(
   !isUntouchedDemoAccount({ ...untouched, collector: { id: 'someone-else', phone_number: DEMO_PHONE, created_at: createdAt } }),
   'Only the demo identifier qualifies'

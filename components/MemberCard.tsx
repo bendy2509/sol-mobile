@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Member } from '@/types';
-import { Avatar, Icon, StatusBadge, Text } from '@/components/ui';
+import { Avatar, Icon, StatusBadge, Text, memberStatusDetail } from '@/components/ui';
 import { triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { useTheme } from '@/theme';
 import { t } from '@/i18n';
@@ -53,12 +53,7 @@ const MemberCardComponent: React.FC<MemberCardProps> = ({
   const isMultiHands = (member.handsCount || 1) > 1;
   const isCurrentTurn = isPayoutTurn && !member.hasReceivedHand;
 
-  const statusDetail =
-    member.paymentStatusToday === 'PAID_IN_ADVANCE'
-      ? `+${member.handsCoveredAhead || 1}`
-      : member.paymentStatusToday === 'OVERDUE' && member.overdueRoundsCount > 0
-      ? t('{0} tour{1}', member.overdueRoundsCount, member.overdueRoundsCount > 1 ? 's' : '')
-      : undefined;
+  const statusDetail = memberStatusDetail(member);
 
   const handsNote = isMultiHands
     ? t('{0}/{1} mains reçues', member.receivedHandsCount || 0, member.handsCount)

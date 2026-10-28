@@ -58,7 +58,9 @@ export const DashboardHero: React.FC<DashboardHeroProps> = ({ metrics, cycleProg
           <Text variant="label" tone="onHero">
             {handsTouched} / {metrics.totalHandsExpected}{' '}{t('mains remises')}</Text>
           {metrics.endDate ? (
-            <Text variant="caption" tone="onHeroMuted">{t('Fin')}{' '}{formatDateShort(metrics.endDate)} · {metrics.daysRemaining} j
+            <Text variant="caption" tone="onHeroMuted">
+              {metrics.startDate ? `${formatDateShort(metrics.startDate)} → ` : `${t('Fin')} `}
+              {formatDateShort(metrics.endDate)} · {metrics.daysRemaining} j
             </Text>
           ) : null}
         </View>

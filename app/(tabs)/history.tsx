@@ -6,7 +6,7 @@ import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import { AmountText, BottomSheet, Button, Card, EmptyState, Icon, ListItem, Screen, SegmentedControl, Text, TextField, UiIconName } from '@/components/ui';
-import { getAllTransactions, reverseTransaction } from '@/db/transactionRepository';
+import { getAllTransactions, getContributionCoverage, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveCollector } from '@/db/sqlite';
 import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
 import { getClientById } from '@/db/clientRepository';
@@ -125,11 +125,11 @@ export default function HistoryScreen() {
         pdfUri = await generatePayoutReceiptPdf({
           transactionId: selectedTx.id,
           businessName: business?.name || 'SOL Mobile',
-          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+          collectorPhone: activeCollector?.phoneNumber || '',
           collectorZone: activeCollector?.zone,
           clientName: selectedTx.clientName || client?.fullName || 'Adhérent',
-          clientPhone: selectedTx.clientPhone || client?.phoneNumber || '+509 XX XX XXXX',
+          clientPhone: selectedTx.clientPhone || client?.phoneNumber || '',
           payoutRank: client?.payoutRank || undefined,
           totalPotAmount: selectedTx.amount,
           registeredChildrenCount: business?.totalSlots || 10,
@@ -139,21 +139,23 @@ export default function HistoryScreen() {
         });
       } else {
         const unitAmount = business?.contributionAmount || Math.round(selectedTx.amount / (selectedTx.handsCovered || 1));
+        // Rounds this collection paid (cycle calendar), not the day it was recorded
+        const coverage = await getContributionCoverage(selectedTx.id);
         pdfUri = await generateContributionReceiptPdf({
           transactionId: selectedTx.id,
           businessName: business?.name || 'SOL Mobile',
-          collectorName: activeCollector?.fullName || 'Gestionnaire SOL',
-          collectorPhone: activeCollector?.phoneNumber || '+509 XX XX XXXX',
+          collectorName: activeCollector?.fullName || 'Bendy SERVILUS',
+          collectorPhone: activeCollector?.phoneNumber || '',
           collectorZone: activeCollector?.zone,
           clientName: selectedTx.clientName || client?.fullName || 'Adhérent',
-          clientPhone: selectedTx.clientPhone || client?.phoneNumber || '+509 XX XX XXXX',
+          clientPhone: selectedTx.clientPhone || client?.phoneNumber || '',
           payoutRank: client?.payoutRank || undefined,
           qrCodeToken: client?.qrCodeToken || `SOL-${selectedTx.id.slice(0, 6)}`,
           unitAmount,
           handsCount: selectedTx.handsCovered || 1,
           totalAmount: selectedTx.amount,
-          coverageStartDate: localDayOf(selectedTx.createdAtLocal),
-          coverageEndDate: localDayOf(selectedTx.createdAtLocal),
+          coverageStartDate: coverage.startDate || localDayOf(selectedTx.createdAtLocal),
+          coverageEndDate: coverage.endDate || localDayOf(selectedTx.createdAtLocal),
           createdAt: selectedTx.createdAtLocal,
         });
       }
@@ -194,7 +196,7 @@ export default function HistoryScreen() {
 
   const handleConfirmCancelReason = () => {
     if (!cancelReason.trim()) {
-      Alert.alert(t('Motif requis'), t('Veuillez saisir le motif obligatoire de l\'annulation.'));
+      Alert.alert(t('Motif obligatoire'), t('Veuillez saisir le motif obligatoire de l\'annulation.'));
       return;
     }
     setIsCancelPromptOpen(false);
@@ -214,7 +216,7 @@ export default function HistoryScreen() {
       });
       triggerSuccessFeedback();
       Alert.alert(
-        t('Opération Annulée avec Succès'),
+        t('Opération annulée'),
         t('La transaction #{0} a été annulée. Une écriture d\'annulation certifiée a été inscrite à l\'audit et le solde de l\'adhérent a été recalculé.', selectedTx.id.slice(0, 8))
       );
       loadData();

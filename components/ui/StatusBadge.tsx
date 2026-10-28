@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleProp, View, ViewStyle } from 'react-native';
 
-import { MemberPaymentStatus } from '@/types';
+import { Member, MemberPaymentStatus } from '@/types';
 import { ThemeColors, useTheme } from '@/theme';
 import { Icon, UiIconName } from './Icon';
 import { Text } from './Text';
@@ -28,6 +28,31 @@ export const STATUS_CONFIG: Record<StatusKind, StatusConfig> = {
   HAND_RECEIVED: { label: 'Main reçue', icon: 'check', fg: 'success', bg: 'successSoft', line: 'successLine' },
   LOCKED: { label: 'Verrouillé', icon: 'lock', fg: 'locked', bg: 'lockedSoft', line: 'lockedLine' },
 };
+
+/**
+ * Detail after a member's status. Several hands: it counts hands (1 hand paid out of 2 leaves
+ * « À encaisser · partiel, 1 main »); one hand: late rounds; in advance: rounds ahead.
+ */
+export function memberStatusDetail(
+  member: Pick<Member, 'paymentStatusToday' | 'handsCount' | 'handsCoveredAhead' | 'overdueRoundsCount' | 'missingHandsToday' | 'lateHands' | 'isPartialToday'>
+): string | undefined {
+  const isMultiHands = (member.handsCount || 1) > 1;
+  const missingToday = member.missingHandsToday || 0;
+  const lateHands = member.lateHands || 0;
+  const hands = (n: number) => t('{0} main{1}', n, n > 1 ? 's' : '');
+  switch (member.paymentStatusToday) {
+    case 'PAID_IN_ADVANCE':
+      return `+${member.handsCoveredAhead || 1}`;
+    case 'OVERDUE':
+      if (isMultiHands && lateHands > 0) return hands(lateHands);
+      return member.overdueRoundsCount > 0 ? t('{0} tour{1}', member.overdueRoundsCount, member.overdueRoundsCount > 1 ? 's' : '') : undefined;
+    case 'UNPAID_TODAY':
+      if (member.isPartialToday) return t('partiel, {0} main{1}', missingToday, missingToday > 1 ? 's' : '');
+      return isMultiHands && missingToday > 0 ? hands(missingToday) : undefined;
+    default:
+      return undefined;
+  }
+}
 
 export interface StatusBadgeProps {
   status: StatusKind;

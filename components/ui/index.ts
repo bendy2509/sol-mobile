@@ -30,7 +30,7 @@ export { Screen } from './Screen';
 export type { ScreenProps } from './Screen';
 export { SectionHeader } from './SectionHeader';
 export type { SectionHeaderProps } from './SectionHeader';
-export { STATUS_CONFIG, StatusBadge } from './StatusBadge';
+export { STATUS_CONFIG, StatusBadge, memberStatusDetail } from './StatusBadge';
 export type { StatusBadgeProps, StatusKind } from './StatusBadge';
 export { Text, toneColor } from './Text';
 export { TextField } from './TextField';
