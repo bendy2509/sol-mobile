@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { calculateCycleTotalHands } from '@/services/financialService';
+import { getCycleDates } from '@/services/scheduleService';
 import { View, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -292,7 +294,8 @@ export default function CycleManagementScreen() {
         cells={[
           { label: t('Adhérents'), value: String(members.length) },
           { label: t('Par main'), value: formatCurrency(business.contributionAmount) },
-          { label: t('Fin prévue'), value: business.endDate ? formatDateShort(business.endDate) : '—' },
+          { label: t('Début'), value: formatDateShort(business.startDate) },
+          { label: t('Fin prévue'), value: formatDateShort(getCycleDates(business.startDate, business.frequency, Math.max(1, calculateCycleTotalHands(members))).endDate) },
         ]}
       />
 

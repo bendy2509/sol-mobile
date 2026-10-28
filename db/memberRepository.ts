@@ -1,5 +1,5 @@
 import { FilterStatus, Member, MemberPaymentStatus, SortOption, Transaction } from '@/types';
-import { getActiveBusinessConfig, getCycleHandsTotal } from './businessRepository';
+import { getActiveBusinessConfig, getCycleHandsTotal, getHandPotAmount } from './businessRepository';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { createTransaction } from './transactionRepository';
 import { calculateClientPaymentStatus } from '@/services/financialService';
@@ -271,13 +271,16 @@ export async function payoutMemberHand(
   const collectorId = await getActiveCollectorId();
   const todayStr = localDateString();
   const newReceivedCount = currentReceived + 1;
+  // Every hand receives the same pot, whatever the screen it is paid from:
+  // amount per hand × hands in the cycle
+  const potAmount = (await getHandPotAmount(collectorId)) || amount;
   const isFullyCompleted = newReceivedCount >= totalHands ? 1 : 0;
 
   // createTransaction handles its own atomic INSERT + client balance UPDATE internally.
   const tx = await createTransaction({
     clientId: memberId,
     businessId: businessId || null,
-    amount,
+    amount: potAmount,
     type: 'HAND_PAYOUT',
     collectorId,
     paymentMethod: 'CASH',

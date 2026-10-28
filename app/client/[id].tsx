@@ -4,12 +4,13 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { getClientById, updateClientDetails, deleteClient, getAllClients } from '@/db/clientRepository';
 import { getTransactionsByClient, reverseTransaction } from '@/db/transactionRepository';
-import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
-import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
+import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } from '@/db/businessRepository';
 import { payoutMemberHand } from '@/db/memberRepository';
 import { useAuth } from '@/context/AuthContext';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
+import { MemberScheduleCard } from '@/components/MemberScheduleCard';
+import { buildCycleRounds } from '@/services/scheduleService';
 import {
   ActionMenu,
   AmountText,
@@ -107,19 +108,8 @@ export default function ClientDetailScreen() {
     setAllClients(clientList);
 
     // Direct SQL SUM of all active clients for guaranteed accuracy
-    try {
-      const db = await getDatabase();
-      const collectorId = await getActiveCollectorId();
-      const row = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
-        [collectorId]
-      );
-      const totalFromSql = Number(row?.total || 0);
-      const totalFromClients = calculateCycleTotalHands(clientList);
-      setDbTotalHands(Math.max(1, totalFromClients, totalFromSql));
-    } catch {
-      setDbTotalHands(Math.max(1, calculateCycleTotalHands(clientList)));
-    }
+    // Rounds in the cycle: same count as the dashboard, payouts and statuses (deleted members excluded)
+    setDbTotalHands(Math.max(1, await getCycleHandsTotal()));
 
     if (data) {
       setEditFullName(data.fullName);
@@ -140,7 +130,7 @@ export default function ClientDetailScreen() {
     loadClientData();
   }, [id]);
 
-  const unitAmount = client?.dailyAmount || business?.contributionAmount || 250;
+  const unitAmount = business?.contributionAmount || client?.dailyAmount || 250;
   const memberHandsCount = Math.max(1, client?.handsCount || 1);
   const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
   const totalPotAmount = totalCycleHands * unitAmount;
@@ -267,7 +257,7 @@ export default function ClientDetailScreen() {
           await loadClientData();
         } catch (err: any) {
           triggerErrorFeedback();
-          Alert.alert(t('Erreur'), err?.message || t('Échec de la modification.'));
+          Alert.alert(t('Erreur'), err?.message ? t(err.message) : t('Échec de la modification.'));
         }
       }
     );
@@ -403,7 +393,7 @@ export default function ClientDetailScreen() {
                   ]);
                 } catch (err: any) {
                   triggerErrorFeedback();
-                  Alert.alert(t('Erreur'), err?.message || t('Échec de la suppression.'));
+                  Alert.alert(t('Erreur'), err?.message ? t(err.message) : t('Échec de la suppression.'));
                 }
               }
             );
@@ -438,7 +428,7 @@ export default function ClientDetailScreen() {
           onPress: async () => {
             try {
               const latestTx = transactions.length > 0 ? transactions[0] : null;
-              const unitVal = client.dailyAmount || business?.contributionAmount || 250;
+              const unitVal = business?.contributionAmount || client.dailyAmount || 250;
               const hands = client.paidHandsCount || 1;
               const totalVal = client.totalPaidAmount || client.currentBalance;
 
@@ -692,6 +682,17 @@ export default function ClientDetailScreen() {
         </View>
       </Card>
 
+      {business && (
+        <MemberScheduleCard
+          rounds={buildCycleRounds(business.startDate, business.frequency, totalCycleHands)}
+          memberHands={memberHandsCount}
+          paidHands={client.paidHandsCount || 0}
+          payoutRanks={(client.payoutRanks ? String(client.payoutRanks).split(/[,;\s]+/) : [String(client.payoutRank || '')])
+            .map(Number)
+            .filter((n) => n > 0)}
+        />
+      )}
+
       {/* Payout ("bay men") */}
       {isFullyReceived ? (
         <Card tone="success">
@@ -853,7 +854,7 @@ export default function ClientDetailScreen() {
           </View>
         }
       >
-        <TextField label={t('Nom complet')} value={editFullName} onChangeText={setEditFullName} placeholder={t('Ex : Marie Carmelle Jean')} />
+        <TextField label={t('Nom complet')} value={editFullName} onChangeText={setEditFullName} placeholder={t('Ex : Bendy SERVILUS')} />
         <TextField
           label={t('Numéro de téléphone')}
           value={editPhoneNumber}

@@ -457,21 +457,24 @@ class WebSQLiteAdapter {
       let filtered = [...this.data.transactions];
 
       if (cleanSql.includes('WHERE')) {
-        if (cleanSql.includes('is_reversed = 0')) {
+        // Each filter reads the parameter at its own '?' position in the statement
+        const paramAt = (clause: string) => params[(cleanSql.slice(0, cleanSql.indexOf(clause)).match(/\?/g) || []).length];
+        if (cleanSql.includes('is_reversed = 0') || cleanSql.includes('COALESCE(is_reversed, 0) = 0')) {
           filtered = filtered.filter((t) => !t.is_reversed);
         }
+        if (cleanSql.includes("type != 'REVERSAL'")) {
+          filtered = filtered.filter((t) => t.type !== 'REVERSAL');
+        }
         if (cleanSql.includes('collector_id = ?')) {
-          const colParam = params[0];
+          const colParam = paramAt('collector_id = ?');
           filtered = filtered.filter((t) => t.collector_id === colParam);
         }
         if (cleanSql.includes('client_id = ?') || cleanSql.includes('member_id = ?')) {
-          const clientParam = params.find((p) => typeof p === 'string' && p.length > 5);
+          const clientParam = paramAt(cleanSql.includes('client_id = ?') ? 'client_id = ?' : 'member_id = ?');
           if (clientParam) {
             filtered = filtered.filter((t) => t.client_id === clientParam || t.member_id === clientParam);
           }
         }
-        // Date bounds: the parameter is the one at this '?' position in the statement
-        const paramAt = (clause: string) => params[(cleanSql.slice(0, cleanSql.indexOf(clause)).match(/\?/g) || []).length];
         if (cleanSql.includes('created_at_local >= ?')) {
           const from = String(paramAt('created_at_local >= ?'));
           filtered = filtered.filter((t) => String(t.created_at_local) >= from);
@@ -492,7 +495,8 @@ class WebSQLiteAdapter {
       if (cleanSql.toLowerCase().includes('count(*)')) {
         const total = filtered.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
         const hands = filtered.reduce((acc, t) => acc + (Number(t.hands_covered) || 1), 0);
-        return [{ count: filtered.length, total, hands }] as any;
+        const first = filtered.reduce<string | null>((m, t) => (!m || String(t.created_at_local) < m ? String(t.created_at_local) : m), null);
+        return [{ count: filtered.length, total, hands, first }] as any;
       }
 
       if (cleanSql.toUpperCase().includes('SUM(AMOUNT)') || cleanSql.includes('SUM(amount)')) {

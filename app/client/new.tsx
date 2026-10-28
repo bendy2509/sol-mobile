@@ -3,14 +3,15 @@ import { View, TextInput, Pressable, StyleSheet, Alert, KeyboardAvoidingView, Pl
 import { useRouter } from 'expo-router';
 
 import { createClient } from '@/db/clientRepository';
-import { getActiveBusinessConfig, saveBusinessConfig } from '@/db/businessRepository';
+import { EnrollmentLock, getActiveBusinessConfig, getEnrollmentLock } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
 import { createTransaction } from '@/db/transactionRepository';
 import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
 import { BusinessConfig } from '@/types';
-import { calculateCycleEndDate, getFrequencyLabel } from '@/lib/dateCalculations';
-import { formatCurrency, getInitials } from '@/lib/formatters';
+import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
+import { localDateString } from '@/lib/dates';
+import { buildCycleRounds } from '@/services/scheduleService';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { Header } from '@/components/Header';
@@ -43,11 +44,16 @@ export default function NewClientScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [activeInput, setActiveInput] = useState<'NAME' | 'PHONE' | 'RANKS' | null>(null);
+  const [lock, setLock] = useState<EnrollmentLock | null>(null);
 
   const unitAmount = business?.contributionAmount || 250;
   const totalCycleHands = existingTotalCycleHands + handsCount;
   const totalPotAmount = totalCycleHands * unitAmount;
   const memberTotalDue = handsCount * totalPotAmount;
+  // Dues run from the cycle start: rounds already past or due today are owed at enrolment
+  const roundsDueNow = business
+    ? buildCycleRounds(business.startDate, business.frequency, totalCycleHands).filter((d) => d <= localDateString()).length
+    : 0;
 
   const generateRanksString = (startRank: number, count: number): string => {
     const ranks = [];
@@ -59,11 +65,13 @@ export default function NewClientScreen() {
 
   useEffect(() => {
     async function loadContext() {
-      const [activeBiz, members] = await Promise.all([
+      const [activeBiz, members, enrollmentLock] = await Promise.all([
         getActiveBusinessConfig(),
         getMembersWithPaymentStatus(),
+        getEnrollmentLock(),
       ]);
       setBusiness(activeBiz);
+      setLock(enrollmentLock);
       setExistingMembersCount(members.length);
       const totalHands = members.reduce((sum, m) => sum + (m.handsCount || 1), 0);
       setExistingTotalCycleHands(totalHands);
@@ -103,6 +111,12 @@ export default function NewClientScreen() {
     if (isReadOnly) {
       triggerErrorFeedback();
       Alert.alert(t('Accès Lecture Seule'), t('L\'inscription d\'adhérents est réservée aux gestionnaires.'));
+      return;
+    }
+
+    if (lock?.locked) {
+      triggerErrorFeedback();
+      Alert.alert(t('Inscriptions fermées'), t('Une main a déjà été remise dans ce cycle : les adhérents et leurs mains ne peuvent plus changer. Annulez la remise pour modifier.'));
       return;
     }
 
@@ -182,7 +196,7 @@ export default function NewClientScreen() {
       );
     } catch (err: any) {
       triggerErrorFeedback();
-      Alert.alert(t('Erreur'), err?.message || t('Échec de l\'enregistrement de l\'adhérent.'));
+      Alert.alert(t('Erreur'), err?.message ? t(err.message) : t('Échec de l\'enregistrement de l\'adhérent.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -245,13 +259,24 @@ export default function NewClientScreen() {
             fullWidth
             icon="check"
             loading={isSubmitting}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !!lock?.locked}
             label={isSubmitting ? t('Enregistrement en cours…') : t('Enregistrer l\'adhérent')}
             accessibilityHint={t('Demande votre code PIN gestionnaire')}
             onPress={handleValidateForm}
           />
         }
       >
+        {lock?.locked && (
+          <Card tone="sunken">
+            <View style={styles.infoRow}>
+              <Icon name="lock" size={18} color={theme.colors.textMuted} />
+              <Text variant="body" style={styles.flexShrink}>
+                {t('Une main a déjà été remise le {0}. Annulez cette remise pour ajouter un adhérent.', lock.since ? formatDateShort(lock.since) : '—')}
+              </Text>
+            </View>
+          </Card>
+        )}
+
         {/* Live Preview Card */}
         <Card tone="hero" style={styles.heroCard}>
           <View style={styles.previewTop}>
@@ -306,7 +331,7 @@ export default function NewClientScreen() {
         <Card style={styles.formCard}>
           <TextField
             label={t('Nom complet *')}
-            placeholder={t('Ex : Marie Carmel Saint-Fleur')}
+            placeholder={t('Ex : Bendy SERVILUS')}
             value={fullName}
             onChangeText={setFullName}
             onFocus={() => setActiveInput('NAME')}
@@ -391,6 +416,16 @@ export default function NewClientScreen() {
                 </Text>
               </View>
             </Card>
+            {roundsDueNow > 0 && business && (
+              <Card tone="sunken" padding="sm">
+                <View style={styles.infoRow}>
+                  <Icon name="calendar" size={18} color={theme.colors.textMuted} />
+                  <Text variant="caption" tone="muted" style={styles.flexShrink}>
+                    {t('Le cycle a commencé le {0} : cet adhérent doit déjà {1} tour(s), soit {2} ({3} main(s)).', formatDateShort(business.startDate), roundsDueNow, formatCurrency(roundsDueNow * handsCount * unitAmount), roundsDueNow * handsCount)}
+                  </Text>
+                </View>
+              </Card>
+            )}
           </Card>
         </View>
 

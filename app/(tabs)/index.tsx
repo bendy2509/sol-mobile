@@ -208,7 +208,7 @@ export default function DashboardScreen() {
               {metrics.businessName || t('SOL')}
             </Text>
             <Text variant="caption" tone="muted" numberOfLines={1}>
-              {t('{0} la main · {1} adhérents{2}', formatCurrency(metrics.unitAmount), metrics.totalMembersCount, metrics.endDate ? t(' · fin {0}', formatDateShort(metrics.endDate)) : '')}
+              {t('{0} la main · {1} adhérents{2}', formatCurrency(metrics.unitAmount), metrics.totalMembersCount, metrics.endDate ? t(' · du {0} au {1}', formatDateShort(metrics.startDate), formatDateShort(metrics.endDate)) : '')}
             </Text>
           </View>
           <SyncBadge onSyncComplete={handleRefresh} compact />

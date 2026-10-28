@@ -33,6 +33,7 @@ import {
 } from '@/services/securityService';
 import { t } from '@/i18n';
 import { localDateString } from '@/lib/dates';
+import { getCycleDates } from '@/services/scheduleService';
 
 /**
  * Session of the manager. The app is fully autonomous: no administrator, no approval,
@@ -322,7 +323,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const collectorId = uuidv4();
       const now = new Date().toISOString();
       const startDate = localDateString();
-      const endDate = localDateString(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+      // Day of the last round (one per planned hand), not start + 30 days whatever the frequency
+      const { endDate } = getCycleDates(startDate, data.frequency, data.totalSlots);
 
       // 1. Create the manager, active immediately (no approval step)
       await db.runAsync(

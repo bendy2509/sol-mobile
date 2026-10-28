@@ -3,8 +3,7 @@ import { View, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { getClientById, getAllClients } from '@/db/clientRepository';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
-import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
+import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessRepository';
 import { payoutMemberHand } from '@/db/memberRepository';
 
 import { recordAuditLog } from '@/services/auditService';
@@ -54,19 +53,8 @@ export default function PayoutScreen() {
     setBusiness(biz);
     setAllClients(cList);
 
-    try {
-      const db = await getDatabase();
-      const collectorId = await getActiveCollectorId();
-      const row = await db.getFirstAsync<{ total: number }>(
-        `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
-        [collectorId]
-      );
-      const totalFromSql = Number(row?.total || 0);
-      const totalFromClients = calculateCycleTotalHands(cList);
-      setDbTotalHands(Math.max(1, totalFromClients, totalFromSql));
-    } catch {
-      setDbTotalHands(Math.max(1, calculateCycleTotalHands(cList)));
-    }
+    // Rounds in the cycle: same count as the dashboard, payouts and statuses (deleted members excluded)
+    setDbTotalHands(Math.max(1, await getCycleHandsTotal()));
 
     if (cData) {
       const hands = Math.max(1, cData.handsCount || 1);
@@ -79,7 +67,7 @@ export default function PayoutScreen() {
     loadData();
   }, [id]);
 
-  const unitAmount = client?.dailyAmount || business?.contributionAmount || 250;
+  const unitAmount = business?.contributionAmount || client?.dailyAmount || 250;
   const memberHandsCount = Math.max(1, client?.handsCount || 1);
   const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
   const totalPotAmount = totalCycleHands * unitAmount;

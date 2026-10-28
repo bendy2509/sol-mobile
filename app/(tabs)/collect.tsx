@@ -21,9 +21,8 @@ import {
 } from '@/components/ui';
 import { getClientById, getAllClients } from '@/db/clientRepository';
 import { createTransaction } from '@/db/transactionRepository';
-import { getActiveBusinessConfig } from '@/db/businessRepository';
+import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
-import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 
 import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
@@ -81,7 +80,7 @@ export default function CollectScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
-  const unitAmount = selectedClient?.dailyAmount || business?.contributionAmount || 250;
+  const unitAmount = business?.contributionAmount || selectedClient?.dailyAmount || 250;
   const totalAmount = calculateContributionAmount(handsCount, unitAmount);
 
   const loadData = useCallback(async () => {
@@ -96,19 +95,8 @@ export default function CollectScreen() {
       setStatusById(Object.fromEntries(members.map((m) => [m.id, m])));
 
       // Direct SQL SUM for guaranteed accuracy
-      try {
-        const db = await getDatabase();
-        const collectorId = await getActiveCollectorId();
-        const row = await db.getFirstAsync<{ total: number }>(
-          `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ?`,
-          [collectorId]
-        );
-        const totalFromSql = Number(row?.total || 0);
-        const totalFromList = calculateCycleTotalHands(list);
-        setDbTotalHands(Math.max(1, totalFromList, totalFromSql));
-      } catch {
-        setDbTotalHands(Math.max(1, calculateCycleTotalHands(list)));
-      }
+      // Rounds in the cycle: same count as the dashboard, payouts and statuses (deleted members excluded)
+      setDbTotalHands(Math.max(1, await getCycleHandsTotal()));
       return list;
     } catch (err) {
       console.warn('Error loading collect data:', err);
@@ -122,7 +110,7 @@ export default function CollectScreen() {
 
   const limitsFor = useCallback(
     (client: Client) => {
-      const unit = client.dailyAmount || business?.contributionAmount || 250;
+      const unit = business?.contributionAmount || client.dailyAmount || 250;
       const balance = Number(client.currentBalance || 0);
       const totalPaid = Number(client.totalPaidAmount || balance);
       const paidHands = Math.max(Number(client.paidHandsCount || 0), calculateHandsCovered(balance, unit), calculateHandsCovered(totalPaid, unit));
