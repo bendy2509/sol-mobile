@@ -45,21 +45,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { language, setLanguage } = useI18n();
   const { preference, setPreference, textSize, setTextSize } = useThemePreference();
-  const {
-    activeCollector,
-    userRole,
-    refreshSession,
-    changePin,
-    biometricAvailable,
-    biometricEnabled,
-    setBiometricEnabled,
-    autoLockMinutes,
-    setAutoLockMinutes,
-    regenerateRecoveryCode,
-    logout,
-  } = useAuth();
-  const isManager = userRole === 'MANAGER';
-
+  const { activeCollector, refreshSession, changePin, biometricAvailable, biometricEnabled, setBiometricEnabled, autoLockMinutes, setAutoLockMinutes, regenerateRecoveryCode, logout } = useAuth();
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [pinPurpose, setPinPurpose] = useState<PinPurpose>(null);
@@ -327,14 +313,12 @@ export default function SettingsScreen() {
 
       {/* 4. Carnet et reçus */}
       <SettingsGroup title={t('settings.carnet')}>
-        {isManager ? (
-          <SettingsRow
-            label={t('settings.carnet.business')}
-            icon="settings"
-            value={business?.name}
-            onPress={() => router.push('/setup-business' as any)}
-          />
-        ) : null}
+        <SettingsRow
+          label={t('settings.carnet.business')}
+          icon="settings"
+          value={business?.name}
+          onPress={() => router.push('/setup-business' as any)}
+        />
         <SettingsRow
           label={t('settings.carnet.currency')}
           icon="cash"

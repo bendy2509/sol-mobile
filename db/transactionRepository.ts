@@ -9,16 +9,11 @@ import {
 } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } from './businessRepository';
-import {
-  isTransactionFromClosedCycle,
-  calculateHandsCount,
-  calculateCycleContributionLimits,
-  calculateCycleTotalHands,
-  reconstructClientFinancialTimeline,
-} from '@/services/financialService';
+import { isTransactionFromClosedCycle, calculateCycleContributionLimits, reconstructClientFinancialTimeline, calculateHandsCovered } from '@/services/financialService';
 import { recordAuditLog } from '@/services/auditService';
 import { buildCycleRounds, paidUntilFromHands, roundsCoveredBy } from '@/services/scheduleService';
 import { localDateString, localDayOf } from '@/lib/dates';
+import { cycleTotalHands, memberHandsCount, memberReceivedHands } from '@/services/memberRules';
 
 // In-memory Mutex to prevent double-submit collisions even during lag or double-clicking
 const inFlightTransactions = new Set<string>();
@@ -109,39 +104,33 @@ export async function createTransaction(data: {
       data.handsCovered && data.handsCovered > 0
         ? data.handsCovered
         : isContribution
-        ? calculateHandsCount(amount, unitAmount)
+        ? calculateHandsCovered(amount, unitAmount)
         : 1;
 
     const currentBalance = Number(client.current_balance || 0);
     const currentTotalPaid = Number(client.total_paid_amount || currentBalance);
     const currentPaidHands = Number(client.paid_hands_count || 0);
-    const memberHandsCount = Math.max(1, Number(client.hands_count || 1));
-    const currentReceivedHands = Number(
-      client.received_hands_count !== null && client.received_hands_count !== undefined
-        ? client.received_hands_count
-        : client.has_received_hand || client.has_received_payout
-        ? memberHandsCount
-        : 0
-    );
+    const handsOfMember = memberHandsCount(client);
+    const currentReceivedHands = memberReceivedHands(client);
 
     let newBalance = currentBalance;
     let newTotalPaid = currentTotalPaid;
     let newPaidHands = currentPaidHands;
     let newPaidUntilDate: string | null = client.paid_until_date || null;
     let newReceivedHands = currentReceivedHands;
-    let isFullyReceived = currentReceivedHands >= memberHandsCount ? 1 : 0;
+    let isFullyReceived = currentReceivedHands >= handsOfMember ? 1 : 0;
 
     if (isContribution) {
       const allClientsRows = await db.getAllAsync<{ hands_count: number | null; payout_ranks: string | null }>(
         `SELECT hands_count, payout_ranks FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
         [collectorId]
       );
-      const totalCycleHands = calculateCycleTotalHands(allClientsRows) || (activeBusiness?.totalSlots || 10);
+      const totalCycleHands = cycleTotalHands(allClientsRows) || (activeBusiness?.totalSlots || 10);
 
       const limits = calculateCycleContributionLimits({
         currentPaidHands,
         totalCycleHands,
-        memberHandsCount,
+        memberHandsCount: handsOfMember,
         unitAmount,
       });
 
@@ -166,19 +155,19 @@ export async function createTransaction(data: {
       newPaidUntilDate = paidUntilFromHands({
         cycleStartDate: activeBusiness?.startDate || todayStr,
         frequency: activeBusiness?.frequency || 'DAILY',
-        memberHands: memberHandsCount,
+        memberHands: handsOfMember,
         paidHands: newPaidHands,
         totalRounds: totalCycleHands,
       });
     } else if (isPayout) {
-      if (currentReceivedHands >= memberHandsCount) {
+      if (currentReceivedHands >= handsOfMember) {
         throw new Error(
-          `Action interdite : L'adhérent ${client.full_name} a déjà reçu l'intégralité de ses mains (${currentReceivedHands}/${memberHandsCount}) pour ce cycle.`
+          `Action interdite : L'adhérent ${client.full_name} a déjà reçu l'intégralité de ses mains (${currentReceivedHands}/${handsOfMember}) pour ce cycle.`
         );
       }
       newBalance = Math.max(0, currentBalance - amount);
       newReceivedHands = currentReceivedHands + 1;
-      isFullyReceived = newReceivedHands >= memberHandsCount ? 1 : 0;
+      isFullyReceived = newReceivedHands >= handsOfMember ? 1 : 0;
     }
 
     let persistedType: TransactionType = 'SOL_CONTRIBUTION';
@@ -493,12 +482,6 @@ export async function reverseTransaction(params: {
 }): Promise<Transaction> {
   const { transactionId, reason } = params;
 
-  // Security Guard: read-only profiles can never reverse transactions
-  if (params.userRole === 'READ_ONLY' || params.userRole === 'USER') {
-    throw new Error(
-      'Accès refusé : votre profil est en consultation seule. Seul le gestionnaire du carnet peut annuler une opération.'
-    );
-  }
 
   if (!reason || reason.trim().length === 0) {
     throw new Error("Une justification est obligatoire pour effectuer l'annulation d'une transaction.");

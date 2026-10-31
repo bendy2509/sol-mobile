@@ -120,13 +120,6 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
           <Stack.Screen name="recover-pin" options={{ title: t('Code PIN oublié'), headerBackTitle: t('Connexion') }} />
           <Stack.Screen name="restore-backup" options={{ title: t('Restaurer une sauvegarde'), headerBackTitle: t('Retour') }} />
           <Stack.Screen name="recovery-code" options={{ title: t('Code de récupération'), headerBackVisible: false, gestureEnabled: false }} />
-          <Stack.Screen name="security" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="profile"
-            options={{
-              headerShown: false,
-            }}
-          />
           <Stack.Screen
             name="closure"
             options={{

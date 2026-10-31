@@ -16,7 +16,9 @@ const suites = readdirSync(__dirname)
 
 const failed: string[] = [];
 for (const suite of suites) {
-  const run = spawnSync('npx', ['tsx', join(__dirname, suite)], { encoding: 'utf8', shell: process.platform === 'win32' });
+  // Phone-only modules are stubbed so repository suites run the app's real code on Node SQLite
+  const stubs = join(__dirname, 'support', 'register-stubs.cjs');
+  const run = spawnSync('npx', ['tsx', '--require', stubs, join(__dirname, suite)], { encoding: 'utf8', shell: process.platform === 'win32' });
   const summary = String(run.stdout || '')
     .split('\n')
     .find((l: string) => l.startsWith('RESULTS')) || 'no RESULTS line';

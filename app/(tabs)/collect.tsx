@@ -30,17 +30,13 @@ import { BusinessConfig, Client, Member, MemberPaymentStatus, Transaction } from
 import { formatCurrency, formatDateShort, formatDayMonth } from '@/lib/formatters';
 import { extractRaw8Digits } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
-import {
-  calculateContributionAmount,
-  calculateCycleContributionLimits,
-  calculateCycleTotalHands,
-  calculateHandsCovered,
-} from '@/services/financialService';
+import { calculateContributionAmount, calculateCycleContributionLimits, calculateHandsCovered } from '@/services/financialService';
 import { generateContributionReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDateString } from '@/lib/dates';
 import { buildCycleRounds } from '@/services/scheduleService';
+import { cycleTotalHands, memberPaidHands, memberHandsCount as handsOfMember } from '@/services/memberRules';
 
 /** Members still to collect come first, completed cycles last. */
 const STATUS_ORDER: Record<MemberPaymentStatus, number> = {
@@ -60,9 +56,8 @@ export default function CollectScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const params = useLocalSearchParams<{ clientId?: string }>();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { triggerSync } = useSync();
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -106,15 +101,13 @@ export default function CollectScreen() {
     }
   }, []);
 
-  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
+  const totalCycleHands = dbTotalHands || cycleTotalHands(allClients);
 
   const limitsFor = useCallback(
     (client: Client) => {
       const unit = business?.contributionAmount || client.dailyAmount || 250;
-      const balance = Number(client.currentBalance || 0);
-      const totalPaid = Number(client.totalPaidAmount || balance);
-      const paidHands = Math.max(Number(client.paidHandsCount || 0), calculateHandsCovered(balance, unit), calculateHandsCovered(totalPaid, unit));
-      const memberHands = Math.max(1, client.handsCount || 1);
+      const paidHands = memberPaidHands(client);
+      const memberHands = handsOfMember(client);
       return {
         paidHands,
         memberHands,
@@ -207,11 +200,6 @@ export default function CollectScreen() {
     .join(' ');
 
   const handleOpenPinValidation = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès en lecture seule'), t('L\'encaissement est réservé aux gestionnaires.'));
-      return;
-    }
     if (!selectedClient) return;
     if (limits.isCycleCompleted) {
       triggerErrorFeedback();

@@ -176,7 +176,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setActiveCollector(collector);
       setActiveBusiness(business);
 
-      const role: UserRole = (collector?.role as UserRole) === 'READ_ONLY' ? 'READ_ONLY' : 'MANAGER';
+      const role: UserRole = 'MANAGER';
       setUserRole(role);
 
       if (loggedInFlag === 'true' && collector) {

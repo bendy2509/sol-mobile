@@ -351,15 +351,3 @@ export function buildPayoutCalendar(
   }
   return rows.sort((a, b) => a.round - b.round);
 }
-
-/** Payout ranks of a member ("1, 5" or the single rank). */
-export function parsePayoutRanks(payoutRanks?: string | number[] | null, payoutRank?: number | null): number[] {
-  const list = Array.isArray(payoutRanks)
-    ? payoutRanks
-    : payoutRanks
-    ? String(payoutRanks).split(/[,;\s]+/)
-    : payoutRank
-    ? [payoutRank]
-    : [];
-  return list.map(Number).filter((n) => Number.isFinite(n) && n > 0);
-}

@@ -10,7 +10,7 @@ import { useAuth } from '@/context/AuthContext';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import { MemberScheduleCard } from '@/components/MemberScheduleCard';
-import { buildCycleRounds, buildMemberSchedule, buildPayoutCalendar, parsePayoutRanks } from '@/services/scheduleService';
+import { buildCycleRounds, buildMemberSchedule, buildPayoutCalendar } from '@/services/scheduleService';
 import {
   ActionMenu,
   AmountText,
@@ -36,16 +36,13 @@ import { formatCurrency, formatDate, formatDateShort } from '@/lib/formatters';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { generateContributionReceiptPdf, generateMemberStatementPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { recordAuditLog } from '@/services/auditService';
-import {
-  calculateCycleContributionLimits,
-  calculateCycleTotalHands,
-  isTransactionFromClosedCycle,
-} from '@/services/financialService';
+import { calculateCycleContributionLimits, calculateMemberDuePerRound, isTransactionFromClosedCycle } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDateString, localDayOf } from '@/lib/dates';
+import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount as memberHands, memberReceivedHands, nextBeneficiary, parsePayoutRanks } from '@/services/memberRules';
 
 /** Display label of a ledger entry (presentation only). */
 function getTxTypeLabel(tx: Transaction): string {
@@ -60,9 +57,8 @@ export default function ClientDetailScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [client, setClient] = useState<Client | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -131,9 +127,9 @@ export default function ClientDetailScreen() {
   }, [id]);
 
   const unitAmount = business?.contributionAmount || client?.dailyAmount || 250;
-  const memberHandsCount = Math.max(1, client?.handsCount || 1);
-  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
-  const totalPotAmount = totalCycleHands * unitAmount;
+  const memberHandsCount = client ? memberHands(client) : 1;
+  const totalCycleHands = dbTotalHands || cycleTotalHands(allClients);
+  const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);
 
 
   const limits = calculateCycleContributionLimits({
@@ -147,35 +143,14 @@ export default function ClientDetailScreen() {
   const remainingAmount = limits.remainingAmount;
   const maxAllowedHands = limits.maxAllowedHands;
 
-  // Direct count of payout transactions to guarantee 100% coherence with transaction timeline
-  const clientPayoutTxsCount = transactions.filter(
-    (t) => !t.isReversed && (t.type === 'HAND_PAYOUT' || t.type === 'SOL_PAYOUT')
-  ).length;
-
-  const rawReceived = Number(client?.receivedHandsCount || 0);
-  const hasPayoutFlag = Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
-  const currentReceivedHands = Math.max(
-    rawReceived,
-    clientPayoutTxsCount,
-    hasPayoutFlag ? (rawReceived > 0 ? rawReceived : memberHandsCount) : 0
-  );
-  const isFullyReceived = currentReceivedHands >= memberHandsCount || hasPayoutFlag;
-
-  const totalHandsTouched = allClients.reduce((sum, m) => {
-    const rawRec = Number(m.receivedHandsCount || 0);
-    const flag = Boolean(m.hasReceivedHand || m.hasReceivedPayout);
-    const hands = Math.max(1, Number(m.handsCount || 1));
-    return sum + Math.max(rawRec, flag ? (rawRec > 0 ? rawRec : hands) : 0);
-  }, 0);
-  const effectiveTotalHandsTouched = Math.max(totalHandsTouched, currentReceivedHands);
-  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((effectiveTotalHandsTouched / totalCycleHands) * 100)) : 0;
+  const currentReceivedHands = client ? memberReceivedHands(client) : 0;
+  const isFullyReceived = client ? hasReceivedAllHands(client) : false;
+  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((cycleHandsPaidOut(allClients) / totalCycleHands) * 100)) : 0;
   const memberPayoutProgressPct = memberHandsCount > 0 ? Math.min(100, Math.round((currentReceivedHands / memberHandsCount) * 100)) : 0;
   const memberContributionProgressPct = maxAllowedHands > 0 ? Math.min(100, Math.round(((client?.paidHandsCount || 0) / maxAllowedHands) * 100)) : 0;
 
-  const pendingRankClients = allClients
-    .filter((c) => !c.hasReceivedHand && !c.hasReceivedPayout && c.payoutRank)
-    .sort((a, b) => (a.payoutRank || 999) - (b.payoutRank || 999));
-  const expectedNextRank = pendingRankClients.length > 0 ? pendingRankClients[0].payoutRank || 1 : 1;
+  // The draw order: the next hand to pay out (lowest pending rank)
+  const expectedNextRank = nextBeneficiary(allClients)?.rank ?? 1;
   const isOutOfOrder = Boolean(client?.payoutRank && client.payoutRank !== expectedNextRank);
 
   const requirePinForAction = (title: string, subtitle: string, action: () => Promise<void>) => {
@@ -194,11 +169,6 @@ export default function ClientDetailScreen() {
   };
 
   const handleOpenEditModal = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('La modification est réservée aux gestionnaires.'));
-      return;
-    }
     triggerLightImpact();
     if (!client) return;
     setEditFullName(client.fullName);
@@ -215,11 +185,6 @@ export default function ClientDetailScreen() {
   };
 
   const handleSaveEdit = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('La modification est réservée aux gestionnaires.'));
-      return;
-    }
     if (!client) return;
     if (!editFullName.trim()) {
       Alert.alert(t('Erreur'), t('Le nom de l\'adhérent ne peut pas être vide.'));
@@ -264,11 +229,6 @@ export default function ClientDetailScreen() {
   };
 
   const handleInitiatePayout = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement est réservé aux gestionnaires.'));
-      return;
-    }
     triggerMediumImpact();
     if (!client) return;
     if (client.hasReceivedHand || client.hasReceivedPayout) {
@@ -355,11 +315,6 @@ export default function ClientDetailScreen() {
   };
 
   const handleDeleteClient = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('La suppression est réservée aux gestionnaires.'));
-      return;
-    }
     if (!client) return;
     triggerMediumImpact();
 
@@ -585,8 +540,7 @@ export default function ClientDetailScreen() {
           await reverseTransaction({
             transactionId: selectedTxForReversal.id,
             reason: reversalReason.trim(),
-            userRole: userRole || 'MANAGER',
-            collectorId: activeCollector?.id,
+                collectorId: activeCollector?.id,
           });
           triggerSuccessFeedback();
           Alert.alert(t('Opération annulée'), t('L\'opération a été annulée et le solde/échéance de l\'adhérent a été recalculé.'));
@@ -627,8 +581,7 @@ export default function ClientDetailScreen() {
   return (
     <Screen
       footer={
-        !isReadOnly ? (
-          <Button
+        <Button
             size="lg"
             fullWidth
             icon="cash"
@@ -638,13 +591,11 @@ export default function ClientDetailScreen() {
               router.navigate({ pathname: '/(tabs)/collect', params: { clientId: client.id } } as any);
             }}
           />
-        ) : undefined
       }
     >
       <Stack.Screen
         options={{
-          headerRight: () =>
-            isReadOnly ? null : (
+          headerRight: () => (
               <ActionMenu
                 title={client.fullName}
                 items={[
@@ -733,7 +684,7 @@ export default function ClientDetailScreen() {
             </View>
           </View>
         </Card>
-      ) : !isReadOnly ? (
+      ) : (
         <Card style={styles.cardGap}>
           <View style={styles.rowBetween}>
             <Text variant="subheading">{t('Remise de la main')}</Text>
@@ -750,7 +701,7 @@ export default function ClientDetailScreen() {
             onPress={handleInitiatePayout}
           />
         </Card>
-      ) : null}
+      )}
 
       {/* Cycle details */}
       <Card style={styles.cardGap}>
@@ -848,20 +799,10 @@ export default function ClientDetailScreen() {
               <Button label={t('WhatsApp')} icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
             </View>
 
-            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
-            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
               <Button label={t('Annuler cette opération')} icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
-            )}
-
-
-            {isReadOnly && selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
-              <Card tone="sunken">
-                <View style={styles.noticeRow}>
-                  <Icon name="shield" size={18} color={theme.colors.textMuted} />
-                  <Text variant="caption" tone="muted" style={styles.flexShrink}>{t('Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.')}</Text>
-                </View>
-              </Card>
             )}
           </>
         )}
@@ -893,7 +834,7 @@ export default function ClientDetailScreen() {
           <View style={styles.rowBetween}>
             <Text variant="label">{t('Mains souscrites')}</Text>
             <Text variant="label" tone="primary">
-              {t('{0} / tour', formatCurrency(editHandsCount * unitAmount))}</Text>
+              {t('{0} / tour', formatCurrency(calculateMemberDuePerRound(editHandsCount, unitAmount)))}</Text>
           </View>
           <View style={styles.stepperRow}>
             <Pressable

@@ -20,19 +20,18 @@ import { AmountText, Avatar, Button, Card, Icon, ProgressBar, Screen, Text, Text
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 
-import { calculateCycleTotalHands } from '@/services/financialService';
 import { t } from '@/i18n';
+import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount as memberHands, memberReceivedHands } from '@/services/memberRules';
 
 export default function PayoutScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { triggerSync } = useSync();
   const { isSmallScreen, contentMaxWidth, horizontalPadding } = useResponsive();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [client, setClient] = useState<Client | null>(null);
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
@@ -57,8 +56,8 @@ export default function PayoutScreen() {
     setDbTotalHands(Math.max(1, await getCycleHandsTotal()));
 
     if (cData) {
-      const hands = Math.max(1, cData.handsCount || 1);
-      const curRec = cData.receivedHandsCount || 0;
+      const hands = memberHands(cData);
+      const curRec = memberReceivedHands(cData);
       setPayoutNote(`Remise de la main (${curRec + 1}/${hands}) - ${cData.fullName}`);
     }
   };
@@ -68,27 +67,12 @@ export default function PayoutScreen() {
   }, [id]);
 
   const unitAmount = business?.contributionAmount || client?.dailyAmount || 250;
-  const memberHandsCount = Math.max(1, client?.handsCount || 1);
-  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
-  const totalPotAmount = totalCycleHands * unitAmount;
-
-  const rawReceived = Number(client?.receivedHandsCount || 0);
-  const hasPayoutFlag = Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
-  const currentReceivedHands = Math.max(
-    rawReceived,
-    hasPayoutFlag ? (rawReceived > 0 ? rawReceived : memberHandsCount) : 0
-  );
-
-  const isFullyReceived = currentReceivedHands >= memberHandsCount || hasPayoutFlag;
-
-  const totalHandsTouched = allClients.reduce((sum, m) => {
-    const rawRec = Number(m.receivedHandsCount || 0);
-    const flag = Boolean(m.hasReceivedHand || m.hasReceivedPayout);
-    const hands = Math.max(1, Number(m.handsCount || 1));
-    return sum + Math.max(rawRec, flag ? (rawRec > 0 ? rawRec : hands) : 0);
-  }, 0);
-  const effectiveTotalHandsTouched = Math.max(totalHandsTouched, currentReceivedHands);
-  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((effectiveTotalHandsTouched / totalCycleHands) * 100)) : 0;
+  const memberHandsCount = client ? memberHands(client) : 1;
+  const totalCycleHands = dbTotalHands || cycleTotalHands(allClients);
+  const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);
+  const currentReceivedHands = client ? memberReceivedHands(client) : 0;
+  const isFullyReceived = client ? hasReceivedAllHands(client) : false;
+  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((cycleHandsPaidOut(allClients) / totalCycleHands) * 100)) : 0;
   const memberPayoutProgressPct = memberHandsCount > 0 ? Math.min(100, Math.round((currentReceivedHands / memberHandsCount) * 100)) : 0;
 
   const handleInitiatePayout = () => {
@@ -101,11 +85,6 @@ export default function PayoutScreen() {
       return;
     }
 
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement de la main est réservé aux gestionnaires.'));
-      return;
-    }
 
     if (!payoutNote.trim()) {
       triggerErrorFeedback();
@@ -318,7 +297,7 @@ export default function PayoutScreen() {
               <View style={styles.row}>
                 <Text variant="label">{t('Mains données au total')}</Text>
                 <Text variant="amountSmall">
-                  {totalHandsTouched} / {totalCycleHands} · {cycleProgressPct} %
+                  {cycleHandsPaidOut(allClients)} / {totalCycleHands} · {cycleProgressPct} %
                 </Text>
               </View>
               <ProgressBar value={cycleProgressPct / 100} tone="success" accessibilityLabel={t('Mains données au total : {0} %', cycleProgressPct)} />

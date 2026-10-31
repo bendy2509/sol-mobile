@@ -22,7 +22,7 @@ interface DiagnosticState {
   pendingSyncCount: number;
   dbSizeBytes: number;
   lastCheckTime: string;
-  /** null on the web preview (no real SQLite there). */
+  /** null while not read yet. */
   schemaVersion: number | null;
   schemaWarnings: string[];
   migrationError: string | null;
@@ -69,13 +69,12 @@ export default function BackupDiagnosticsScreen() {
       // 3. Schéma versionné (migrations)
       let schemaVersion: number | null = null;
       let schemaWarnings: string[] = [];
-      if (Platform.OS !== 'web') {
-        schemaVersion = await getSchemaVersion(db);
-        const rows = await db.getAllAsync<{ version: number; warning: string | null }>(
-          'SELECT version, warning FROM schema_migrations WHERE warning IS NOT NULL ORDER BY version'
-        );
-        schemaWarnings = rows.map((r) => t('Version {0} : {1}', r.version, t(r.warning ?? '')));
-      }
+      // Same SQLite and migrations on every platform (the web too)
+      schemaVersion = await getSchemaVersion(db);
+      const rows = await db.getAllAsync<{ version: number; warning: string | null }>(
+        'SELECT version, warning FROM schema_migrations WHERE warning IS NOT NULL ORDER BY version'
+      );
+      schemaWarnings = rows.map((r) => t('Version {0} : {1}', r.version, t(r.warning ?? '')));
       const lastError = getLastMigrationReport()?.error;
 
       // 4. Cohérence : totaux des adhérents = rejeu de leurs opérations du cycle

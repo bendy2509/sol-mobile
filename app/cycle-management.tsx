@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { calculateCycleTotalHands } from '@/services/financialService';
 import { getCycleDates } from '@/services/scheduleService';
 import { View, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -17,6 +16,7 @@ import { triggerErrorFeedback, triggerMediumImpact, triggerSuccessFeedback } fro
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
+import { cycleTotalHands } from '@/services/memberRules';
 
 type CycleMode = 'RENEW_SAME_MEMBERS' | 'START_FRESH' | null;
 
@@ -24,7 +24,7 @@ export default function CycleManagementScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { contentMaxWidth, horizontalPadding, width, isSmallScreen } = useResponsive();
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
@@ -119,16 +119,7 @@ export default function CycleManagementScreen() {
     }
   };
 
-  const isManager = userRole === 'MANAGER';
-
   const handleSelectMode = (mode: CycleMode) => {
-    if (!isManager) {
-      Alert.alert(
-        t('Accès Restreint'),
-        t('Seul le responsable SOL peut effectuer une clôture de cycle.')
-      );
-      return;
-    }
     triggerMediumImpact();
     setSelectedMode(mode);
   };
@@ -168,7 +159,7 @@ export default function CycleManagementScreen() {
         collectorId: activeCollector?.id,
         mode: selectedMode as 'RENEW_SAME_MEMBERS' | 'START_FRESH',
         userId: activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001',
-        userRole: (userRole as 'MANAGER') || 'MANAGER',
+        userRole: 'MANAGER',
         name: newCycleName.trim(),
         contributionAmount: contribution,
         frequency: newFrequency,
@@ -294,7 +285,7 @@ export default function CycleManagementScreen() {
       <StatStrip
         cells={[
           { label: t('Début'), value: formatDateShort(business.startDate) },
-          { label: t('Fin prévue'), value: formatDateShort(getCycleDates(business.startDate, business.frequency, Math.max(1, calculateCycleTotalHands(members))).endDate) },
+          { label: t('Fin prévue'), value: formatDateShort(getCycleDates(business.startDate, business.frequency, Math.max(1, cycleTotalHands(members))).endDate) },
         ]}
       />
 

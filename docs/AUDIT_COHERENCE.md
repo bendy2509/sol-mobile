@@ -72,9 +72,22 @@ L'ancienne suite `test-financial-rules.ts` (19 tests) est retirée : ce qu'elle 
 | Réglages du carnet | Montant, fréquence et date verrouillés. Le changement de nom modifie le carnet existant. |
 | Diagnostic « Cohérence du carnet » | 0 écart |
 
+## Fragilités corrigées ensuite (31 octobre 2026)
+
+- **Une seule fonction par calcul** :
+  - les nombres de mains, de rangs, de mains reçues et de mains payées, le pot d'un tour, le tour en cours et le prochain bénéficiaire sont dans `services/memberRules.ts` ;
+  - l'argent est dans `services/financialService.ts` ;
+  - les dates, les tours et les statuts sont dans `services/scheduleService.ts` ;
+  - les écrans et la base appellent ces fonctions au lieu de refaire les comptes (environ 80 copies supprimées, dont 3 fonctions de lecture d'adhérent identiques).
+- **Vrai SQLite sur le web** : l'aperçu web utilise `expo-sqlite` comme le téléphone, avec les mêmes requêtes, migrations et règles de la base. L'ancienne imitation est supprimée. La base n'est ouverte qu'une fois, même quand plusieurs écrans la demandent en même temps.
+- **Tests de la base** : `scripts/test_repositories.ts` fait tourner le vrai code de la base sur SQLite (sous Node), sur un cycle complet : inscription, encaissements, tour partiel, verrous, caisse, remise, annulation, cohérence, clôture.
+- **Code mort retiré** : l'ancien rôle « lecture seule » et les routes `profile` et `security`.
+
+`npm test` : 10 suites, 318 tests.
+
 ## Ce qui reste hors de cet audit
 
-- **À vérifier sur téléphone avec le prochain APK** : le relevé adhérent PDF, le PV de clôture PDF et les reçus. Les modèles compilent, mais ils n'ont pas été affichés : sur le web, les menus à boutons (`Alert`) ne s'ouvrent pas.
+- **À vérifier sur téléphone avec le prochain APK** : le relevé adhérent PDF, le PV de clôture PDF et les reçus.
 - **Sur le web**, les messages de succès ou d'erreur (`Alert`) ne s'affichent pas. Sur téléphone, ils s'affichent.
-- **Rôles** : il reste du code de l'ancien rôle « lecture seule » (`isReadOnly`). Le rôle vaut toujours « gestionnaire », donc ce code est sans effet.
-- **Clôture de cycle** : elle ne demande pas de confirmation si des mains restent à remettre ou à encaisser. C'est une piste d'amélioration.
+- **Synchronisation cloud** : elle est désactivée, mais son code est toujours présent. Il est gardé pour la future sauvegarde sur VPS.
+- **Clôture de cycle** : elle ne demande pas de confirmation si des mains restent à remettre ou à encaisser.

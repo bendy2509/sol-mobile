@@ -14,7 +14,6 @@ import { getDashboardMetrics } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { recordAuditLog } from '@/services/auditService';
 import { exportBusinessReport } from '@/services/reportExport';
-import { useAuth } from '@/context/AuthContext';
 import { useSync } from '@/context/SyncContext';
 import { DashboardMetrics, FilterStatus, Member, SortOption } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
@@ -27,10 +26,9 @@ export default function DashboardScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { userRole } = useAuth();
+  
   const { triggerSync } = useSync();
   const { isTablet } = useResponsive();
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     unitAmount: 250,
@@ -119,11 +117,6 @@ export default function DashboardScreen() {
   };
 
   const handleInitiatePayout = (member: Member) => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement de la main est réservé aux gestionnaires.'));
-      return;
-    }
     triggerMediumImpact();
     setPayoutTargetMember(member);
     setPayoutNote(`Remise de la main #${member.rankOrder || 1} - ${member.fullName}`);
@@ -294,7 +287,7 @@ export default function DashboardScreen() {
               searchQuery ? t('Aucun résultat ne correspond à votre recherche.') : t('Ajoutez des enfants pour démarrer la collecte et le cycle.')
             }
             action={
-              searchQuery || isReadOnly
+              searchQuery
                 ? undefined
                 : { label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }
             }
