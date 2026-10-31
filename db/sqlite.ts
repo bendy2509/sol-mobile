@@ -606,12 +606,6 @@ export async function setActiveBusinessId(businessId: string): Promise<void> {
 }
 
 async function initDatabaseInternal(db: any): Promise<void> {
-  if (Platform.OS === 'web') {
-    await webDb.init();
-    await seedInitialData(webDb);
-    return;
-  }
-
   try {
     await db.execAsync('PRAGMA journal_mode = WAL;');
   } catch {}
@@ -796,14 +790,6 @@ async function initDatabaseInternal(db: any): Promise<void> {
 }
 
 export async function getDatabase(): Promise<UniversalSQLiteDatabase> {
-  if (Platform.OS === 'web') {
-    if (!dbInitPromise) {
-      dbInitPromise = initDatabaseInternal(webDb);
-    }
-    await dbInitPromise;
-    return webDb;
-  }
-
   if (!dbInstance) {
     try {
       dbInstance = await SQLite.openDatabaseAsync('sol.db');

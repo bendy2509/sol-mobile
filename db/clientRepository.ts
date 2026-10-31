@@ -6,6 +6,67 @@ import { assertEnrollmentOpen, getActiveBusinessConfig, getCurrentCycleBoundary,
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString } from '@/lib/dates';
+import { memberHandsCount, memberPaidHands, memberReceivedHands } from '@/services/memberRules';
+
+type ClientRow = {
+  id: string;
+  business_id: string | null;
+  collector_id: string;
+  full_name: string;
+  phone_number: string;
+  type: string;
+  daily_amount: number;
+  current_balance: number;
+  payout_rank: number | null;
+  payout_ranks: string | null;
+  hands_count: number | null;
+  received_hands_count: number | null;
+  has_received_hand: number | null;
+  has_received_payout: number | null;
+  hand_received_date: string | null;
+  total_paid_amount: number | null;
+  paid_hands_count: number | null;
+  paid_until_date: string | null;
+  qr_code_token: string;
+  created_at: string;
+  sync_status: SyncStatus;
+};
+
+/** One mapping from a member row to the app's Client (counts from services/memberRules.ts). */
+function rowToClient(r: ClientRow): Client {
+  const handsCount = memberHandsCount(r);
+  const receivedHandsCount = memberReceivedHands(r);
+  const hasHand = receivedHandsCount >= handsCount;
+  const totalPaid = Number(r.total_paid_amount || 0);
+  return {
+    id: r.id,
+    businessId: r.business_id || undefined,
+    collectorId: r.collector_id,
+    fullName: r.full_name,
+    phoneNumber: r.phone_number,
+    type: (r.type as any) || 'SABOTAY',
+    dailyAmount: Number(r.daily_amount || 250),
+    currentBalance: Number(r.current_balance || 0),
+    payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
+    rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
+    payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
+    handsCount,
+    receivedHandsCount,
+    hasReceivedHand: hasHand,
+    hasReceivedPayout: hasHand,
+    handReceivedDate: r.hand_received_date || undefined,
+    totalPaidAmount: totalPaid,
+    paidHandsCount: memberPaidHands(r),
+    paidUntilDate: r.paid_until_date || '', // '' = not covered yet (never paid)
+    qrCodeToken: r.qr_code_token,
+    createdAt: r.created_at,
+    syncStatus: r.sync_status || 'PENDING',
+    paymentStatusToday: 'UNPAID_TODAY',
+    overdueRoundsCount: 0,
+    totalPaidInCycle: totalPaid,
+    handsCoveredAhead: 0,
+  };
+}
 
 export async function getAllClients(options?: {
   search?: string;
@@ -63,238 +124,24 @@ export async function getAllClients(options?: {
 
   query += ` ORDER BY payout_rank ASC, full_name ASC`;
 
-  const rows = await db.getAllAsync<{
-    id: string;
-    business_id: string | null;
-    collector_id: string;
-    full_name: string;
-    phone_number: string;
-    type: string;
-    daily_amount: number;
-    current_balance: number;
-    payout_rank: number | null;
-    payout_ranks: string | null;
-    hands_count: number | null;
-    received_hands_count: number | null;
-    has_received_hand: number | null;
-    has_received_payout: number | null;
-    hand_received_date: string | null;
-    total_paid_amount: number | null;
-    paid_hands_count: number | null;
-    paid_until_date: string | null;
-    qr_code_token: string;
-    created_at: string;
-    sync_status: SyncStatus;
-  }>(query, params);
+  const rows = await db.getAllAsync<ClientRow>(query, params);
 
-  const todayStr = localDateString();
-
-  return rows.map((r) => {
-    const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
-    const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
-    const receivedHandsCount = Number(
-      r.received_hands_count !== null && r.received_hands_count !== undefined
-        ? r.received_hands_count
-        : r.has_received_hand || r.has_received_payout
-        ? handsCount
-        : 0
-    );
-    const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
-    const unitAmount = Number(r.daily_amount || 250);
-    const balance = Number(r.current_balance || 0);
-    const totalPaid = Number(r.total_paid_amount || balance);
-    const paidHands = Math.max(
-      Number(r.paid_hands_count || 0),
-      Math.floor(balance / (unitAmount || 1)),
-      Math.floor(totalPaid / (unitAmount || 1))
-    );
-
-    return {
-      id: r.id,
-      businessId: r.business_id || undefined,
-      collectorId: r.collector_id,
-      fullName: r.full_name,
-      phoneNumber: r.phone_number,
-      type: (r.type as any) || 'SABOTAY',
-      dailyAmount: unitAmount,
-      currentBalance: balance,
-      payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
-      rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
-      payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
-      handsCount,
-      receivedHandsCount,
-      hasReceivedHand: hasHand,
-      hasReceivedPayout: hasHand,
-      handReceivedDate: r.hand_received_date || undefined,
-      totalPaidAmount: totalPaid,
-      paidHandsCount: paidHands,
-      paidUntilDate: r.paid_until_date || '', // '' = not covered yet (never paid)
-      qrCodeToken: r.qr_code_token,
-      createdAt: r.created_at,
-      syncStatus: r.sync_status || 'PENDING',
-      paymentStatusToday: 'UNPAID_TODAY',
-      overdueRoundsCount: 0,
-      totalPaidInCycle: totalPaid,
-      handsCoveredAhead: 0,
-    };
-  });
+  return rows.map(rowToClient);
 }
 
 export async function getClientById(id: string): Promise<Client | null> {
   const db = await getDatabase();
-  const r = await db.getFirstAsync<{
-    id: string;
-    business_id: string | null;
-    collector_id: string;
-    full_name: string;
-    phone_number: string;
-    type: string;
-    daily_amount: number;
-    current_balance: number;
-    payout_rank: number | null;
-    payout_ranks: string | null;
-    hands_count: number | null;
-    received_hands_count: number | null;
-    has_received_hand: number | null;
-    has_received_payout: number | null;
-    hand_received_date: string | null;
-    total_paid_amount: number | null;
-    paid_hands_count: number | null;
-    paid_until_date: string | null;
-    qr_code_token: string;
-    created_at: string;
-    sync_status: SyncStatus;
-  }>(`SELECT * FROM clients WHERE id = ?`, [id]);
+  const r = await db.getFirstAsync<ClientRow>(`SELECT * FROM clients WHERE id = ?`, [id]);
 
-  if (!r) return null;
-
-  const todayStr = localDateString();
-  const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
-  const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
-  const receivedHandsCount = Number(
-    r.received_hands_count !== null && r.received_hands_count !== undefined
-      ? r.received_hands_count
-      : r.has_received_hand || r.has_received_payout
-      ? handsCount
-      : 0
-  );
-  const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
-  const unitAmount = Number(r.daily_amount || 250);
-  const balance = Number(r.current_balance || 0);
-  const totalPaid = Number(r.total_paid_amount || balance);
-  const paidHands = Math.max(
-    Number(r.paid_hands_count || 0),
-    Math.floor(balance / (unitAmount || 1)),
-    Math.floor(totalPaid / (unitAmount || 1))
-  );
-
-  return {
-    id: r.id,
-    businessId: r.business_id || undefined,
-    collectorId: r.collector_id,
-    fullName: r.full_name,
-    phoneNumber: r.phone_number,
-    type: (r.type as any) || 'SABOTAY',
-    dailyAmount: unitAmount,
-    currentBalance: balance,
-    payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
-    rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
-    payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
-    handsCount,
-    receivedHandsCount,
-    hasReceivedHand: hasHand,
-    hasReceivedPayout: hasHand,
-    handReceivedDate: r.hand_received_date || undefined,
-    totalPaidAmount: totalPaid,
-    paidHandsCount: paidHands,
-    paidUntilDate: r.paid_until_date || '', // '' = not covered yet (never paid)
-    qrCodeToken: r.qr_code_token,
-    createdAt: r.created_at,
-    syncStatus: r.sync_status || 'PENDING',
-    paymentStatusToday: 'UNPAID_TODAY',
-    overdueRoundsCount: 0,
-    totalPaidInCycle: totalPaid,
-    handsCoveredAhead: 0,
-  };
+  return r ? rowToClient(r) : null;
 }
 
 export async function getClientByQrToken(qrCodeToken: string): Promise<Client | null> {
   const db = await getDatabase();
   const tokenClean = qrCodeToken.trim();
-  const r = await db.getFirstAsync<{
-    id: string;
-    business_id: string | null;
-    collector_id: string;
-    full_name: string;
-    phone_number: string;
-    type: string;
-    daily_amount: number;
-    current_balance: number;
-    payout_rank: number | null;
-    payout_ranks: string | null;
-    hands_count: number | null;
-    received_hands_count: number | null;
-    has_received_hand: number | null;
-    has_received_payout: number | null;
-    hand_received_date: string | null;
-    total_paid_amount: number | null;
-    paid_hands_count: number | null;
-    paid_until_date: string | null;
-    qr_code_token: string;
-    created_at: string;
-    sync_status: SyncStatus;
-  }>(`SELECT * FROM clients WHERE qr_code_token = ? OR id = ?`, [tokenClean, tokenClean]);
+  const r = await db.getFirstAsync<ClientRow>(`SELECT * FROM clients WHERE qr_code_token = ? OR id = ?`, [tokenClean, tokenClean]);
 
-  if (!r) return null;
-
-  const todayStr = localDateString();
-  const parsedQrRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
-  const handsCount = Math.max(1, Number(r.hands_count || 1), parsedQrRanksCount);
-  const receivedHandsCount = Number(
-    r.received_hands_count !== null && r.received_hands_count !== undefined
-      ? r.received_hands_count
-      : r.has_received_hand || r.has_received_payout
-      ? handsCount
-      : 0
-  );
-  const hasHand = receivedHandsCount >= handsCount || Boolean(r.has_received_hand || r.has_received_payout);
-  const unitAmount = Number(r.daily_amount || 250);
-  const balance = Number(r.current_balance || 0);
-  const totalPaid = Number(r.total_paid_amount || balance);
-  const paidHands = Math.max(
-    Number(r.paid_hands_count || 0),
-    Math.floor(balance / (unitAmount || 1)),
-    Math.floor(totalPaid / (unitAmount || 1))
-  );
-
-  return {
-    id: r.id,
-    businessId: r.business_id || undefined,
-    collectorId: r.collector_id,
-    fullName: r.full_name,
-    phoneNumber: r.phone_number,
-    type: (r.type as any) || 'SABOTAY',
-    dailyAmount: Number(r.daily_amount || 250),
-    currentBalance: balance,
-    payoutRank: r.payout_rank !== null ? Number(r.payout_rank) : null,
-    rankOrder: r.payout_rank !== null ? Number(r.payout_rank) : undefined,
-    payoutRanks: r.payout_ranks || (r.payout_rank ? String(r.payout_rank) : undefined),
-    handsCount,
-    receivedHandsCount,
-    hasReceivedHand: hasHand,
-    hasReceivedPayout: hasHand,
-    handReceivedDate: r.hand_received_date || undefined,
-    totalPaidAmount: totalPaid,
-    paidHandsCount: paidHands,
-    paidUntilDate: r.paid_until_date || '', // '' = not covered yet (never paid)
-    qrCodeToken: r.qr_code_token,
-    createdAt: r.created_at,
-    syncStatus: r.sync_status || 'PENDING',
-    paymentStatusToday: 'UNPAID_TODAY',
-    overdueRoundsCount: 0,
-    totalPaidInCycle: totalPaid,
-    handsCoveredAhead: 0,
-  };
+  return r ? rowToClient(r) : null;
 }
 
 export async function createClient(data: {

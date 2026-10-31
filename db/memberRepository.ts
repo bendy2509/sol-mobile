@@ -2,7 +2,8 @@ import { FilterStatus, Member, MemberPaymentStatus, SortOption, Transaction } fr
 import { getActiveBusinessConfig, getCycleHandsTotal, getHandPotAmount } from './businessRepository';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { createTransaction } from './transactionRepository';
-import { calculateClientPaymentStatus } from '@/services/financialService';
+import { computeMemberSchedule } from '@/services/scheduleService';
+import { memberHandsCount, memberReceivedHands } from '@/services/memberRules';
 import { localDateString } from '@/lib/dates';
 
 export async function getMembersWithPaymentStatus(options?: {
@@ -110,37 +111,23 @@ export async function getMembersWithPaymentStatus(options?: {
     const hasPaidToday = paidTodaySet.has(r.id);
     const lastPaymentDate = lastTxMap.get(r.id) || null;
 
-    const parsedRanksCount = r.payout_ranks ? String(r.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
-    const handsCount = Math.max(1, Number(r.hands_count || 1), parsedRanksCount);
-    const rawReceived = Number(r.received_hands_count || 0);
-    const receivedHandsCount = rawReceived > 0
-      ? rawReceived
-      : (r.has_received_hand || r.has_received_payout)
-        ? (handsCount === 1 ? 1 : 0)
-        : 0;
+    const handsCount = memberHandsCount(r);
+    const receivedHandsCount = memberReceivedHands(r);
     const hasReceived = receivedHandsCount >= handsCount;
     const balance = Number(r.current_balance || 0);
-    const totalPaid = Number(r.total_paid_amount || balance);
-    const paidHands = Number(r.paid_hands_count || Math.floor(balance / (unitAmount || 1)));
+    const totalPaid = Number(r.total_paid_amount || 0);
+    const paidHands = Number(r.paid_hands_count || 0);
     const paidUntil = r.paid_until_date || null;
 
     // Cycle calendar: all the member's hands are due at every round since the cycle start
-    const calculated = calculateClientPaymentStatus({
+    const calculated = computeMemberSchedule({
+      cycleStartDate: business?.startDate || todayStr,
+      frequency: business?.frequency || 'DAILY',
+      totalCycleHands: cycleHands,
+      memberHands: handsCount,
+      paidHands,
       todayStr,
-      paidUntilDate: paidUntil,
-      hasPaidToday,
-      currentBalance: balance,
-      unitAmount,
-      schedule: business
-        ? {
-            cycleStartDate: business.startDate,
-            frequency: business.frequency,
-            totalCycleHands: cycleHands,
-            memberHands: handsCount,
-            paidHands: Number(r.paid_hands_count || 0),
-          }
-        : undefined,
-    });
+    }).status;
 
     const paymentStatusToday: MemberPaymentStatus = calculated.status;
     const overdueRoundsCount = calculated.overdueRoundsCount;
@@ -252,15 +239,9 @@ export async function payoutMemberHand(
     [memberId]
   );
 
-  const parsedRanksCount = client?.payout_ranks ? String(client.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
-  const totalHands = Math.max(1, Number(client?.hands_count || 1), parsedRanksCount);
-  const currentReceived = Number(
-    client?.received_hands_count !== null && client?.received_hands_count !== undefined
-      ? client.received_hands_count
-      : client?.has_received_hand || client?.has_received_payout
-      ? totalHands
-      : 0
-  );
+  if (!client) throw new Error('Adhérent introuvable dans le système local.');
+  const totalHands = memberHandsCount(client);
+  const currentReceived = memberReceivedHands(client);
 
   if (currentReceived >= totalHands) {
     throw new Error(

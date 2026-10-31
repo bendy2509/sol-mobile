@@ -26,10 +26,10 @@ import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessReposi
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { calculatePot, calculateCycleTotalHands } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
+import { currentRound, cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPayoutRanks, memberReceivedHands, nextBeneficiary } from '@/services/memberRules';
 
 /** Segmented track (one segment per hand) is readable up to this many hands. */
 const MAX_SEGMENTS = 12;
@@ -92,8 +92,8 @@ export default function SolMatrixScreen() {
     }
     triggerMediumImpact();
     setPayoutTargetMember(member);
-    const hands = Math.max(1, member.handsCount || 1);
-    const rec = Number(member.receivedHandsCount || 0);
+    const hands = memberHandsCount(member);
+    const rec = memberReceivedHands(member);
     setPayoutNote(`Remise de la main (${rec + 1}/${hands}) - ${member.fullName}`);
     setIsPayoutModalOpen(true);
   };
@@ -108,8 +108,8 @@ export default function SolMatrixScreen() {
   };
 
   // Use SQL-based total (most reliable) falling back to JS calculation then business config
-  const totalHandsCount = dbTotalHands || calculateCycleTotalHands(members) || (business?.totalSlots || 10);
-  const potValue = calculatePot(
+  const totalHandsCount = dbTotalHands || cycleTotalHands(members);
+  const potValue = handPotAmount(
     business?.contributionAmount || 250,
     totalHandsCount
   );
@@ -139,11 +139,10 @@ export default function SolMatrixScreen() {
   };
 
 
-  const totalHandsTouched = members.reduce(
-    (sum, m) => sum + (m.receivedHandsCount || (m.hasReceivedHand ? m.handsCount || 1 : 0)),
-    0
-  );
-  const currentRound = Math.min(totalHandsCount, totalHandsTouched + 1);
+  const totalHandsTouched = cycleHandsPaidOut(members);
+  // The next hand to pay out: lowest pending rank (same rule as the dashboard)
+  const nextTurn = nextBeneficiary(members);
+  const roundNow = currentRound(members);
   // Round days of the cycle: rank r receives on the day of round r
   const cycleRounds = business ? buildCycleRounds(business.startDate, business.frequency, totalHandsCount) : [];
 
@@ -206,7 +205,7 @@ export default function SolMatrixScreen() {
           <View style={styles.heroProgressRow}>
             <Text variant="label" tone="onHero">
               {totalHandsTouched} / {totalHandsCount}{' '}{t('mains remises')}</Text>
-            <Text variant="caption" tone="onHeroMuted">{t('Tour {0} sur {1}', currentRound, totalHandsCount)}
+            <Text variant="caption" tone="onHeroMuted">{t('Tour {0} sur {1}', roundNow, totalHandsCount)}
             </Text>
           </View>
           {cycleRounds.length > 0 && (
@@ -238,19 +237,16 @@ export default function SolMatrixScreen() {
       ) : (
         <Card padding="none" style={styles.ledger}>
           {members.map((member, index) => {
-            const memberHandsCount = Math.max(1, member.handsCount || 1);
-            const receivedCount = Number(member.receivedHandsCount || 0);
-            const hasReceived = receivedCount >= memberHandsCount || Boolean(member.hasReceivedHand || member.hasReceivedPayout);
-
-            const ranksList = (member.payoutRanks ? String(member.payoutRanks).split(',') : [String(member.payoutRank || '')])
-              .map((r) => Number(r.trim()))
-              .filter((n) => !isNaN(n) && n > 0);
-            const isNextTurn = !hasReceived && (ranksList.includes(currentRound) || member.payoutRank === currentRound);
+            const handsOfMember = memberHandsCount(member);
+            const receivedCount = memberReceivedHands(member);
+            const hasReceived = hasReceivedAllHands(member);
+            const ranksList = memberPayoutRanks(member);
+            const isNextTurn = nextTurn?.member.id === member.id;
             const payoutDays = ranksList.map((r) => cycleRounds[r - 1]).filter(Boolean);
             const payoutDaysText = payoutDays.length ? t('Reçoit le {0}', payoutDays.map((d) => formatDateShort(d)).join(', ')) : null;
-            const isMulti = memberHandsCount > 1;
+            const isMulti = handsOfMember > 1;
             const isLast = index === members.length - 1;
-            const payoutLabel = isMulti ? t('Remettre la main {0}/{1}', receivedCount + 1, memberHandsCount) : t('Remettre la main');
+            const payoutLabel = isMulti ? t('Remettre la main {0}/{1}', receivedCount + 1, handsOfMember) : t('Remettre la main');
 
             return (
               <View key={`${member.id}-${index}`} style={isNextTurn && styles.rowCurrent}>
@@ -265,14 +261,14 @@ export default function SolMatrixScreen() {
                         <StatusBadge
                           status="HAND_RECEIVED"
                           appearance="inline"
-                          label={isMulti ? t('{0}/{1} mains reçues', memberHandsCount, memberHandsCount) : t('Main reçue')}
+                          label={isMulti ? t('{0}/{1} mains reçues', memberHandsCount, handsOfMember) : t('Main reçue')}
                           detail={!isMulti && member.handReceivedDate ? formatDateShort(member.handReceivedDate) : undefined}
                         />
                       )}
                       {isMulti && !hasReceived && (
                         <>
                           <Text variant="caption" tone="muted">
-                            {receivedCount}/{memberHandsCount}{' '}{t('mains reçues · rangs')}{' '}{member.payoutRanks || member.payoutRank}
+                            {receivedCount}/{handsOfMember}{' '}{t('mains reçues · rangs')}{' '}{member.payoutRanks || member.payoutRank}
                           </Text>
                         </>
                       )}

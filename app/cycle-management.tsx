@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { calculateCycleTotalHands } from '@/services/financialService';
 import { getCycleDates } from '@/services/scheduleService';
 import { View, Pressable, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -17,6 +16,7 @@ import { triggerErrorFeedback, triggerMediumImpact, triggerSuccessFeedback } fro
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
+import { cycleTotalHands } from '@/services/memberRules';
 
 type CycleMode = 'RENEW_SAME_MEMBERS' | 'START_FRESH' | null;
 
@@ -294,7 +294,7 @@ export default function CycleManagementScreen() {
       <StatStrip
         cells={[
           { label: t('Début'), value: formatDateShort(business.startDate) },
-          { label: t('Fin prévue'), value: formatDateShort(getCycleDates(business.startDate, business.frequency, Math.max(1, calculateCycleTotalHands(members))).endDate) },
+          { label: t('Fin prévue'), value: formatDateShort(getCycleDates(business.startDate, business.frequency, Math.max(1, cycleTotalHands(members))).endDate) },
         ]}
       />
 

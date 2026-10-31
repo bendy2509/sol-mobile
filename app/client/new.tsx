@@ -12,6 +12,8 @@ import { BusinessConfig } from '@/types';
 import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
 import { localDateString } from '@/lib/dates';
 import { buildCycleRounds } from '@/services/scheduleService';
+import { calculateContributionAmount, calculateMemberTotalCyclePot } from '@/services/financialService';
+import { cycleTotalHands, handPotAmount } from '@/services/memberRules';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { Header } from '@/components/Header';
@@ -48,8 +50,8 @@ export default function NewClientScreen() {
 
   const unitAmount = business?.contributionAmount || 250;
   const totalCycleHands = existingTotalCycleHands + handsCount;
-  const totalPotAmount = totalCycleHands * unitAmount;
-  const memberTotalDue = handsCount * totalPotAmount;
+  const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);
+  const memberTotalDue = calculateMemberTotalCyclePot(handsCount, totalCycleHands, unitAmount);
   // Dues run from the cycle start: rounds already past or due today are owed at enrolment
   const roundsDueNow = business
     ? buildCycleRounds(business.startDate, business.frequency, totalCycleHands).filter((d) => d <= localDateString()).length
@@ -73,7 +75,7 @@ export default function NewClientScreen() {
       setBusiness(activeBiz);
       setLock(enrollmentLock);
       setExistingMembersCount(members.length);
-      const totalHands = members.reduce((sum, m) => sum + (m.handsCount || 1), 0);
+      const totalHands = cycleTotalHands(members);
       setExistingTotalCycleHands(totalHands);
       const startRank = totalHands + 1;
       setAssignedRank(startRank);
@@ -173,7 +175,7 @@ export default function NewClientScreen() {
         await createTransaction({
           clientId: client.id,
           collectorId,
-          amount: unitAmount * effectiveHandsCount,
+          amount: calculateContributionAmount(effectiveHandsCount, unitAmount),
           handsCovered: effectiveHandsCount,
           type: 'SOL_CONTRIBUTION',
           paymentMethod: 'CASH',
@@ -421,7 +423,7 @@ export default function NewClientScreen() {
                 <View style={styles.infoRow}>
                   <Icon name="calendar" size={18} color={theme.colors.textMuted} />
                   <Text variant="caption" tone="muted" style={styles.flexShrink}>
-                    {t('Le cycle a commencé le {0} : cet adhérent doit déjà {1} tour(s), soit {2} ({3} main(s)).', formatDateShort(business.startDate), roundsDueNow, formatCurrency(roundsDueNow * handsCount * unitAmount), roundsDueNow * handsCount)}
+                    {t('Le cycle a commencé le {0} : cet adhérent doit déjà {1} tour(s), soit {2} ({3} main(s)).', formatDateShort(business.startDate), roundsDueNow, formatCurrency(calculateContributionAmount(roundsDueNow * handsCount, unitAmount)), roundsDueNow * handsCount)}
                   </Text>
                 </View>
               </Card>
@@ -468,7 +470,7 @@ export default function NewClientScreen() {
           <View style={styles.switchRow}>
             <View style={styles.flexShrink}>
               <Text variant="bodyStrong">{t('Encaisser sa part ({0} main{1}) dès l\'inscription', handsCount, handsCount > 1 ? 's' : '')}</Text>
-              <Text variant="caption" tone="muted">{t('Crédite immédiatement {0} au solde de l\'adhérent.', formatCurrency(unitAmount * handsCount))}</Text>
+              <Text variant="caption" tone="muted">{t('Crédite immédiatement {0} au solde de l\'adhérent.', formatCurrency(calculateContributionAmount(handsCount, unitAmount)))}</Text>
             </View>
             <Switch
               value={collectFirstHand}

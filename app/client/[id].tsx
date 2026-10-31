@@ -10,7 +10,7 @@ import { useAuth } from '@/context/AuthContext';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import { MemberScheduleCard } from '@/components/MemberScheduleCard';
-import { buildCycleRounds, buildMemberSchedule, buildPayoutCalendar, parsePayoutRanks } from '@/services/scheduleService';
+import { buildCycleRounds, buildMemberSchedule, buildPayoutCalendar } from '@/services/scheduleService';
 import {
   ActionMenu,
   AmountText,
@@ -36,16 +36,13 @@ import { formatCurrency, formatDate, formatDateShort } from '@/lib/formatters';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { generateContributionReceiptPdf, generateMemberStatementPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { recordAuditLog } from '@/services/auditService';
-import {
-  calculateCycleContributionLimits,
-  calculateCycleTotalHands,
-  isTransactionFromClosedCycle,
-} from '@/services/financialService';
+import { calculateCycleContributionLimits, calculateMemberDuePerRound, isTransactionFromClosedCycle } from '@/services/financialService';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDateString, localDayOf } from '@/lib/dates';
+import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount as memberHands, memberReceivedHands, nextBeneficiary, parsePayoutRanks } from '@/services/memberRules';
 
 /** Display label of a ledger entry (presentation only). */
 function getTxTypeLabel(tx: Transaction): string {
@@ -131,9 +128,9 @@ export default function ClientDetailScreen() {
   }, [id]);
 
   const unitAmount = business?.contributionAmount || client?.dailyAmount || 250;
-  const memberHandsCount = Math.max(1, client?.handsCount || 1);
-  const totalCycleHands = dbTotalHands || calculateCycleTotalHands(allClients) || (business?.totalSlots || 10);
-  const totalPotAmount = totalCycleHands * unitAmount;
+  const memberHandsCount = client ? memberHands(client) : 1;
+  const totalCycleHands = dbTotalHands || cycleTotalHands(allClients);
+  const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);
 
 
   const limits = calculateCycleContributionLimits({
@@ -147,35 +144,14 @@ export default function ClientDetailScreen() {
   const remainingAmount = limits.remainingAmount;
   const maxAllowedHands = limits.maxAllowedHands;
 
-  // Direct count of payout transactions to guarantee 100% coherence with transaction timeline
-  const clientPayoutTxsCount = transactions.filter(
-    (t) => !t.isReversed && (t.type === 'HAND_PAYOUT' || t.type === 'SOL_PAYOUT')
-  ).length;
-
-  const rawReceived = Number(client?.receivedHandsCount || 0);
-  const hasPayoutFlag = Boolean(client?.hasReceivedHand || client?.hasReceivedPayout);
-  const currentReceivedHands = Math.max(
-    rawReceived,
-    clientPayoutTxsCount,
-    hasPayoutFlag ? (rawReceived > 0 ? rawReceived : memberHandsCount) : 0
-  );
-  const isFullyReceived = currentReceivedHands >= memberHandsCount || hasPayoutFlag;
-
-  const totalHandsTouched = allClients.reduce((sum, m) => {
-    const rawRec = Number(m.receivedHandsCount || 0);
-    const flag = Boolean(m.hasReceivedHand || m.hasReceivedPayout);
-    const hands = Math.max(1, Number(m.handsCount || 1));
-    return sum + Math.max(rawRec, flag ? (rawRec > 0 ? rawRec : hands) : 0);
-  }, 0);
-  const effectiveTotalHandsTouched = Math.max(totalHandsTouched, currentReceivedHands);
-  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((effectiveTotalHandsTouched / totalCycleHands) * 100)) : 0;
+  const currentReceivedHands = client ? memberReceivedHands(client) : 0;
+  const isFullyReceived = client ? hasReceivedAllHands(client) : false;
+  const cycleProgressPct = totalCycleHands > 0 ? Math.min(100, Math.round((cycleHandsPaidOut(allClients) / totalCycleHands) * 100)) : 0;
   const memberPayoutProgressPct = memberHandsCount > 0 ? Math.min(100, Math.round((currentReceivedHands / memberHandsCount) * 100)) : 0;
   const memberContributionProgressPct = maxAllowedHands > 0 ? Math.min(100, Math.round(((client?.paidHandsCount || 0) / maxAllowedHands) * 100)) : 0;
 
-  const pendingRankClients = allClients
-    .filter((c) => !c.hasReceivedHand && !c.hasReceivedPayout && c.payoutRank)
-    .sort((a, b) => (a.payoutRank || 999) - (b.payoutRank || 999));
-  const expectedNextRank = pendingRankClients.length > 0 ? pendingRankClients[0].payoutRank || 1 : 1;
+  // The draw order: the next hand to pay out (lowest pending rank)
+  const expectedNextRank = nextBeneficiary(allClients)?.rank ?? 1;
   const isOutOfOrder = Boolean(client?.payoutRank && client.payoutRank !== expectedNextRank);
 
   const requirePinForAction = (title: string, subtitle: string, action: () => Promise<void>) => {
@@ -893,7 +869,7 @@ export default function ClientDetailScreen() {
           <View style={styles.rowBetween}>
             <Text variant="label">{t('Mains souscrites')}</Text>
             <Text variant="label" tone="primary">
-              {t('{0} / tour', formatCurrency(editHandsCount * unitAmount))}</Text>
+              {t('{0} / tour', formatCurrency(calculateMemberDuePerRound(editHandsCount, unitAmount)))}</Text>
           </View>
           <View style={styles.stepperRow}>
             <Pressable

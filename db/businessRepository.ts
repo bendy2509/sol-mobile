@@ -2,12 +2,13 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { BusinessConfig, ClosedCycle, CycleStatus, DashboardMetrics, Member, PaymentFrequency } from '@/types';
 import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusinessId } from './sqlite';
-import { calculateDaysRemaining, calculateCycleEndDate } from '@/lib/dateCalculations';
+import { calculateDaysRemaining } from '@/lib/dateCalculations';
 import { recordAuditLog } from '@/services/auditService';
-import { calculateCycleTotalHands, calculateClientPaymentStatus } from '@/services/financialService';
+import { calculateMemberDuePerRound } from '@/services/financialService';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString, localDayOf, localDayStartIso } from '@/lib/dates';
-import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates, parsePayoutRanks } from '@/services/scheduleService';
+import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates } from '@/services/scheduleService';
+import { cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPaidHands, memberPayoutRanks, memberReceivedHands, nextBeneficiary, parsePayoutRanks } from '@/services/memberRules';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -202,7 +203,7 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
     );
     // One round per hand of the members kept (not the old slot count)
     const totalCycleHands = Math.max(1, Number(totalHandsRow?.total || 0));
-    const endDate = calculateCycleEndDate(todayStr, totalCycleHands, frequency);
+    const endDate = getCycleDates(todayStr, frequency, totalCycleHands).endDate;
 
     // Update business config with new cycle info
     await db.runAsync(
@@ -277,7 +278,7 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
 
     // No member yet: one round until the first enrolment (recomputeCycleShape follows the hands)
     const totalSlots = 1;
-    const endDate = calculateCycleEndDate(todayStr, totalSlots, frequency);
+    const endDate = getCycleDates(todayStr, frequency, totalSlots).endDate;
 
     await db.runAsync(
       `UPDATE business_configs
@@ -420,17 +421,11 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   let handsTouchedCount = 0;
   let handsCollectedTotal = 0;
   let currentPayoutBeneficiary: Member | null = null;
+  const nextTurn = nextBeneficiary(members);
 
   for (const m of members) {
-    const parsedRanksCount = m.payout_ranks ? String(m.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
-    const memberHandsCount = Math.max(1, Number(m.hands_count || 1), parsedRanksCount);
-    const rawReceived = Number(m.received_hands_count || 0);
-    const receivedCount = rawReceived > 0
-      ? rawReceived
-      : (m.has_received_hand || m.has_received_payout)
-        ? (memberHandsCount === 1 ? 1 : 0)
-        : 0;
-    const hasTouched = receivedCount >= memberHandsCount;
+    const handsOfMember = memberHandsCount(m);
+    const receivedCount = memberReceivedHands(m);
     handsTouchedCount += receivedCount;
 
     handsCollectedTotal += Number(m.paid_hands_count || 0);
@@ -448,33 +443,22 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const effectiveHandsTouched = Math.max(handsTouchedCount, totalPayoutTxCount);
 
   // Rounds in the cycle: one per hand of every enrolled member
-  const cycleHands = calculateCycleTotalHands(members);
+  const cycleHands = cycleTotalHands(members);
 
   for (const m of members) {
-    const parsedRanksCount = m.payout_ranks ? String(m.payout_ranks).split(/[,;\s]+/).filter(Boolean).length : 1;
-    const memberHandsCount = Math.max(1, Number(m.hands_count || 1), parsedRanksCount);
-    const rawReceived = Number(m.received_hands_count || 0);
-    const receivedCount = rawReceived > 0
-      ? rawReceived
-      : (m.has_received_hand || m.has_received_payout)
-        ? (memberHandsCount === 1 ? 1 : 0)
-        : 0;
-    const hasTouched = receivedCount >= memberHandsCount;
+    const handsOfMember = memberHandsCount(m);
+    const receivedCount = memberReceivedHands(m);
 
     // Same rule as the member badges (cycle calendar): all the member's hands are due at every
     // round; today's alone is « À encaisser », late only from the next day
-    const calc = calculateClientPaymentStatus({
+    const calc = computeMemberSchedule({
+      cycleStartDate: business.startDate,
+      frequency: business.frequency,
+      totalCycleHands: cycleHands,
+      memberHands: handsOfMember,
+      paidHands: Number(m.paid_hands_count || 0),
       todayStr,
-      currentBalance: Number(m.current_balance || 0),
-      unitAmount,
-      schedule: {
-        cycleStartDate: business.startDate,
-        frequency: business.frequency,
-        totalCycleHands: cycleHands,
-        memberHands: memberHandsCount,
-        paidHands: Number(m.paid_hands_count || 0),
-      },
-    });
+    }).status;
     const status = calc.status;
     const isCovered = status === 'PAID_TODAY' || status === 'PAID_IN_ADVANCE';
 
@@ -485,8 +469,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       overdueHandsCount += calc.installmentsOverdue;
     }
 
-    // Determine current payout beneficiary (next rank who hasn't received all hands)
-    if (!currentPayoutBeneficiary && !hasTouched && m.payout_rank) {
+    // Next beneficiary: the lowest payout rank not paid out yet (memberRules.nextBeneficiary)
+    if (m.id === nextTurn?.member.id) {
       currentPayoutBeneficiary = {
         id: m.id,
         businessId: business.id,
@@ -497,9 +481,9 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
         dailyAmount: unitAmount,
         currentBalance: Number(m.current_balance || 0),
         payoutRank: m.payout_rank,
-        rankOrder: m.payout_rank,
+        rankOrder: nextTurn?.rank ?? m.payout_rank ?? undefined,
         payoutRanks: m.payout_ranks || (m.payout_rank ? String(m.payout_rank) : undefined),
-        handsCount: memberHandsCount,
+        handsCount: handsOfMember,
         receivedHandsCount: receivedCount,
         hasReceivedHand: false,
         hasReceivedPayout: false,
@@ -524,7 +508,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     `SELECT COALESCE(SUM(COALESCE(hands_count, 1)), 0) as total FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
     [collectorId]
   );
-  const calculatedTotal = calculateCycleTotalHands(members);
+  const calculatedTotal = cycleTotalHands(members);
   const dbHandsTotal = Number(totalHandsRow?.total || 0);
 
   // The total number of hands in SOL/SABOTAY is determined by the sum of hands of each enrolled child,
@@ -536,10 +520,10 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const effectiveChildrenCount = totalCycleHands;
   const unpaidTodayCount = Math.max(0, totalMembersCount - paidTodayCount);
   const handsRemaining = Math.max(0, effectiveChildrenCount - handsCollectedTotal);
-  const totalPotAmount = unitAmount * totalCycleHands;
+  const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);
 
   // Dynamic End Date based on: startDate + (effectiveChildrenCount * frequencyInterval)
-  const dynamicEndDate = calculateCycleEndDate(business.startDate, effectiveChildrenCount, business.frequency);
+  const dynamicEndDate = getCycleDates(business.startDate, business.frequency, effectiveChildrenCount).endDate;
   const daysRemaining = calculateDaysRemaining(dynamicEndDate);
 
   return {
@@ -621,7 +605,7 @@ export async function saveClosedCycleSnapshot(
   const unitAmount = business.contributionAmount || 250;
   const closeDay = localDateString();
   // Rounds of the cycle (one per hand) and its planned end: the same calendar as the screens
-  const totalCycleHands = Math.max(1, calculateCycleTotalHands(clientRows));
+  const totalCycleHands = Math.max(1, cycleTotalHands(clientRows));
   const rounds = buildCycleRounds(business.startDate, business.frequency, totalCycleHands);
   const plannedEndDate = rounds[rounds.length - 1] || business.endDate;
 
@@ -641,13 +625,11 @@ export async function saveClosedCycleSnapshot(
   let handsDueTotal = 0;
 
   const membersSnapshot = clientRows.map((c, index) => {
-    const hCount = Math.max(1, Number(c.hands_count || 1));
+    const hCount = memberHandsCount(c);
     const paidAmount = Number(c.total_paid_amount || 0);
-    const handsCovered = Number(c.paid_hands_count || 0);
-    const hasReceived = (c.received_hands_count || 0) >= hCount || c.has_received_payout === 1 || c.has_received_hand === 1;
-    const ranks = (c.payout_ranks ? String(c.payout_ranks).split(/[,;\s]+/) : [String(c.payout_rank || index + 1)])
-      .map(Number)
-      .filter((n) => n > 0);
+    const handsCovered = memberPaidHands(c);
+    const hasReceived = hasReceivedAllHands(c);
+    const ranks = memberPayoutRanks(c).length ? memberPayoutRanks(c) : [index + 1];
     const schedule = computeMemberSchedule({
       cycleStartDate: business.startDate,
       frequency: business.frequency,
@@ -666,7 +648,7 @@ export async function saveClosedCycleSnapshot(
       handsCount: hCount,
       totalPaid: paidAmount,
       handsCovered,
-      totalDue: hCount * totalCycleHands * unitAmount,
+      totalDue: calculateMemberDuePerRound(hCount, unitAmount) * totalCycleHands,
       // Status on the closing day, from the cycle calendar
       coverageStatus:
         schedule.lateHands + schedule.missingHandsToday > 0 ? 'RETARD' : schedule.handsAhead > 0 ? 'EN_AVANCE' : 'A_JOUR',
@@ -680,7 +662,7 @@ export async function saveClosedCycleSnapshot(
   });
 
   const effectiveHands = totalCycleHands;
-  const totalPotAmount = unitAmount * effectiveHands;
+  const totalPotAmount = handPotAmount(unitAmount, effectiveHands);
   const netReserveBalance = totalCashCollected - totalDistributed;
   // Paid over due for the whole cycle (each member owes their hands at every round)
   const completionRate = handsDueTotal > 0 ? Math.min(100, (handsCollectedTotal / handsDueTotal) * 100) : 0;
@@ -872,7 +854,7 @@ export async function getCycleHandsTotal(collectorIdParam?: string): Promise<num
     `SELECT hands_count, payout_ranks FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
     [collectorId]
   );
-  return calculateCycleTotalHands(rows);
+  return cycleTotalHands(rows);
 }
 
 /**

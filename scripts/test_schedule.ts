@@ -11,8 +11,7 @@ import {
   getCycleDates,
   paidUntilFromHands,
 } from '../services/scheduleService';
-import { calculateClientPaymentStatus, reconstructClientFinancialTimeline } from '../services/financialService';
-import { calculateCycleEndDate } from '../lib/dateCalculations';
+import { reconstructClientFinancialTimeline } from '../services/financialService';
 import { Transaction } from '../types';
 
 console.log('==================================================');
@@ -39,19 +38,18 @@ const rounds = buildCycleRounds(START, 'DAILY', 4);
 // 1. Rounds and cycle dates
 assert(rounds.join(',') === '2026-10-20,2026-10-21,2026-10-22,2026-10-23', 'One round per hand: 4 rounds from the 20th to the 23rd');
 assert(getCycleDates(START, 'DAILY', 4).endDate === '2026-10-23', 'End date = day of the last round (start + 3 days)');
-assert(calculateCycleEndDate(START, 4, 'DAILY') === '2026-10-23', 'calculateCycleEndDate gives the same end date');
 assert(buildCycleRounds('2026-10-20', '8_DAYS', 3).join(',') === '2026-10-20,2026-10-28,2026-11-05', 'Every 8 days');
 assert(buildCycleRounds('2026-01-31', 'MONTHLY', 3).join(',') === '2026-01-31,2026-02-28,2026-03-31', 'Monthly keeps the day, Feb 28 when the month is short');
 // 2026-10-20 is a Tuesday: first Wednesday the 21st, then Saturday 24th, Wednesday 28th
 assert(buildCycleRounds('2026-10-20', 'WED_SAT', 3).join(',') === '2026-10-21,2026-10-24,2026-10-28', 'Wednesday & Saturday read in Haiti time (no day shift)');
-assert(calculateCycleEndDate('2026-10-20', 3, 'WED_SAT') === '2026-10-28', 'Wednesday & Saturday end date in Haiti time');
+assert(getCycleDates('2026-10-20', 'WED_SAT', 3).endDate === '2026-10-28', 'Wednesday & Saturday end date in Haiti time');
 assert(buildCycleRounds('2026-10-24', 'WEEKLY_SAT', 2).join(',') === '2026-10-24,2026-10-31', 'A start on a Saturday is round 1');
 
 // 2. SERVILUS (3 hands) pays 1 500 G = 3 hands on the 20th: round 1 paid
 const s1 = buildMemberSchedule({ rounds, memberHands: 3, paidHands: 3, todayStr: '2026-10-20' });
 assert(s1.rounds[0].state === 'PAID' && s1.paidUntilDate === '2026-10-20', 'SERVILUS pays 3 hands: the round of the 20th is paid');
 assert(s1.nextDueDate === '2026-10-21', 'Next due date: the round of the 21st');
-assert(calculateClientPaymentStatus({ todayStr: '2026-10-20', currentBalance: 1500, unitAmount: 500, schedule: { cycleStartDate: START, frequency: 'DAILY', totalCycleHands: 4, memberHands: 3, paidHands: 3 } }).status === 'PAID_TODAY', '« Payé aujourd’hui » on the 20th');
+assert(computeMemberSchedule({ cycleStartDate: START, frequency: 'DAILY', totalCycleHands: 4, memberHands: 3, paidHands: 3, todayStr: '2026-10-20' }).status.status === 'PAID_TODAY', '« Payé aujourd’hui » on the 20th');
 
 // 3. SERVILUS pays only 500 G (1 hand) on the 21st: partial, then late the next day
 const partialToday = computeMemberSchedule({ cycleStartDate: START, frequency: 'DAILY', totalCycleHands: 4, memberHands: 3, paidHands: 4, todayStr: '2026-10-21' });

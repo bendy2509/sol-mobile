@@ -10,8 +10,8 @@
  * Pure module: it only needs the four calls below, so it runs on expo-sqlite in the app and
  * on Node's built-in SQLite in scripts/test_migrations.ts.
  */
-import { calculateCycleTotalHands } from '../services/financialService';
 import { paidUntilFromHands } from '../services/scheduleService';
+import { cycleTotalHands } from '../services/memberRules';
 
 export interface MigrationDb {
   execAsync(sql: string): Promise<void>;
@@ -266,7 +266,7 @@ export const MIGRATIONS: Migration[] = [
            WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
           [b.collector_id]
         );
-        const totalRounds = calculateCycleTotalHands(clients);
+        const totalRounds = cycleTotalHands(clients);
         for (const c of clients) {
           const paidUntil = paidUntilFromHands({
             cycleStartDate: b.start_date,

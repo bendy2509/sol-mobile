@@ -4,8 +4,9 @@ import { getActiveCollector } from '@/db/sqlite';
 import { getTransactions } from '@/db/transactionRepository';
 import { generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfService';
 import { isTransactionFromClosedCycle } from '@/services/financialService';
-import { buildCycleRounds, buildPayoutCalendar, parsePayoutRanks } from '@/services/scheduleService';
+import { buildCycleRounds, buildPayoutCalendar } from '@/services/scheduleService';
 import { localDayOf } from '@/lib/dates';
+import { parsePayoutRanks } from '@/services/memberRules';
 
 /**
  * Builds and shares the carnet's report (PDF) for the current cycle. Shared by the Accueil

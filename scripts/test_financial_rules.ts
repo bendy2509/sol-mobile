@@ -1,20 +1,14 @@
 import {
-  calculatePot,
-  calculatePotAmount,
-  calculateHandsCount,
   calculateHandsCovered,
   calculateContributionAmount,
   calculateMemberDuePerRound,
   calculateMemberTotalCyclePot,
   calculateCycleContributionLimits,
-  calculateCoverageDate,
   reconstructClientFinancialTimeline,
-  calculateClientPaymentStatus,
-  assertPayoutEligibility,
-  calculateCycleTotalHands,
   isTransactionFromClosedCycle,
 } from '../services/financialService';
-import { calculateCycleEndDate, calculateDaysRemaining, calculateCycleTotalDays } from '../lib/dateCalculations';
+import { cycleTotalHands, handPotAmount, hasReceivedAllHands } from '../services/memberRules';
+import { computeMemberSchedule, getCycleDates, paidUntilFromHands } from '../services/scheduleService';
 import { Transaction } from '../types';
 
 let passed = 0;
@@ -34,91 +28,39 @@ console.log('==================================================');
 console.log('TEST SUITE: FINANCIAL RULES & EDGE CASES AUDIT');
 console.log('==================================================\n');
 
-// 1. Pot Calculations
-assert(calculatePot(250, 12) === 3000, 'calculatePot(250, 12) == 3000 HTG');
-assert(calculatePot(500, 10) === 5000, 'calculatePot(500, 10) == 5000 HTG');
-assert(calculatePot(0, 10) === 0, 'calculatePot(0, 10) == 0 HTG');
+// 1. Pot of a round: amount per hand × hands in the cycle
+assert(handPotAmount(250, 12) === 3000, 'handPotAmount(250, 12) == 3000 HTG');
+assert(handPotAmount(500, 10) === 5000, 'handPotAmount(500, 10) == 5000 HTG');
+assert(handPotAmount(0, 10) === 0, 'handPotAmount(0, 10) == 0 HTG');
 
 // 2. Hands Count and Multiples
-assert(calculateHandsCount(750, 250) === 3, 'calculateHandsCount(750, 250) == 3 mains');
-assert(calculateHandsCount(250, 250) === 1, 'calculateHandsCount(250, 250) == 1 main');
+assert(calculateHandsCovered(750, 250) === 3, 'calculateHandsCovered(750, 250) == 3 mains');
+assert(calculateHandsCovered(250, 250) === 1, 'calculateHandsCovered(250, 250) == 1 main');
 assert(calculateContributionAmount(4, 250) === 1000, 'calculateContributionAmount(4, 250) == 1000 HTG');
 
-// 3. Cycle Total Days and Dynamic End Date
-// Formula: Total Days = Children Count * Frequency Interval
-assert(calculateCycleTotalDays(12, 'DAILY') === 12, '12 children * DAILY (1d) = 12 days');
-assert(calculateCycleTotalDays(12, '8_DAYS') === 96, '12 children * 8_DAYS (8d) = 96 days');
-assert(calculateCycleTotalDays(12, '15_DAYS') === 180, '12 children * 15_DAYS (15d) = 180 days');
-assert(calculateCycleTotalDays(12, 'MONTHLY') === 360, '12 children * MONTHLY (30d) = 360 days');
-assert(calculateCycleTotalDays(12, 'WED_SAT') === 42, '12 children * WED_SAT (2 per week = 6 weeks = 42d) = 42 days');
+// 3. Cycle length: one round per hand, end = day of the last round
+assert(getCycleDates('2026-08-01', 'DAILY', 12).endDate === '2026-08-12', '12 hands, daily: 12 days (1 → 12 August)');
+assert(getCycleDates('2026-08-01', '8_DAYS', 12).endDate === '2026-10-28', '12 hands every 8 days: last round 88 days after the start');
+assert(getCycleDates('2026-08-01', '15_DAYS', 12).endDate === '2027-01-13', '12 hands every 15 days: last round 165 days after the start');
+assert(getCycleDates('2026-08-01', 'MONTHLY', 12).endDate === '2027-07-01', '12 hands monthly: last round 11 months after the start');
+assert(getCycleDates('2026-08-01', 'WED_SAT', 12).endDate === '2026-09-09', '12 hands Wednesday & Saturday: 6 weeks of market days');
 
-// 4. Coverage Date Calculations & Advances
-// Test 1: Daily Single Hand
-const cov1 = calculateCoverageDate({
-  todayStr: '2026-08-10',
-  handsCovered: 1,
-  frequency: 'DAILY',
-});
-assert(cov1.paidUntilDate === '2026-08-10', 'Single daily hand covers today 2026-08-10', `Got ${cov1.paidUntilDate}`);
+// 4. Coverage: hands fill the rounds from the cycle start (1 hand per round here)
+assert(paidUntilFromHands({ cycleStartDate: '2026-08-10', frequency: 'DAILY', memberHands: 1, paidHands: 1 }) === '2026-08-10', 'One hand covers the first round (10 August)');
+assert(paidUntilFromHands({ cycleStartDate: '2026-08-10', frequency: 'DAILY', memberHands: 1, paidHands: 3 }) === '2026-08-12', 'Three hands cover until 12 August');
+assert(paidUntilFromHands({ cycleStartDate: '2026-08-10', frequency: 'DAILY', memberHands: 1, paidHands: 5 }) === '2026-08-14', 'Two more hands extend the advance to 14 August');
+assert(paidUntilFromHands({ cycleStartDate: '2026-08-01', frequency: '15_DAYS', memberHands: 1, paidHands: 2 }) === '2026-08-16', '2 hands of 15_DAYS cover the round of 16 August');
+assert(paidUntilFromHands({ cycleStartDate: '2024-01-31', frequency: 'MONTHLY', memberHands: 1, paidHands: 2 }) === '2024-02-29', 'Monthly from 31 January: second round on 29 February (leap year)');
+assert(paidUntilFromHands({ cycleStartDate: '2026-08-10', frequency: 'DAILY', memberHands: 2, paidHands: 1 }) === null, 'Two-hand member paying 1 hand: no round fully covered');
 
-// Test 2: Daily 3 Hands (Advance)
-const cov2 = calculateCoverageDate({
-  todayStr: '2026-08-10',
-  handsCovered: 3,
-  frequency: 'DAILY',
-});
-assert(cov2.paidUntilDate === '2026-08-12', '3 daily hands on 2026-08-10 cover until 2026-08-12', `Got ${cov2.paidUntilDate}`);
-
-// Test 3: Extending existing advance
-// If today is 2026-08-11 and currentPaidUntilDate is 2026-08-12, paying 2 more hands must extend from 2026-08-13
-const cov3 = calculateCoverageDate({
-  todayStr: '2026-08-11',
-  handsCovered: 2,
-  frequency: 'DAILY',
-  currentPaidUntilDate: '2026-08-12',
-});
-assert(cov3.startDate === '2026-08-13' && cov3.paidUntilDate === '2026-08-14', 'Advance extension starts 2026-08-13 and ends 2026-08-14', `Got start ${cov3.startDate}, end ${cov3.paidUntilDate}`);
-
-// Test 4: 15_DAYS frequency
-const cov4 = calculateCoverageDate({
-  todayStr: '2026-08-01',
-  handsCovered: 2,
-  frequency: '15_DAYS',
-});
-assert(cov4.paidUntilDate === '2026-08-16', '2 hands of 15_DAYS covers 15 days ahead (2026-08-16)', `Got ${cov4.paidUntilDate}`);
-
-// Test 5: Month Boundary & Leap Year (Feb 28/29)
-const cov5 = calculateCoverageDate({
-  todayStr: '2024-01-31', // 2024 is a leap year (Feb has 29 days)
-  handsCovered: 2,
-  frequency: 'MONTHLY',
-});
-assert(cov5.paidUntilDate === '2024-02-29', 'Monthly leap year Feb end date is 2024-02-29', `Got ${cov5.paidUntilDate}`);
-
-// 5. Payment Status Evaluation
-const statAdvance = calculateClientPaymentStatus({
-  todayStr: '2026-08-10',
-  paidUntilDate: '2026-08-14',
-  currentBalance: 1000,
-  unitAmount: 250,
-});
-assert(statAdvance.status === 'PAID_IN_ADVANCE' && statAdvance.handsCoveredAhead === 4, 'Status is PAID_IN_ADVANCE (+4 days)', `Got ${statAdvance.status}`);
-
-const statToday = calculateClientPaymentStatus({
-  todayStr: '2026-08-10',
-  paidUntilDate: '2026-08-10',
-  currentBalance: 250,
-  unitAmount: 250,
-});
-assert(statToday.status === 'PAID_TODAY', 'Status is PAID_TODAY', `Got ${statToday.status}`);
-
-const statOverdue = calculateClientPaymentStatus({
-  todayStr: '2026-08-12',
-  paidUntilDate: '2026-08-10',
-  currentBalance: 0,
-  unitAmount: 250,
-});
-assert(statOverdue.status === 'OVERDUE' && statOverdue.overdueRoundsCount === 2, 'Status is OVERDUE (-2 days)', `Got ${statOverdue.status}`);
+// 5. Payment status of the day (cycle calendar)
+const statusOf = (paidHands: number, todayStr: string, memberHands = 1) =>
+  computeMemberSchedule({ cycleStartDate: '2026-08-10', frequency: 'DAILY', totalCycleHands: 10, memberHands, paidHands, todayStr }).status;
+const statAdvance = statusOf(5, '2026-08-10');
+assert(statAdvance.status === 'PAID_IN_ADVANCE' && statAdvance.handsCoveredAhead === 4, 'Status is PAID_IN_ADVANCE (+4 rounds)', `Got ${statAdvance.status}`);
+assert(statusOf(1, '2026-08-10').status === 'PAID_TODAY', 'Status is PAID_TODAY');
+const statOverdue = statusOf(1, '2026-08-12');
+assert(statOverdue.status === 'OVERDUE' && statOverdue.overdueRoundsCount === 2, 'Status is OVERDUE (2 rounds: 11 late, 12 due)', `Got ${statOverdue.status}`);
 
 // 6. Timeline Reconstruction & Reversal
 const mockTxs: Transaction[] = [
@@ -237,49 +179,13 @@ const limChildB = calculateCycleContributionLimits({
 });
 assert(limChildB.remainingHands === 0 && limChildB.remainingAmount === 0 && limChildB.isCycleCompleted, 'Child B (7/7 paid): remaining 0 hands = 0 HTG & completed');
 
-// 9. Payout Eligibility Guard Tests ("Bay Men" Unique Payout Per Cycle for 1 hand)
-// Test A: Eligible child (has not received hand)
-let eligibilityPassed = false;
-try {
-  assertPayoutEligibility({
-    hasReceivedHand: false,
-    hasReceivedPayout: false,
-    fullName: 'Jean Baptiste',
-  });
-  eligibilityPassed = true;
-} catch {
-  eligibilityPassed = false;
-}
-assert(eligibilityPassed, 'assertPayoutEligibility allows child who has not received hand');
-
-// Test B: Ineligible child (hasReceivedHand = true) must throw Error
-let blockedHandReceived = false;
-try {
-  assertPayoutEligibility({
-    hasReceivedHand: true,
-    hasReceivedPayout: false,
-    fullName: 'Marie Curie',
-  });
-} catch (err: any) {
-  blockedHandReceived = err.message.includes('Action interdite');
-}
-assert(blockedHandReceived, 'assertPayoutEligibility strictly blocks child with hasReceivedHand=true');
-
-// Test C: Ineligible child (hasReceivedPayout = 1) must throw Error
-let blockedNumericPayout = false;
-try {
-  assertPayoutEligibility({
-    hasReceivedHand: 0,
-    hasReceivedPayout: 1,
-    fullName: 'Toussaint Louverture',
-  });
-} catch (err: any) {
-  blockedNumericPayout = err.message.includes('Action interdite');
-}
-assert(blockedNumericPayout, 'assertPayoutEligibility strictly blocks child with hasReceivedPayout=1');
+// 9. Payout eligibility: a hand can be paid out while the member has not received all their hands
+assert(!hasReceivedAllHands({ hasReceivedHand: false, hasReceivedPayout: false }), 'A child who has not received the hand can receive it');
+assert(hasReceivedAllHands({ hasReceivedHand: true, hasReceivedPayout: false }), 'hasReceivedHand=true (1 hand): already received');
+assert(hasReceivedAllHands({ hasReceivedHand: 0, hasReceivedPayout: 1 }), 'hasReceivedPayout=1 (1 hand): already received');
 
 // 10. Dynamic Pot Calculation on Registered Count (N * unitAmount)
-const potFor8Children = calculatePot(500, 8);
+const potFor8Children = handPotAmount(500, 8);
 assert(potFor8Children === 4000, 'Dynamic pot for 8 children @ 500 HTG = 4,000 HTG');
 
 // 11. MULTI-HANDS ARCHITECTURE TESTS (User scenario: 5 children x 1 hand + 1 child x 3 hands = 8 effective hands)
@@ -291,7 +197,7 @@ const cycleMembers = [
   { handsCount: 1 },
   { handsCount: 3 }, // 6th child takes 3 hands
 ];
-const effectiveCycleHands = calculateCycleTotalHands(cycleMembers);
+const effectiveCycleHands = cycleTotalHands(cycleMembers);
 assert(effectiveCycleHands === 8, '5 single-hand + 1 triple-hand child = 8 total effective cycle hands');
 
 // User scenario: 10 children (1 hand each) + Odince (3 hands) = 13 effective hands
@@ -299,17 +205,17 @@ const tenPlusOdince = [
   ...Array(10).fill({ handsCount: 1 }),
   { handsCount: 3, fullName: 'Odince Fils Aime' },
 ];
-const total13Hands = calculateCycleTotalHands(tenPlusOdince);
+const total13Hands = cycleTotalHands(tenPlusOdince);
 assert(total13Hands === 13, '10 single-hand children + Odince (3 hands) = 13 total effective hands in the cycle');
 
-const pot13Hands500 = calculatePot(500, total13Hands);
+const pot13Hands500 = handPotAmount(500, total13Hands);
 assert(pot13Hands500 === 6500, 'Pot for 13 hands @ 500 HTG = 6,500 HTG');
 
-const pot13Hands250 = calculatePot(250, total13Hands);
+const pot13Hands250 = handPotAmount(250, total13Hands);
 assert(pot13Hands250 === 3250, 'Pot for 13 hands @ 250 HTG = 3,250 HTG');
 
 // Dynamic pot of the cycle = 8 * 500 HTG = 4000 HTG
-const cyclePot = calculatePot(500, effectiveCycleHands);
+const cyclePot = handPotAmount(500, effectiveCycleHands);
 assert(cyclePot === 4000, 'Cycle single payout pot = 8 * 500 HTG = 4,000 HTG');
 
 // Child with 3 hands in an 8-hand cycle @ 500 HTG:
@@ -361,57 +267,10 @@ const after24Hands = calculateCycleContributionLimits({
 assert(after24Hands.remainingHands === 0 && after24Hands.remainingAmount === 0 && after24Hands.isCycleCompleted, 'After 24 hands paid: 0 remaining and completed');
 
 // 12. MULTI-HANDS PAYOUT ELIGIBILITY (3 hands = 3 payouts permitted)
-let p1Allowed = false;
-let p2Allowed = false;
-let p3Allowed = false;
-let p4Blocked = false;
-
-try {
-  assertPayoutEligibility({
-    fullName: 'Paul Multi-Hand',
-    handsCount: 3,
-    receivedHandsCount: 0,
-  });
-  p1Allowed = true;
-} catch {
-  p1Allowed = false;
-}
-assert(p1Allowed, '1st payout is eligible for a 3-hand subscriber (0/3 received)');
-
-try {
-  assertPayoutEligibility({
-    fullName: 'Paul Multi-Hand',
-    handsCount: 3,
-    receivedHandsCount: 1,
-  });
-  p2Allowed = true;
-} catch {
-  p2Allowed = false;
-}
-assert(p2Allowed, '2nd payout is eligible for a 3-hand subscriber (1/3 received)');
-
-try {
-  assertPayoutEligibility({
-    fullName: 'Paul Multi-Hand',
-    handsCount: 3,
-    receivedHandsCount: 2,
-  });
-  p3Allowed = true;
-} catch {
-  p3Allowed = false;
-}
-assert(p3Allowed, '3rd payout is eligible for a 3-hand subscriber (2/3 received)');
-
-try {
-  assertPayoutEligibility({
-    fullName: 'Paul Multi-Hand',
-    handsCount: 3,
-    receivedHandsCount: 3,
-  });
-} catch (err: any) {
-  p4Blocked = err.message.includes('Action interdite') && err.message.includes('3/3');
-}
-assert(p4Blocked, '4th payout is strictly blocked for a 3-hand subscriber (3/3 received)');
+assert(!hasReceivedAllHands({ handsCount: 3, receivedHandsCount: 0 }), '1st payout is eligible for a 3-hand subscriber (0/3 received)');
+assert(!hasReceivedAllHands({ handsCount: 3, receivedHandsCount: 1 }), '2nd payout is eligible for a 3-hand subscriber (1/3 received)');
+assert(!hasReceivedAllHands({ handsCount: 3, receivedHandsCount: 2 }), '3rd payout is eligible for a 3-hand subscriber (2/3 received)');
+assert(hasReceivedAllHands({ handsCount: 3, receivedHandsCount: 3 }), '4th payout is blocked for a 3-hand subscriber (3/3 received)');
 
 // 13. TIMELINE RECONSTRUCTION WITH MULTI-HANDS PAYOUT & REVERSAL
 const multiPayoutTxs: Transaction[] = [
@@ -534,7 +393,7 @@ assert(calculateHandsCovered(100, 250) === 0, '100 HTG / 250 HTG = 0 hands cover
 assert(calculateHandsCovered(600, 250) === 2, '600 HTG / 250 HTG = 2 hands covered (floor)');
 
 // B. Pot de tirage ("Bay Men"): M_total * P_unitaire
-const sol15Pot = calculatePotAmount(15, 250);
+const sol15Pot = handPotAmount(250, 15);
 assert(sol15Pot === 3750, 'SOL of 15 hands @ 250 HTG = strict pot of 3,750 HTG');
 
 // C. Nominal due per round: handsCount * P_unitaire
@@ -586,25 +445,25 @@ const initialMembers = [
   ...Array(10).fill(null).map((_, i) => ({ id: `single-${i}`, handsCount: 1 })),
   { id: 'odince', handsCount: 3 },
 ];
-assert(calculateCycleTotalHands(initialMembers) === 13, 'Initial cycle hands count = 10*1 + 1*3 = 13 mains');
+assert(cycleTotalHands(initialMembers) === 13, 'Initial cycle hands count = 10*1 + 1*3 = 13 mains');
 
 // B. Adding "Dernier Test" with 3 hands: total hands becomes 13 + 3 = 16 mains
 const membersAfterDernierTest = [
   ...initialMembers,
   { id: 'dernier-test', handsCount: 3 },
 ];
-assert(calculateCycleTotalHands(membersAfterDernierTest) === 16, 'Adding child with 3 hands: total cycle hands increases from 13 to 16 mains');
+assert(cycleTotalHands(membersAfterDernierTest) === 16, 'Adding child with 3 hands: total cycle hands increases from 13 to 16 mains');
 
 // C. Adding another child with 2 hands: total hands becomes 16 + 2 = 18 mains
 const membersAfterSecondChild = [
   ...membersAfterDernierTest,
   { id: 'new-child-2', handsCount: 2 },
 ];
-assert(calculateCycleTotalHands(membersAfterSecondChild) === 18, 'Adding child with 2 hands: total cycle hands increases from 16 to 18 mains');
+assert(cycleTotalHands(membersAfterSecondChild) === 18, 'Adding child with 2 hands: total cycle hands increases from 16 to 18 mains');
 
 // D. Cagnotte du tirage mise à jour automatiquement
-assert(calculatePotAmount(16, 250) === 4000, 'Pot amount in 16-hand cycle = 16 * 250 = 4,000 HTG');
-assert(calculatePotAmount(18, 250) === 4500, 'Pot amount in 18-hand cycle = 18 * 250 = 4,500 HTG');
+assert(handPotAmount(250, 16) === 4000, 'Pot amount in 16-hand cycle = 16 * 250 = 4,000 HTG');
+assert(handPotAmount(250, 18) === 4500, 'Pot amount in 18-hand cycle = 18 * 250 = 4,500 HTG');
 
 // E. Step-by-Step Payout for a 3-hand child ("Dernier Test")
 const child3Hands = { id: 'dernier-test', fullName: 'Dernier Test', handsCount: 3, receivedHandsCount: 0 };
@@ -664,19 +523,19 @@ const renewedMembers = completedMembers.map((m) => ({
 }));
 
 assert(renewedMembers.length === 10, 'Renewed cycle preserves all 10 registered members');
-assert(calculateCycleTotalHands(renewedMembers as any) === 12, 'Renewed cycle retains multi-hands distribution (1*3 + 9*1 = 12 mains)');
+assert(cycleTotalHands(renewedMembers as any) === 12, 'Renewed cycle retains multi-hands distribution (1*3 + 9*1 = 12 mains)');
 assert(renewedMembers.every((m) => m.currentBalance === 0 && m.paidHandsCount === 0), 'All members balances and paid hands reset to 0 in renewed cycle');
 assert(renewedMembers.every((m) => m.receivedHandsCount === 0 && m.hasReceivedHand === 0), 'All members payout flags reset to 0 in renewed cycle');
 
 // New pot calculation with new unit amount (500 HTG)
-const renewedTotalHands = calculateCycleTotalHands(renewedMembers as any);
-const renewedPot = calculatePot(500, renewedTotalHands);
+const renewedTotalHands = cycleTotalHands(renewedMembers as any);
+const renewedPot = handPotAmount(500, renewedTotalHands);
 assert(renewedPot === 6000, 'New pot for renewed cycle (12 mains * 500 HTG) = 6,000 HTG');
 
 // Renewal Mode B: Fresh Start (empty members list)
 const freshMembers: any[] = [];
 assert(freshMembers.length === 0, 'Fresh start cycle clears all member records');
-const freshPot = calculatePot(500, 10);
+const freshPot = handPotAmount(500, 10);
 assert(freshPot === 5000, 'Fresh start cycle with 10 default slots @ 500 HTG = 5,000 HTG');
 
 // 17. SECTION 17: DYNAMIC HANDS SPECIFICATION (USER DOMAIN RULE)
@@ -689,7 +548,7 @@ const dynamicGroup = [
   { id: 'c3', fullName: 'Enfant 3', handsCount: 1, payoutRank: 3 },
 ];
 assert(dynamicGroup.length === 3, 'Initial state: 3 registered children');
-assert(calculateCycleTotalHands(dynamicGroup as any) === 3, 'Initial state: exactly 3 hands (3 x 1)');
+assert(cycleTotalHands(dynamicGroup as any) === 3, 'Initial state: exactly 3 hands (3 x 1)');
 
 // 4th child registers with 3 hands:
 const dynamicGroupWithNew = [
@@ -697,18 +556,18 @@ const dynamicGroupWithNew = [
   { id: 'c4', fullName: 'Enfant 4', handsCount: 3, payoutRanks: '4, 5, 6' },
 ];
 assert(dynamicGroupWithNew.length === 4, 'After 4th child: exactly 4 children');
-const totalHands4Children = calculateCycleTotalHands(dynamicGroupWithNew as any);
+const totalHands4Children = cycleTotalHands(dynamicGroupWithNew as any);
 assert(totalHands4Children === 6, 'User example: 3 children x 1 hand + 1 child x 3 hands = exactly 6 mains');
-assert(calculatePotAmount(totalHands4Children, 250) === 1500, 'Pot for 6 hands @ 250 HTG = exactly 1,500 HTG (not 2,500 or 3,000)');
+assert(handPotAmount(250, totalHands4Children) === 1500, 'Pot for 6 hands @ 250 HTG = exactly 1,500 HTG (not 2,500 or 3,000)');
 
 // Manager increases hands of Enfant 1 from 1 hand to 2 hands:
 const dynamicGroupUpdated = dynamicGroupWithNew.map((c) =>
   c.id === 'c1' ? { ...c, handsCount: 2, payoutRanks: '1, 7' } : c
 );
 assert(dynamicGroupUpdated.length === 4, 'Still 4 children enrolled');
-const totalHandsAfterIncrease = calculateCycleTotalHands(dynamicGroupUpdated as any);
+const totalHandsAfterIncrease = cycleTotalHands(dynamicGroupUpdated as any);
 assert(totalHandsAfterIncrease === 7, 'Increasing child 1 from 1 to 2 hands: total cycle hands increases from 6 to 7 mains');
-assert(calculatePotAmount(totalHandsAfterIncrease, 250) === 1750, 'Pot after increasing hand: 7 * 250 = 1,750 HTG');
+assert(handPotAmount(250, totalHandsAfterIncrease) === 1750, 'Pot after increasing hand: 7 * 250 = 1,750 HTG');
 
 // 18. SECTION 18: CLOSED-CYCLE REVERSAL LOCK
 // Transactions recorded before the current cycle boundary belong to a closed cycle:

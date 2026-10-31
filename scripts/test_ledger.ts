@@ -5,15 +5,13 @@ declare const process: { env: Record<string, string | undefined>; exit(code: num
 process.env.TZ = 'America/Port-au-Prince';
 
 import {
-  calculateClientPaymentStatus,
-  calculateCoverageDate,
   calculateCycleContributionLimits,
-  calculateCycleTotalHands,
   calculateMemberDuePerRound,
   calculateMemberTotalCyclePot,
-  calculatePotAmount,
   reconstructClientFinancialTimeline,
 } from '../services/financialService';
+import { cycleTotalHands, handPotAmount } from '../services/memberRules';
+import { computeMemberSchedule, paidUntilFromHands } from '../services/scheduleService';
 import { ClientTotals, diffClientTotals } from '../services/ledgerConsistency';
 import { localDateString, localDayOf } from '../lib/dates';
 import { Transaction } from '../types';
@@ -69,13 +67,9 @@ assert(base.currentBalance === 250, 'Balance follows the timeline: 500 paid, 1 0
 assert(replay([c1, p1]).currentBalance === 0, 'A payout larger than the balance never makes it negative');
 assert(base.receivedHandsCount === 1 && base.hasReceivedHand, 'The payout counts as a hand received');
 assert(base.handReceivedDate === '2026-10-22', 'The hand-received date is the local day of the payout');
-const expectedUntil = calculateCoverageDate({
-  todayStr: '2026-10-22',
-  handsCovered: 1,
-  frequency: 'DAILY',
-  currentPaidUntilDate: calculateCoverageDate({ todayStr: '2026-10-20', handsCovered: 2, frequency: 'DAILY', currentPaidUntilDate: null }).paidUntilDate,
-}).paidUntilDate;
-assert(base.paidUntilDate === expectedUntil, 'Paid-until replays coverage from each operation’s local day');
+// 3 hands for a 1-hand member: the rounds of the 20th, 21st and 22nd
+const expectedUntil = paidUntilFromHands({ cycleStartDate: '2026-10-20', frequency: 'DAILY', memberHands: 1, paidHands: 3 });
+assert(base.paidUntilDate === expectedUntil, 'Paid-until comes from the cycle calendar (the 22nd)');
 
 // 3. Order does not matter, reversals cancel
 assert(JSON.stringify(replay([p1, c2, c1])) === JSON.stringify(base), 'Replay sorts operations: input order does not change the totals');
@@ -102,16 +96,16 @@ assert(drift.length === 2 && drift.some((d) => d.field === 'paidHandsCount' && d
 assert(diffClientTotals({ ...ledger, paidUntilDate: null }, ledger)[0]?.field === 'paidUntilDate', 'A missing coverage date is reported');
 assert(diffClientTotals({ ...ledger, hasReceivedHand: 1 as unknown as boolean }, ledger).length === 0, 'SQLite 0/1 flags compare as booleans');
 
-// 5. Status of an evening payment, with local days on both sides
-const eveningPaidUntil = calculateCoverageDate({ todayStr: localDayOf('2026-10-23T01:30:00.000Z'), handsCovered: 1, frequency: 'DAILY', currentPaidUntilDate: null }).paidUntilDate;
-const status = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: eveningPaidUntil, hasPaidToday: true, currentBalance: 250, unitAmount: 250 });
-assert(status.status === 'PAID_TODAY', 'Paid at 21:30: the member shows « Payé aujourd’hui » that evening, not « en avance »');
+// 5. A collection at 21:30 belongs to that local day; the status reads the calendar
+const status = (start: string, paidHands: number, today: string, memberHands = 1) =>
+  computeMemberSchedule({ cycleStartDate: start, frequency: 'DAILY', totalCycleHands: 4, memberHands, paidHands, todayStr: today }).status;
+assert(status('2026-10-22', 1, localDayOf('2026-10-23T01:30:00.000Z')).status === 'PAID_TODAY', 'Paid at 21:30: the member shows « Payé aujourd’hui » that evening, not « en avance »');
 
 // 6. The sol rule, with the manager's own example: 500 G a hand, Bendy 1 hand, Servilus 3 hands
 const members = [{ handsCount: 1 }, { handsCount: 3 }];
-const totalHands = calculateCycleTotalHands(members);
+const totalHands = cycleTotalHands(members);
 assert(totalHands === 4, 'Bendy (1) + Servilus (3) = 4 hands in the sol');
-assert(calculatePotAmount(totalHands, 500) === 2000, 'Each hand drawn receives 4 × 500 G = 2 000 G');
+assert(handPotAmount(500, totalHands) === 2000, 'Each hand drawn receives 4 × 500 G = 2 000 G');
 const bendy = calculateCycleContributionLimits({ currentPaidHands: 0, totalCycleHands: totalHands, memberHandsCount: 1, unitAmount: 500 });
 assert(bendy.maxAllowedHands === 4 && bendy.maxPotAmount === 2000, 'Bendy pays 4 hands = 2 000 G over the cycle');
 assert(calculateMemberTotalCyclePot(1, totalHands, 500) === 2000, 'Bendy receives 2 000 G: what he pays');
@@ -123,20 +117,15 @@ const capped = calculateCycleContributionLimits({ currentPaidHands: 4, totalCycl
 assert(capped.isCycleCompleted && capped.remainingHands === 0, 'Once Bendy has paid his 2 000 G, no further collection is accepted');
 
 // 7. A member just enrolled, nothing paid yet
-const fresh = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: null, hasPaidToday: false, currentBalance: 0, unitAmount: 500 });
-assert(fresh.status === 'UNPAID_TODAY', 'A member who never paid is « À encaisser », not « Payé aujourd’hui » nor « en retard »');
-const firstPayment = calculateCoverageDate({ todayStr: '2026-10-22', handsCovered: 1, frequency: 'DAILY', currentPaidUntilDate: null });
-assert(firstPayment.paidUntilDate === '2026-10-22', 'The first payment of a new member covers today, not tomorrow');
-const oldBehaviour = calculateCoverageDate({ todayStr: '2026-10-22', handsCovered: 1, frequency: 'DAILY', currentPaidUntilDate: '2026-10-22' });
-assert(oldBehaviour.paidUntilDate === '2026-10-23', '(Why it mattered: a false « covered today » pushed that payment to tomorrow)');
+assert(status('2026-10-22', 0, '2026-10-22').status === 'UNPAID_TODAY', 'A member who never paid is « À encaisser », not « Payé aujourd’hui » nor « en retard »');
+assert(paidUntilFromHands({ cycleStartDate: '2026-10-22', frequency: 'DAILY', memberHands: 1, paidHands: 1 }) === '2026-10-22', 'The first payment of a new member covers today, not tomorrow');
 
 // 8. Today's hand is « À encaisser », late only from the next day (manager's rule)
-const dueToday = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: '2026-10-21', hasPaidToday: false, currentBalance: 500, unitAmount: 500 });
+const dueToday = status('2026-10-21', 1, '2026-10-22');
 assert(dueToday.status === 'UNPAID_TODAY' && dueToday.overdueRoundsCount === 0, 'Covered until yesterday: « À encaisser » during the day');
-const lateSinceYesterday = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: '2026-10-20', hasPaidToday: false, currentBalance: 0, unitAmount: 500 });
+const lateSinceYesterday = status('2026-10-20', 1, '2026-10-22');
 assert(lateSinceYesterday.status === 'OVERDUE' && lateSinceYesterday.overdueRoundsCount === 2, 'Yesterday’s hand unpaid: « En retard · 2 tours » (yesterday and today)');
-const paidThisMorning = calculateClientPaymentStatus({ todayStr: '2026-10-22', paidUntilDate: '2026-10-22', hasPaidToday: true, currentBalance: 500, unitAmount: 500 });
-assert(paidThisMorning.status === 'PAID_TODAY', 'Paid today: « Payé aujourd’hui »');
+assert(status('2026-10-21', 2, '2026-10-22').status === 'PAID_TODAY', 'Paid today: « Payé aujourd’hui »');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);
