@@ -27,10 +27,9 @@ import { t } from '@/i18n';
 
 export default function NewClientScreen() {
   const router = useRouter();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { triggerSync } = useSync();
   const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -110,11 +109,6 @@ export default function NewClientScreen() {
   };
 
   const handleValidateForm = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('L\'inscription d\'adhérents est réservée aux gestionnaires.'));
-      return;
-    }
 
     if (lock?.locked) {
       triggerErrorFeedback();

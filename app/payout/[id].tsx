@@ -26,13 +26,12 @@ import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands,
 export default function PayoutScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { triggerSync } = useSync();
   const { isSmallScreen, contentMaxWidth, horizontalPadding } = useResponsive();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [client, setClient] = useState<Client | null>(null);
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
@@ -86,11 +85,6 @@ export default function PayoutScreen() {
       return;
     }
 
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement de la main est réservé aux gestionnaires.'));
-      return;
-    }
 
     if (!payoutNote.trim()) {
       triggerErrorFeedback();

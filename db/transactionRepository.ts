@@ -482,12 +482,6 @@ export async function reverseTransaction(params: {
 }): Promise<Transaction> {
   const { transactionId, reason } = params;
 
-  // Security Guard: read-only profiles can never reverse transactions
-  if (params.userRole === 'READ_ONLY' || params.userRole === 'USER') {
-    throw new Error(
-      'Accès refusé : votre profil est en consultation seule. Seul le gestionnaire du carnet peut annuler une opération.'
-    );
-  }
 
   if (!reason || reason.trim().length === 0) {
     throw new Error("Une justification est obligatoire pour effectuer l'annulation d'une transaction.");

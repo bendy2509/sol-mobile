@@ -21,7 +21,6 @@ import {
   StatusBadge,
   Text,
 } from '@/components/ui';
-import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
@@ -38,8 +37,6 @@ export default function SolMatrixScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { userRole } = useAuth();
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -86,10 +83,6 @@ export default function SolMatrixScreen() {
   };
 
   const handleInitiatePayout = (member: Member) => {
-    if (isReadOnly) {
-      Alert.alert(t('Accès en lecture seule'), t('La remise de la main est réservée aux gestionnaires.'));
-      return;
-    }
     triggerMediumImpact();
     setPayoutTargetMember(member);
     const hands = memberHandsCount(member);

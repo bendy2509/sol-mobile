@@ -57,9 +57,8 @@ export default function ClientDetailScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [client, setClient] = useState<Client | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -170,11 +169,6 @@ export default function ClientDetailScreen() {
   };
 
   const handleOpenEditModal = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('La modification est réservée aux gestionnaires.'));
-      return;
-    }
     triggerLightImpact();
     if (!client) return;
     setEditFullName(client.fullName);
@@ -191,11 +185,6 @@ export default function ClientDetailScreen() {
   };
 
   const handleSaveEdit = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('La modification est réservée aux gestionnaires.'));
-      return;
-    }
     if (!client) return;
     if (!editFullName.trim()) {
       Alert.alert(t('Erreur'), t('Le nom de l\'adhérent ne peut pas être vide.'));
@@ -240,11 +229,6 @@ export default function ClientDetailScreen() {
   };
 
   const handleInitiatePayout = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('Le décaissement est réservé aux gestionnaires.'));
-      return;
-    }
     triggerMediumImpact();
     if (!client) return;
     if (client.hasReceivedHand || client.hasReceivedPayout) {
@@ -331,11 +315,6 @@ export default function ClientDetailScreen() {
   };
 
   const handleDeleteClient = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès Lecture Seule'), t('La suppression est réservée aux gestionnaires.'));
-      return;
-    }
     if (!client) return;
     triggerMediumImpact();
 
@@ -561,8 +540,7 @@ export default function ClientDetailScreen() {
           await reverseTransaction({
             transactionId: selectedTxForReversal.id,
             reason: reversalReason.trim(),
-            userRole: userRole || 'MANAGER',
-            collectorId: activeCollector?.id,
+                collectorId: activeCollector?.id,
           });
           triggerSuccessFeedback();
           Alert.alert(t('Opération annulée'), t('L\'opération a été annulée et le solde/échéance de l\'adhérent a été recalculé.'));
@@ -603,8 +581,7 @@ export default function ClientDetailScreen() {
   return (
     <Screen
       footer={
-        !isReadOnly ? (
-          <Button
+        <Button
             size="lg"
             fullWidth
             icon="cash"
@@ -614,13 +591,11 @@ export default function ClientDetailScreen() {
               router.navigate({ pathname: '/(tabs)/collect', params: { clientId: client.id } } as any);
             }}
           />
-        ) : undefined
       }
     >
       <Stack.Screen
         options={{
-          headerRight: () =>
-            isReadOnly ? null : (
+          headerRight: () => (
               <ActionMenu
                 title={client.fullName}
                 items={[
@@ -709,7 +684,7 @@ export default function ClientDetailScreen() {
             </View>
           </View>
         </Card>
-      ) : !isReadOnly ? (
+      ) : (
         <Card style={styles.cardGap}>
           <View style={styles.rowBetween}>
             <Text variant="subheading">{t('Remise de la main')}</Text>
@@ -726,7 +701,7 @@ export default function ClientDetailScreen() {
             onPress={handleInitiatePayout}
           />
         </Card>
-      ) : null}
+      )}
 
       {/* Cycle details */}
       <Card style={styles.cardGap}>
@@ -824,20 +799,10 @@ export default function ClientDetailScreen() {
               <Button label={t('WhatsApp')} icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
             </View>
 
-            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
-            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && !isReadOnly && (
+            {selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
               <Button label={t('Annuler cette opération')} icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
-            )}
-
-
-            {isReadOnly && selectedTx.type !== 'REVERSAL' && !selectedTx.isReversed && (
-              <Card tone="sunken">
-                <View style={styles.noticeRow}>
-                  <Icon name="shield" size={18} color={theme.colors.textMuted} />
-                  <Text variant="caption" tone="muted" style={styles.flexShrink}>{t('Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.')}</Text>
-                </View>
-              </Card>
             )}
           </>
         )}

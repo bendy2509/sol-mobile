@@ -24,7 +24,7 @@ export default function CycleManagementScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { contentMaxWidth, horizontalPadding, width, isSmallScreen } = useResponsive();
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
@@ -119,16 +119,7 @@ export default function CycleManagementScreen() {
     }
   };
 
-  const isManager = userRole === 'MANAGER';
-
   const handleSelectMode = (mode: CycleMode) => {
-    if (!isManager) {
-      Alert.alert(
-        t('Accès Restreint'),
-        t('Seul le responsable SOL peut effectuer une clôture de cycle.')
-      );
-      return;
-    }
     triggerMediumImpact();
     setSelectedMode(mode);
   };
@@ -168,7 +159,7 @@ export default function CycleManagementScreen() {
         collectorId: activeCollector?.id,
         mode: selectedMode as 'RENEW_SAME_MEMBERS' | 'START_FRESH',
         userId: activeCollector?.id || 'c011ec70-0000-0000-0000-000000000001',
-        userRole: (userRole as 'MANAGER') || 'MANAGER',
+        userRole: 'MANAGER',
         name: newCycleName.trim(),
         contributionAmount: contribution,
         frequency: newFrequency,

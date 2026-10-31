@@ -56,9 +56,8 @@ export default function CollectScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   const params = useLocalSearchParams<{ clientId?: string }>();
-  const { activeCollector, userRole } = useAuth();
+  const { activeCollector } = useAuth();
   const { triggerSync } = useSync();
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -201,11 +200,6 @@ export default function CollectScreen() {
     .join(' ');
 
   const handleOpenPinValidation = () => {
-    if (isReadOnly) {
-      triggerErrorFeedback();
-      Alert.alert(t('Accès en lecture seule'), t('L\'encaissement est réservé aux gestionnaires.'));
-      return;
-    }
     if (!selectedClient) return;
     if (limits.isCycleCompleted) {
       triggerErrorFeedback();

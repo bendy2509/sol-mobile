@@ -39,10 +39,9 @@ const FILTERS: { value: TransactionType | 'ALL'; label: string }[] = [
 export default function HistoryScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { userRole, activeCollector } = useAuth();
+  const { activeCollector } = useAuth();
   const { triggerSync } = useSync();
   const { width, isSmallScreen, isTablet, horizontalPadding } = useResponsive();
-  const isReadOnly = userRole === 'READ_ONLY' || userRole === 'USER';
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [filterType, setFilterType] = useState<TransactionType | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -211,7 +210,6 @@ export default function HistoryScreen() {
       await reverseTransaction({
         transactionId: selectedTx.id,
         reason: cancelReason.trim(),
-        userRole: userRole || 'MANAGER',
         collectorId: activeCollector?.id,
       });
       triggerSuccessFeedback();
@@ -396,20 +394,10 @@ export default function HistoryScreen() {
               <Button label={t('WhatsApp')} icon="message" variant="secondary" onPress={handleWhatsAppShare} style={styles.flexGrow} />
             </View>
 
-            {selectedTx.type !== 'REVERSAL' && !isReadOnly && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
+            {selectedTx.type !== 'REVERSAL' && isSelectedTxFromClosedCycle && <ClosedCycleNotice />}
 
-            {selectedTx.type !== 'REVERSAL' && !isReadOnly && (
+            {selectedTx.type !== 'REVERSAL' && (
               <Button label={t('Annuler cette opération')} icon="alert" variant="danger" fullWidth onPress={handleInitiateCancel} />
-            )}
-
-
-            {isReadOnly && selectedTx.type !== 'REVERSAL' && (
-              <Card tone="sunken">
-                <View style={styles.noticeRow}>
-                  <Icon name="shield" size={18} color={theme.colors.textMuted} />
-                  <Text variant="caption" tone="muted" style={styles.flexShrink}>{t('Mode consultation seule : seul le gestionnaire du carnet peut annuler une opération.')}</Text>
-                </View>
-              </Card>
             )}
           </>
         )}
