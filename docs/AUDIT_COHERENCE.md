@@ -83,7 +83,7 @@ L'ancienne suite `test-financial-rules.ts` (19 tests) est retirée : ce qu'elle 
 - **Tests de la base** : `scripts/test_repositories.ts` fait tourner le vrai code de la base sur SQLite (sous Node), sur un cycle complet : inscription, encaissements, tour partiel, verrous, caisse, remise, annulation, cohérence, clôture.
 - **Code mort retiré** : l'ancien rôle « lecture seule » et les routes `profile` et `security`.
 
-`npm test` : 10 suites, 338 tests.
+`npm test` : 10 suites, 318 tests.
 
 ## Ce qui reste hors de cet audit
 
