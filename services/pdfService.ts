@@ -306,7 +306,7 @@ const BASE_PRINT_CSS = `
     print-color-adjust: exact !important;
   }
   body {
-    font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     font-variant-numeric: tabular-nums;
     margin: 0;
     padding: 0;
@@ -657,7 +657,7 @@ export async function generateContributionReceiptPdf(data: ContributionPdfData):
       <div class="barcode-wrapper">
         ${barcodeSvg}
       </div>
-      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
+      <div style="font-family: 'Inter', sans-serif; font-variant-numeric: tabular-nums; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
         CERT-ID: ${safeToken}
       </div>
       <div class="legal-note">
@@ -829,7 +829,7 @@ export async function generatePayoutReceiptPdf(data: PayoutPdfData): Promise<str
       <div class="barcode-wrapper">
         ${barcodeSvg}
       </div>
-      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
+      <div style="font-family: 'Inter', sans-serif; font-variant-numeric: tabular-nums; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
         AUTH-DEC: ${safeTrxId}
       </div>
       <div class="legal-note">
@@ -1251,7 +1251,7 @@ export async function generateCashClosureReceiptPdf(data: CashClosurePdfData): P
       <div class="barcode-wrapper">
         ${barcodeSvg}
       </div>
-      <div style="font-family: monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
+      <div style="font-family: 'Inter', sans-serif; font-variant-numeric: tabular-nums; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #141B2D;">
         ARRÊTÉ DE CAISSE ID: ${safeClosureId}
       </div>
       <div class="legal-note">
@@ -1374,7 +1374,7 @@ export async function generateMemberStatementPdf(data: MemberStatementPdfData): 
           <td>${esc(o.label)}</td>
           <td style="text-align: center;">${o.hands || ''}</td>
           <td style="text-align: right; font-weight: 800;">${formatCurrency(o.amount)}</td>
-          <td style="font-family: monospace; font-size: 9px;">${esc(o.ref)}</td>
+          <td style="font-family: 'Inter', sans-serif; font-variant-numeric: tabular-nums; font-size: 9px;">${esc(o.ref)}</td>
         </tr>`).join('')}
     </tbody>
   </table>`

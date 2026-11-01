@@ -1,30 +1,31 @@
 import { TextStyle } from 'react-native';
+import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
+import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
+import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold';
 
 /**
- * SOL Mobile — Type scale (Public Sans, embedded in assets/fonts, loaded with expo-font).
+ * SOL Mobile — Type scale. One typeface for the whole app: Inter (@expo-google-fonts/inter),
+ * three weights only — Regular 400, SemiBold 600, Bold 700 — imported weight by weight so no
+ * other weight is bundled. Screens never name a font: they use these variants (or theme.fonts).
  * Each weight is its own family: never combine a custom fontFamily with fontWeight
  * (Android would fall back to the system font).
  * Sizes follow the brief: body 15, captions 13, screen titles 21, one hero amount at 30.
  * The scale is multiplied by the text-size preference (Réglages → Apparence); the
  * system font size still applies on top, through allowFontScaling.
- * Amounts always use tabular figures.
+ * Every variant uses tabular figures, so an amount lines up wherever it is shown.
  */
 
 export const fontFamilies = {
-  regular: 'PublicSans_400Regular',
-  medium: 'PublicSans_500Medium',
-  semibold: 'PublicSans_600SemiBold',
-  bold: 'PublicSans_700Bold',
-  extrabold: 'PublicSans_800ExtraBold',
+  regular: 'Inter_400Regular',
+  semibold: 'Inter_600SemiBold',
+  bold: 'Inter_700Bold',
 } as const;
 
-/** Font map passed to useFonts() in app/_layout.tsx. */
+/** Font map passed to useFonts() in app/_layout.tsx: the only fonts the app loads. */
 export const fontAssets = {
-  [fontFamilies.regular]: require('../assets/fonts/PublicSans_400Regular.ttf'),
-  [fontFamilies.medium]: require('../assets/fonts/PublicSans_500Medium.ttf'),
-  [fontFamilies.semibold]: require('../assets/fonts/PublicSans_600SemiBold.ttf'),
-  [fontFamilies.bold]: require('../assets/fonts/PublicSans_700Bold.ttf'),
-  [fontFamilies.extrabold]: require('../assets/fonts/PublicSans_800ExtraBold.ttf'),
+  [fontFamilies.regular]: Inter_400Regular,
+  [fontFamilies.semibold]: Inter_600SemiBold,
+  [fontFamilies.bold]: Inter_700Bold,
 };
 
 const tabular: TextStyle['fontVariant'] = ['tabular-nums'];
@@ -41,24 +42,24 @@ export const TEXT_SIZE_FACTORS: Record<TextSizePreference, number> = {
 /** Base scale at the « Normale » text size. */
 const baseScale = {
   // Amounts (HTG): one hero per screen
-  amountHero: { fontFamily: fontFamilies.extrabold, fontSize: 30, lineHeight: 36, letterSpacing: -0.4, fontVariant: tabular },
+  amountHero: { fontFamily: fontFamilies.bold, fontSize: 30, lineHeight: 36, letterSpacing: -0.4, fontVariant: tabular },
   amountLarge: { fontFamily: fontFamilies.bold, fontSize: 22, lineHeight: 28, letterSpacing: -0.2, fontVariant: tabular },
   amount: { fontFamily: fontFamilies.bold, fontSize: 16, lineHeight: 22, fontVariant: tabular },
   amountSmall: { fontFamily: fontFamilies.semibold, fontSize: 15, lineHeight: 20, fontVariant: tabular },
 
   // Text
-  title: { fontFamily: fontFamilies.bold, fontSize: 21, lineHeight: 28, letterSpacing: -0.2 },
-  heading: { fontFamily: fontFamilies.bold, fontSize: 18, lineHeight: 24 },
-  subheading: { fontFamily: fontFamilies.semibold, fontSize: 16, lineHeight: 22 },
-  bodyStrong: { fontFamily: fontFamilies.semibold, fontSize: 15, lineHeight: 22 },
-  body: { fontFamily: fontFamilies.regular, fontSize: 15, lineHeight: 22 },
-  label: { fontFamily: fontFamilies.semibold, fontSize: 13, lineHeight: 18 },
-  caption: { fontFamily: fontFamilies.regular, fontSize: 13, lineHeight: 18 },
+  title: { fontFamily: fontFamilies.bold, fontSize: 21, lineHeight: 28, letterSpacing: -0.2, fontVariant: tabular },
+  heading: { fontFamily: fontFamilies.bold, fontSize: 18, lineHeight: 24, fontVariant: tabular },
+  subheading: { fontFamily: fontFamilies.semibold, fontSize: 16, lineHeight: 22, fontVariant: tabular },
+  bodyStrong: { fontFamily: fontFamilies.semibold, fontSize: 15, lineHeight: 22, fontVariant: tabular },
+  body: { fontFamily: fontFamilies.regular, fontSize: 15, lineHeight: 22, fontVariant: tabular },
+  label: { fontFamily: fontFamilies.semibold, fontSize: 13, lineHeight: 18, fontVariant: tabular },
+  caption: { fontFamily: fontFamilies.regular, fontSize: 13, lineHeight: 18, fontVariant: tabular },
 
   // Controls
-  button: { fontFamily: fontFamilies.semibold, fontSize: 15, lineHeight: 20 },
-  buttonLarge: { fontFamily: fontFamilies.semibold, fontSize: 16, lineHeight: 22 },
-  tab: { fontFamily: fontFamilies.medium, fontSize: 12, lineHeight: 16 },
+  button: { fontFamily: fontFamilies.semibold, fontSize: 15, lineHeight: 20, fontVariant: tabular },
+  buttonLarge: { fontFamily: fontFamilies.semibold, fontSize: 16, lineHeight: 22, fontVariant: tabular },
+  tab: { fontFamily: fontFamilies.semibold, fontSize: 12, lineHeight: 16, fontVariant: tabular },
   numpad: { fontFamily: fontFamilies.semibold, fontSize: 24, lineHeight: 30, fontVariant: tabular },
 } satisfies Record<string, TextStyle>;
 
