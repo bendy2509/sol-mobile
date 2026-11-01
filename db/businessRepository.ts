@@ -5,7 +5,6 @@ import { getActiveBusinessId, getActiveCollectorId, getDatabase, setActiveBusine
 import { calculateDaysRemaining } from '@/lib/dateCalculations';
 import { recordAuditLog } from '@/services/auditService';
 import { calculateMemberDuePerRound } from '@/services/financialService';
-import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString, localDayOf, localDayStartIso } from '@/lib/dates';
 import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates, paidUntilFromHands } from '@/services/scheduleService';
 import { cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPaidHands, memberPayoutRanks, memberReceivedHands, nextBeneficiary, parsePayoutRanks, handUnitAmount } from '@/services/memberRules';
@@ -244,7 +243,7 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
     };
   } else {
     // B. Start completely fresh: Remove existing clients for this collector / business
-    // Record all existing clients in deleted_clients tombstone table so syncEngine never re-pulls them!
+    // Record all existing clients in deleted_clients tombstone table so they leave the new cycle
     const existingClients = await db.getAllAsync<{ id: string; qr_code_token?: string; phone_number?: string }>(
       `SELECT id, qr_code_token, phone_number FROM clients WHERE collector_id = ? OR business_id = ?`,
       [collectorId, params.businessId]
@@ -259,18 +258,6 @@ export async function renewSolCycle(params: RenewCycleParams): Promise<BusinessC
          VALUES (?, ?, ?, ?, ?, 'PENDING')`,
         [ec.id, ec.qr_code_token || null, ec.phone_number || null, collectorId, now]
       );
-
-      if (isCloudSyncActive) {
-        try {
-          if (ec.qr_code_token) {
-            await supabase.from('clients').delete().or(`id.eq.${ec.id},qr_code_token.eq.${ec.qr_code_token}`);
-          } else {
-            await supabase.from('clients').delete().eq('id', ec.id);
-          }
-        } catch (sbErr) {
-          console.warn('START_FRESH remote client cleanup notice:', sbErr);
-        }
-      }
     }
 
     // Operations and member rows stay: the closed cycle's history and PDF keep their names and

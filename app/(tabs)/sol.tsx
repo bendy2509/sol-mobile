@@ -3,7 +3,6 @@ import { buildCycleRounds } from '@/services/scheduleService';
 import { View, TextInput, Pressable, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
-import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import {
   ActionMenu,
@@ -153,7 +152,6 @@ export default function SolMatrixScreen() {
               {business?.name ? t('{0} · ordre de passage', business.name) : t('Ordre de passage')}
             </Text>
           </View>
-          <SyncBadge onSyncComplete={handleRefresh} compact />
           <ActionMenu
             title={t('Cycle')}
             items={[

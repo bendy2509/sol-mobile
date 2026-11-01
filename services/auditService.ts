@@ -2,7 +2,6 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { AuditLog, AuditLogAction, UserRole } from '@/types';
 import { getDatabase } from '@/db/sqlite';
-import { supabase, isCloudSyncActive } from '@/lib/supabase';
 
 export interface RecordAuditParams {
   userId: string;
@@ -59,27 +58,6 @@ export async function recordAuditLog(params: RecordAuditParams): Promise<AuditLo
         now,
       ]
     );
-
-    // Asynchronous non-blocking push to Supabase audit trail, only when cloud sync is on
-    if (isCloudSyncActive) (async () => {
-      try {
-        const { error } = await supabase.from('audit_logs').insert({
-          id,
-          user_id: params.userId,
-          user_role: params.userRole,
-          action: params.action,
-          entity_type: params.entityType,
-          entity_id: params.entityId,
-          old_data: oldDataStr,
-          new_data: newDataStr,
-          reason,
-          created_at: now,
-        });
-        if (!error) {
-          await db.runAsync(`UPDATE audit_logs SET sync_status = 'SYNCED' WHERE id = ?`, [id]);
-        }
-      } catch {}
-    })();
   } catch (err) {
     console.warn('Failed to record local audit log:', err);
   }

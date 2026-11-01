@@ -4,7 +4,6 @@ import { Client, ClientType, SyncStatus } from '@/types';
 import { getActiveCollectorId, getDatabase, isClientPhoneTaken } from './sqlite';
 import { assertEnrollmentOpen, getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal, recomputeCycleShape, applyLedgerTotals, getCycleLedgerTotals } from './businessRepository';
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
-import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString } from '@/lib/dates';
 import { memberHandsCount, memberPaidHands, memberReceivedHands } from '@/services/memberRules';
 
@@ -388,7 +387,7 @@ export async function deleteClient(clientId: string): Promise<void> {
   const token = client?.qr_code_token || null;
   const phone = client?.phone_number || null;
 
-  // 2. Insert into deleted_clients tombstone table so syncEngine never resurrects it
+  // 2. Insert into deleted_clients tombstone table (the member leaves every list)
   await db.runAsync(
     `INSERT OR REPLACE INTO deleted_clients (id, qr_code_token, phone_number, collector_id, deleted_at, sync_status) VALUES (?, ?, ?, ?, ?, 'PENDING')`,
     [clientId, token, phone, collectorId, now]
@@ -405,25 +404,5 @@ export async function deleteClient(clientId: string): Promise<void> {
     await recomputeCycleShape(collectorId);
   } catch (bizErr) {
     console.warn('Could not update cycle total slots after deletion:', bizErr);
-  }
-
-  // 6. Delete from Supabase if online (by ID and by unique qr_code_token)
-  if (isCloudSyncActive) {
-    try {
-      await supabase.from('transactions').delete().eq('client_id', clientId);
-      let delError;
-      if (token) {
-        const res = await supabase.from('clients').delete().or(`id.eq.${clientId},qr_code_token.eq.${token}`);
-        delError = res.error;
-      } else {
-        const res = await supabase.from('clients').delete().eq('id', clientId);
-        delError = res.error;
-      }
-      if (!delError) {
-        await db.runAsync(`UPDATE deleted_clients SET sync_status = 'SYNCED' WHERE id = ?`, [clientId]);
-      }
-    } catch (err) {
-      console.warn('Supabase delete error (will be synced later):', err);
-    }
   }
 }

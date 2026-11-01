@@ -20,4 +20,15 @@ http.ServerResponse.prototype.writeHead = function (...args) {
   return writeHead.apply(this, args);
 };
 
+// The Android app does not use expo-router's native tabs: their Material Symbols font (966 KB)
+// is replaced by a stub there (lib/stubs/expo-symbols.android.js)
+const path = require('path');
+const defaultResolve = config.resolver.resolveRequest;
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (platform === 'android' && moduleName === 'expo-symbols') {
+    return { type: 'sourceFile', filePath: path.join(__dirname, 'lib/stubs/expo-symbols.android.js') };
+  }
+  return defaultResolve ? defaultResolve(context, moduleName, platform) : context.resolveRequest(context, moduleName, platform);
+};
+
 module.exports = config;

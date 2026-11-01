@@ -9,9 +9,7 @@ import 'react-native-reanimated';
 
 import { initDatabase } from '@/db/sqlite';
 import { loadReceiptPreferences } from '@/lib/receiptPreferences';
-import { syncEngine } from '@/db/syncEngine';
 import { AuthProvider } from '@/context/AuthContext';
-import { SyncProvider } from '@/context/SyncContext';
 import { Text } from '@/components/ui';
 import { I18nProvider, t, useI18n } from '@/i18n';
 import { ThemeProvider, fontAssets, useTheme, useThemePreference } from '@/theme';
@@ -25,7 +23,6 @@ export const unstable_settings = {
 export default function RootLayout() {
   const [databaseReady, setDatabaseReady] = useState(false);
   const [fontsLoaded, fontError] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     ...fontAssets,
   });
 
@@ -35,7 +32,6 @@ export default function RootLayout() {
     async function prepare() {
       try {
         await Promise.all([initDatabase(), loadReceiptPreferences()]);
-        syncEngine.startAutoSync(30000);
       } catch (err) {
         console.warn('Database initialization error:', err);
       } finally {
@@ -44,9 +40,6 @@ export default function RootLayout() {
     }
     prepare();
 
-    return () => {
-      syncEngine.stopAutoSync();
-    };
   }, []);
 
   useEffect(() => {
@@ -58,9 +51,7 @@ export default function RootLayout() {
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider>
-            <SyncProvider>
-              <RootNavigator ready={databaseReady && (fontsLoaded || !!fontError)} />
-            </SyncProvider>
+            <RootNavigator ready={databaseReady && (fontsLoaded || !!fontError)} />
           </AuthProvider>
         </I18nProvider>
       </ThemeProvider>
@@ -169,13 +160,6 @@ function RootNavigator({ ready: bootReady }: { ready: boolean }) {
             name="cycle-management"
             options={{
               headerShown: false,
-            }}
-          />
-          <Stack.Screen
-            name="modal"
-            options={{
-              presentation: 'modal',
-              title: t('Diagnostic & Synchronisation'),
             }}
           />
         </Stack>
