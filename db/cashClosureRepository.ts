@@ -4,7 +4,7 @@ import { CashClosure, UnpaidMember } from '@/types';
 import { localDateString } from '@/lib/dates';
 import { computeMemberSchedule } from '@/services/scheduleService';
 import { getActiveBusinessId, getActiveCollectorId, getDatabase } from './sqlite';
-import { getActiveBusinessConfig, getCycleHandsTotal } from './businessRepository';
+import { getActiveBusinessConfig, getCycleHandsTotal, getCycleLedgerTotals, NO_LEDGER_TOTALS } from './businessRepository';
 import { getTodayStats } from './transactionRepository';
 
 /**
@@ -23,6 +23,7 @@ export async function getUnpaidForDate(day: string = localDateString(), collecto
      ORDER BY payout_rank ASC`,
     [collectorId]
   );
+  const ledger = await getCycleLedgerTotals(collectorId);
 
   const unpaid: UnpaidMember[] = [];
   for (const r of rows) {
@@ -31,7 +32,7 @@ export async function getUnpaidForDate(day: string = localDateString(), collecto
       frequency: business.frequency,
       totalCycleHands,
       memberHands: Math.max(1, Number(r.hands_count || 1)),
-      paidHands: Number(r.paid_hands_count || 0),
+      paidHands: (ledger.get(r.id) ?? NO_LEDGER_TOTALS).paidHands,
       todayStr: day,
     });
     const missingHands = s.lateHands + s.missingHandsToday;
