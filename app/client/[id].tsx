@@ -42,7 +42,7 @@ import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDateString, localDayOf } from '@/lib/dates';
-import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount as memberHands, memberReceivedHands, nextBeneficiary, parsePayoutRanks } from '@/services/memberRules';
+import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount as memberHands, memberReceivedHands, nextBeneficiary, parsePayoutRanks, handUnitAmount } from '@/services/memberRules';
 
 /** Display label of a ledger entry (presentation only). */
 function getTxTypeLabel(tx: Transaction): string {
@@ -126,7 +126,7 @@ export default function ClientDetailScreen() {
     loadClientData();
   }, [id]);
 
-  const unitAmount = business?.contributionAmount || client?.dailyAmount || 250;
+  const unitAmount = handUnitAmount(business, client);
   const memberHandsCount = client ? memberHands(client) : 1;
   const totalCycleHands = dbTotalHands || cycleTotalHands(allClients);
   const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);

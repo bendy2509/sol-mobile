@@ -71,10 +71,7 @@ export function calculateCycleContributionLimits(params: {
   totalCycleHands: number;
 } {
   const memberHandsCount = Math.max(1, Number(params.memberHandsCount) || 1);
-  const totalCycleHands = Math.max(
-    1,
-    Number(params.totalCycleHands || params.totalSlots) || 10
-  );
+  const totalCycleHands = Math.max(1, Number(params.totalCycleHands || params.totalSlots) || 1);
   const unit = Math.max(0, Number(params.unitAmount) || 0);
   const currentHands = Math.max(0, Number(params.currentPaidHands) || 0);
 

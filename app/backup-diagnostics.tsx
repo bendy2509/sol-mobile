@@ -182,7 +182,7 @@ export default function BackupDiagnosticsScreen() {
           </View>
           <View style={styles.flexShrink}>
             <Text variant="subheading" tone={!diagnostics ? 'default' : diagnostics.isHealthy ? 'success' : 'danger'}>
-              {!diagnostics ? t('Vérification en cours…') : diagnostics.isHealthy ? t('Base SQLite intègre (mode WAL)') : t('Anomalie détectée')}
+              {!diagnostics ? t('Vérification en cours…') : diagnostics.isHealthy ? t('Base SQLite intègre') : t('Anomalie détectée')}
             </Text>
             <Text variant="caption" tone="muted">
               {!diagnostics

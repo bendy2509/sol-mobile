@@ -228,6 +228,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
     if (userBiz) await setActiveBusinessId(userBiz.id);
     await resetPinFailures();
+    // A fresh login is activity: without it, the expiry check in refreshSession read the last
+    // activity of the previous session and cleared the flag just set (logged out at next start)
+    await recordUserActivity();
     await AsyncStorage.setItem('SOL_IS_LOGGED_IN', 'true');
     await AsyncStorage.setItem('SOL_LAST_PHONE', collector.phoneNumber);
     await refreshSession();
@@ -356,6 +359,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await setActiveCollectorId(collectorId);
       await setActiveBusinessId(businessId);
       await resetPinFailures();
+      await recordUserActivity();
       await AsyncStorage.setItem('SOL_IS_LOGGED_IN', 'true');
       await refreshSession();
       setIsAuthenticated(true);

@@ -89,7 +89,7 @@ export const htPhrases: Record<string, string> = {
   'Aucune récente': 'Pa gen resan',
   'Autorisation caméra requise': 'Bezwen otorizasyon kamera',
   'Autoriser la caméra': 'Otorize kamera a',
-  'Base SQLite intègre (mode WAL)': 'Baz SQLite la an bon eta (mòd WAL)',
+  'Base SQLite intègre': 'Baz SQLite la an bon eta',
   'Bay Men · {0}': 'Bay men · {0}',
   'Bilan PDF': 'Bilan PDF',
   'Bimensuel / Quinzaine': 'De fwa pa mwa / kenzèn',
@@ -886,4 +886,5 @@ export const htPhrases: Record<string, string> = {
   '{0} adhérents · {1} par main': '{0} manm · {1} pa men',
   'Opération annulée': 'Operasyon anile',
   'Code QR (ex : SOL-BS01)': 'Kòd QR (egz : SOL-BS01)',
+  'Aucun carnet actif : configurez le carnet avant d’enregistrer une opération.': 'Pa gen kanè aktif : konfigire kanè a anvan w anrejistre yon operasyon.',
 };

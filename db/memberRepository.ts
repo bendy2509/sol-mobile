@@ -3,7 +3,7 @@ import { getActiveBusinessConfig, getCycleHandsTotal, getHandPotAmount } from '.
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { createTransaction } from './transactionRepository';
 import { computeMemberSchedule } from '@/services/scheduleService';
-import { memberHandsCount, memberReceivedHands } from '@/services/memberRules';
+import { memberHandsCount, memberReceivedHands, handUnitAmount } from '@/services/memberRules';
 import { localDateString } from '@/lib/dates';
 
 export async function getMembersWithPaymentStatus(options?: {
@@ -80,7 +80,7 @@ export async function getMembersWithPaymentStatus(options?: {
     sync_status: string;
   }>(query, params);
 
-  const unitAmount = business?.contributionAmount || 250;
+  const unitAmount = handUnitAmount(business);
   // Rounds in the cycle, over every member (the list itself may be filtered by a search)
   const cycleHands = await getCycleHandsTotal(collectorId);
   const members: Member[] = [];

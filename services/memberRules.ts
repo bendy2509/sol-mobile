@@ -98,3 +98,14 @@ export function nextBeneficiary<T extends MemberHandsShape>(members: T[]): { mem
   }
   return best;
 }
+
+/**
+ * Amount of one hand: the carnet's amount (every member owes it per hand). A member row keeps a
+ * copy (daily_amount) used only when no carnet is loaded yet.
+ */
+export function handUnitAmount(
+  business?: { contributionAmount?: number | null } | null,
+  member?: { dailyAmount?: number | null; daily_amount?: number | null } | null
+): number {
+  return Math.max(0, Number(business?.contributionAmount || member?.dailyAmount || member?.daily_amount || 0) || 0);
+}

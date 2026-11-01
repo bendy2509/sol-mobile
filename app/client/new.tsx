@@ -13,7 +13,7 @@ import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
 import { localDateString } from '@/lib/dates';
 import { buildCycleRounds } from '@/services/scheduleService';
 import { calculateContributionAmount, calculateMemberTotalCyclePot } from '@/services/financialService';
-import { cycleTotalHands, handPotAmount } from '@/services/memberRules';
+import { cycleTotalHands, handPotAmount, handUnitAmount } from '@/services/memberRules';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { Header } from '@/components/Header';
@@ -47,7 +47,7 @@ export default function NewClientScreen() {
   const [activeInput, setActiveInput] = useState<'NAME' | 'PHONE' | 'RANKS' | null>(null);
   const [lock, setLock] = useState<EnrollmentLock | null>(null);
 
-  const unitAmount = business?.contributionAmount || 250;
+  const unitAmount = handUnitAmount(business);
   const totalCycleHands = existingTotalCycleHands + handsCount;
   const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);
   const memberTotalDue = calculateMemberTotalCyclePot(handsCount, totalCycleHands, unitAmount);
