@@ -1,5 +1,5 @@
 import { FilterStatus, Member, MemberPaymentStatus, SortOption, Transaction } from '@/types';
-import { getActiveBusinessConfig, getCycleHandsTotal, getHandPotAmount } from './businessRepository';
+import { getActiveBusinessConfig, getCycleHandsTotal, getHandPotAmount, applyLedgerTotals, getCycleLedgerTotals, getMemberLedgerTotals } from './businessRepository';
 import { getActiveCollectorId, getDatabase } from './sqlite';
 import { createTransaction } from './transactionRepository';
 import { computeMemberSchedule } from '@/services/scheduleService';
@@ -79,6 +79,8 @@ export async function getMembersWithPaymentStatus(options?: {
     created_at: string;
     sync_status: string;
   }>(query, params);
+  // Counters from the ledger (the stored ones are only a shortcut)
+  const ledger = await getCycleLedgerTotals(collectorId);
 
   const unitAmount = handUnitAmount(business);
   // Rounds in the cycle, over every member (the list itself may be filtered by a search)
@@ -107,7 +109,8 @@ export async function getMembersWithPaymentStatus(options?: {
   );
   const lastTxMap = new Map(lastTxRows.map((t) => [t.client_id, t.last_date]));
 
-  for (const r of rows) {
+  for (const stored of rows) {
+    const r = applyLedgerTotals(stored, ledger);
     const hasPaidToday = paidTodaySet.has(r.id);
     const lastPaymentDate = lastTxMap.get(r.id) || null;
 
@@ -241,7 +244,7 @@ export async function payoutMemberHand(
 
   if (!client) throw new Error('Adhérent introuvable dans le système local.');
   const totalHands = memberHandsCount(client);
-  const currentReceived = memberReceivedHands(client);
+  const currentReceived = (await getMemberLedgerTotals(memberId)).receivedHands;
 
   if (currentReceived >= totalHands) {
     throw new Error(

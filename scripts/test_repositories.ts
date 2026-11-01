@@ -137,6 +137,17 @@ const isoDay = (offset: number) => localDateString(new Date(Date.now() + offset 
   assert((await getMembersWithPaymentStatus()).find((m) => m.id === bs.id)?.paymentStatusToday === 'OVERDUE', 'BS joined on day 3: owes days 1 and 2 (late) and today');
   assert(await rejects(() => deleteClient(servilus.id), 'opérations'), 'A member with collections cannot be removed (no collection disappears)');
 
+  // 6b. Statuses come from the ledger: a wrong stored counter changes nothing
+  await db.runAsync(`UPDATE clients SET paid_hands_count = 99, received_hands_count = 2 WHERE id = ?`, [servilus.id]);
+  s = (await getMembersWithPaymentStatus()).find((m) => m.id === servilus.id)!;
+  assert(s.paidHandsCount === 8 && s.receivedHandsCount === 0 && s.isPartialToday === true, 'A tampered counter (99 hands, 2 received) is ignored: 8 paid, 0 received, today partial');
+  assert((await getUnpaidForDate()).some((u) => u.clientId === servilus.id && u.missingHands === 1), 'The cash closure reads the ledger too');
+  assert(await rejects(() => createTransaction({ clientId: servilus.id, amount: 4000, type: 'SOL_CONTRIBUTION', collectorId }), 'Dépassement'), 'The cycle cap reads the ledger (8 paid + 8 > 15 allowed, not 99)');
+  await createTransaction({ clientId: servilus.id, amount: 500, type: 'SOL_CONTRIBUTION', collectorId, businessId: biz.id });
+  const healed = await db.getFirstAsync<{ paid_hands_count: number }>(`SELECT paid_hands_count FROM clients WHERE id = ?`, [servilus.id]);
+  assert(healed?.paid_hands_count === 9, 'The next collection rewrites the stored counter from the ledger (9)');
+  await db.runAsync(`UPDATE clients SET received_hands_count = 0 WHERE id = ?`, [servilus.id]);
+
   // 7. The stored totals equal the ledger
   assert((await findLedgerDiscrepancies(collectorId)).length === 0, 'Ledger check: no difference between totals and operations');
   const metrics = await getDashboardMetrics();
@@ -148,13 +159,32 @@ const isoDay = (offset: number) => localDateString(new Date(Date.now() + offset 
   await renewSolCycle({ businessId: biz.id, collectorId, mode: 'RENEW_SAME_MEMBERS', userId: collectorId, userRole: 'MANAGER', name: 'Sol BS 2', contributionAmount: 500, frequency: 'DAILY' });
   const closed = await getClosedCycles(collectorId);
   assert(closed.length === 1 && closed[0].startDate === start && closed[0].endDate === isoDay(2), 'Closed cycle archived with its start and planned end (5 rounds)');
-  assert(closed[0].totalCollected === 5500 && closed[0].totalDistributed === 2500, 'Archive totals from the operations: 5 500 G collected, 2 500 G paid out');
+  assert(closed[0].totalCollected === 6000 && closed[0].totalDistributed === 2500, 'Archive totals from the operations: 6 000 G collected, 2 500 G paid out');
   assert((await getTransactions({ collectorId })).length === before + 1, 'No operation deleted by the renewal');
   members = await getMembersWithPaymentStatus();
   assert(members.length === 3 && members.every((m) => m.paidHandsCount === 0 && m.receivedHandsCount === 0 && !m.paidUntilDate), 'Members kept with fresh counters and no coverage');
   assert(!(await getEnrollmentLock(collectorId)).locked, 'The new cycle starts unlocked');
   await deleteClient(bs.id);
   assert((await getMembersWithPaymentStatus()).length === 2, 'A member with no operation in the new cycle can be removed');
+
+  // 9. Reversing a collection: the hands go back, coverage follows the calendar again
+  const c1 = await createTransaction({ clientId: bendy.id, amount: 500, type: 'SOL_CONTRIBUTION', collectorId, businessId: biz.id });
+  b = (await getMembersWithPaymentStatus()).find((m) => m.id === bendy.id)!;
+  assert(b.paidHandsCount === 1 && b.paidUntilDate === localDateString(), 'New cycle: Bendy pays 1 hand, covered today');
+  await reverseTransaction({ transactionId: c1.id, reason: 'Erreur de montant' });
+  b = (await getMembersWithPaymentStatus()).find((m) => m.id === bendy.id)!;
+  assert(b.paidHandsCount === 0 && !b.paidUntilDate && b.paymentStatusToday === 'UNPAID_TODAY', 'Collection reversed: 0 hand, no coverage, « À encaisser »');
+  const reversal = (await getTransactions({ collectorId })).find((t) => t.type === 'REVERSAL' && t.note?.includes(c1.id.slice(0, 8)));
+  assert(Boolean(reversal) && reversal!.amount === 500, 'The reversal is a new entry of the same amount (nothing deleted)');
+  assert(await rejects(() => reverseTransaction({ transactionId: c1.id, reason: 'Encore' }), 'déjà été annulée'), 'An operation is reversed only once');
+
+  // 10. Cash closure: expected cash = today's collections minus today's payouts (reversed ones excluded)
+  const today = (await getTransactions({ collectorId })).filter((t) => !t.isReversed && t.type !== 'REVERSAL' && localDateString(new Date(t.createdAtLocal)) === localDateString());
+  const expected =
+    today.filter((t) => t.type === 'SOL_CONTRIBUTION').reduce((sum, t) => sum + t.amount, 0) -
+    today.filter((t) => t.type === 'SOL_PAYOUT').reduce((sum, t) => sum + t.amount, 0);
+  const closure = await createCashClosure({ totalCashDeclared: expected });
+  assert(closure.totalSystemCalculated === Math.max(0, expected), `Expected cash at closing = collections − payouts of the day (${expected} G)`);
 
   console.log('\n==================================================');
   console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);

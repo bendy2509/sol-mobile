@@ -413,7 +413,11 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
      WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)
      ORDER BY payout_rank ASC, full_name ASC`,
     [collectorId]
-  );
+  ).then(async (rows) => {
+    // Counters from the ledger (the stored ones are only a shortcut)
+    const ledger = await getCycleLedgerTotals(collectorId);
+    return rows.map((row) => applyLedgerTotals(row, ledger));
+  });
 
   let paidTodayCount = 0;
   let overdueMembersCount = 0;
@@ -587,7 +591,7 @@ export async function saveClosedCycleSnapshot(
   );
 
   // 2. Fetch all clients and metrics for this cycle
-  const clientRows = await db.getAllAsync<{
+  const storedClientRows = await db.getAllAsync<{
     id: string;
     full_name: string;
     phone_number: string;
@@ -608,6 +612,8 @@ export async function saveClosedCycleSnapshot(
      ORDER BY payout_rank ASC, full_name ASC`,
     [collectorId, businessId]
   );
+  const archiveLedger = await getCycleLedgerTotals(collectorId);
+  const clientRows = storedClientRows.map((row) => applyLedgerTotals(row, archiveLedger));
 
   const unitAmount = handUnitAmount(business);
   const closeDay = localDateString();
@@ -987,4 +993,79 @@ export async function getHandPotAmount(collectorIdParam?: string): Promise<numbe
   const business = await getActiveBusinessConfig(collectorId);
   if (!business) return 0;
   return Number(business.contributionAmount) * (await getCycleHandsTotal(collectorId));
+}
+
+/** A member's totals for the current cycle, read from the operations ledger. */
+export interface LedgerMemberTotals {
+  paidHands: number;
+  paidAmount: number;
+  receivedHands: number;
+  paidOutAmount: number;
+}
+
+export const NO_LEDGER_TOTALS: LedgerMemberTotals = { paidHands: 0, paidAmount: 0, receivedHands: 0, paidOutAmount: 0 };
+
+/**
+ * The ledger is the source of truth: hands paid and hands received per member, summed from the
+ * current cycle's operations (reversed ones and reversal entries excluded). Statuses, limits
+ * and payouts read these; the counters stored on member rows are only a display shortcut.
+ */
+export async function getCycleLedgerTotals(collectorIdParam?: string, clientId?: string): Promise<Map<string, LedgerMemberTotals>> {
+  const db = await getDatabase();
+  const collectorId = collectorIdParam || (await getActiveCollectorId());
+  const boundary = await getCurrentCycleBoundary(collectorId);
+  const rows = await db.getAllAsync<{ client_id: string; paid_hands: number; paid_amount: number; received_hands: number; paid_out: number }>(
+    `SELECT client_id,
+       COALESCE(SUM(CASE WHEN type IN ('CONTRIBUTION', 'SOL_CONTRIBUTION', 'SABOTAY_DEPOSIT') THEN COALESCE(hands_covered, 1) ELSE 0 END), 0) AS paid_hands,
+       COALESCE(SUM(CASE WHEN type IN ('CONTRIBUTION', 'SOL_CONTRIBUTION', 'SABOTAY_DEPOSIT') THEN amount ELSE 0 END), 0) AS paid_amount,
+       COALESCE(SUM(CASE WHEN type IN ('HAND_PAYOUT', 'SOL_PAYOUT') THEN 1 ELSE 0 END), 0) AS received_hands,
+       COALESCE(SUM(CASE WHEN type IN ('HAND_PAYOUT', 'SOL_PAYOUT') THEN amount ELSE 0 END), 0) AS paid_out
+     FROM transactions
+     WHERE collector_id = ? AND is_reversed = 0 AND type != 'REVERSAL' AND created_at_local >= ?
+       ${clientId ? 'AND client_id = ?' : ''}
+     GROUP BY client_id`,
+    clientId ? [collectorId, boundary || '', clientId] : [collectorId, boundary || '']
+  );
+  return new Map(
+    rows.map((r) => [
+      r.client_id,
+      {
+        paidHands: Number(r.paid_hands || 0),
+        paidAmount: Number(r.paid_amount || 0),
+        receivedHands: Number(r.received_hands || 0),
+        paidOutAmount: Number(r.paid_out || 0),
+      },
+    ])
+  );
+}
+
+/** One member's ledger totals for the current cycle. */
+export async function getMemberLedgerTotals(clientId: string, collectorIdParam?: string): Promise<LedgerMemberTotals> {
+  return (await getCycleLedgerTotals(collectorIdParam, clientId)).get(clientId) ?? NO_LEDGER_TOTALS;
+}
+
+/**
+ * A member row with its counters replaced by the ledger's (paid hands, paid amount, hands
+ * received). Every read of a member goes through it, so statuses never trust a stale counter.
+ */
+export function applyLedgerTotals<
+  T extends {
+    id: string;
+    paid_hands_count?: number | null;
+    total_paid_amount?: number | null;
+    received_hands_count?: number | null;
+    has_received_hand?: number | null;
+    has_received_payout?: number | null;
+  },
+>(row: T, totals: Map<string, LedgerMemberTotals>): T {
+  const l = totals.get(row.id) ?? NO_LEDGER_TOTALS;
+  return {
+    ...row,
+    paid_hands_count: l.paidHands,
+    total_paid_amount: l.paidAmount,
+    received_hands_count: l.receivedHands,
+    // The count decides; the old yes/no flags no longer stand in for it
+    has_received_hand: 0,
+    has_received_payout: 0,
+  };
 }

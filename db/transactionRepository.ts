@@ -8,7 +8,7 @@ import {
   UserRole,
 } from '@/types';
 import { getActiveCollectorId, getDatabase } from './sqlite';
-import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } from './businessRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal, getMemberLedgerTotals } from './businessRepository';
 import { isTransactionFromClosedCycle, calculateCycleContributionLimits, reconstructClientFinancialTimeline, calculateHandsCovered } from '@/services/financialService';
 import { recordAuditLog } from '@/services/auditService';
 import { buildCycleRounds, paidUntilFromHands, roundsCoveredBy } from '@/services/scheduleService';
@@ -111,9 +111,11 @@ export async function createTransaction(data: {
 
     const currentBalance = Number(client.current_balance || 0);
     const currentTotalPaid = Number(client.total_paid_amount || currentBalance);
-    const currentPaidHands = Number(client.paid_hands_count || 0);
+    // Hands paid and received come from the ledger; the stored counters follow it
+    const ledgerTotals = await getMemberLedgerTotals(clientId, collectorId);
+    const currentPaidHands = ledgerTotals.paidHands;
     const handsOfMember = memberHandsCount(client);
-    const currentReceivedHands = memberReceivedHands(client);
+    const currentReceivedHands = ledgerTotals.receivedHands;
 
     let newBalance = currentBalance;
     let newTotalPaid = currentTotalPaid;

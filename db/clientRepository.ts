@@ -2,7 +2,7 @@ import 'react-native-get-random-values';
 import { v4 as uuidv4 } from 'uuid';
 import { Client, ClientType, SyncStatus } from '@/types';
 import { getActiveCollectorId, getDatabase, isClientPhoneTaken } from './sqlite';
-import { assertEnrollmentOpen, getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal, recomputeCycleShape } from './businessRepository';
+import { assertEnrollmentOpen, getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal, recomputeCycleShape, applyLedgerTotals, getCycleLedgerTotals } from './businessRepository';
 import { normalizePhoneNumber, extractRaw8Digits, arePhoneNumbersEqual } from '@/lib/phoneUtils';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString } from '@/lib/dates';
@@ -126,14 +126,15 @@ export async function getAllClients(options?: {
 
   const rows = await db.getAllAsync<ClientRow>(query, params);
 
-  return rows.map(rowToClient);
+  const ledger = await getCycleLedgerTotals(collectorId);
+  return rows.map((row) => rowToClient(applyLedgerTotals(row, ledger)));
 }
 
 export async function getClientById(id: string): Promise<Client | null> {
   const db = await getDatabase();
   const r = await db.getFirstAsync<ClientRow>(`SELECT * FROM clients WHERE id = ?`, [id]);
 
-  return r ? rowToClient(r) : null;
+  return r ? rowToClient(applyLedgerTotals(r, await getCycleLedgerTotals(r.collector_id, r.id))) : null;
 }
 
 export async function getClientByQrToken(qrCodeToken: string): Promise<Client | null> {
@@ -141,7 +142,7 @@ export async function getClientByQrToken(qrCodeToken: string): Promise<Client | 
   const tokenClean = qrCodeToken.trim();
   const r = await db.getFirstAsync<ClientRow>(`SELECT * FROM clients WHERE qr_code_token = ? OR id = ?`, [tokenClean, tokenClean]);
 
-  return r ? rowToClient(r) : null;
+  return r ? rowToClient(applyLedgerTotals(r, await getCycleLedgerTotals(r.collector_id, r.id))) : null;
 }
 
 export async function createClient(data: {
