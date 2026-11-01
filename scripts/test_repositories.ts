@@ -18,7 +18,7 @@ import {
   saveBusinessConfig,
   updateActiveBusinessSettings,
 } from '../db/businessRepository';
-import { createClient, deleteClient, updateClientDetails } from '../db/clientRepository';
+import { createClient, deleteClient, getClientById, updateClientDetails } from '../db/clientRepository';
 import { createTransaction, getTransactions, reverseTransaction } from '../db/transactionRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '../db/memberRepository';
 import { createCashClosure, getCashClosures, getUnpaidForDate } from '../db/cashClosureRepository';
@@ -138,9 +138,15 @@ const isoDay = (offset: number) => localDateString(new Date(Date.now() + offset 
   assert(await rejects(() => deleteClient(servilus.id), 'opérations'), 'A member with collections cannot be removed (no collection disappears)');
 
   // 6b. Statuses come from the ledger: a wrong stored counter changes nothing
-  await db.runAsync(`UPDATE clients SET paid_hands_count = 99, received_hands_count = 2 WHERE id = ?`, [servilus.id]);
+  await db.runAsync(
+    `UPDATE clients SET paid_hands_count = 99, received_hands_count = 2, paid_until_date = '2030-01-01', hand_received_date = '2030-01-01' WHERE id = ?`,
+    [servilus.id]
+  );
   s = (await getMembersWithPaymentStatus()).find((m) => m.id === servilus.id)!;
   assert(s.paidHandsCount === 8 && s.receivedHandsCount === 0 && s.isPartialToday === true, 'A tampered counter (99 hands, 2 received) is ignored: 8 paid, 0 received, today partial');
+  assert(s.paidUntilDate === isoDay(-1) && !s.handReceivedDate, 'Coverage and payout day come from the ledger too (covered until yesterday, no hand received), not the stored 2030 dates');
+  const sheetRow = await getClientById(servilus.id);
+  assert(sheetRow?.paidHandsCount === 8 && sheetRow.paidUntilDate === isoDay(-1) && sheetRow.receivedHandsCount === 0, 'The member sheet reads the same ledger values');
   assert((await getUnpaidForDate()).some((u) => u.clientId === servilus.id && u.missingHands === 1), 'The cash closure reads the ledger too');
   assert(await rejects(() => createTransaction({ clientId: servilus.id, amount: 4000, type: 'SOL_CONTRIBUTION', collectorId }), 'Dépassement'), 'The cycle cap reads the ledger (8 paid + 8 > 15 allowed, not 99)');
   await createTransaction({ clientId: servilus.id, amount: 500, type: 'SOL_CONTRIBUTION', collectorId, businessId: biz.id });
