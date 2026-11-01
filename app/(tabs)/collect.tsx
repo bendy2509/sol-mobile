@@ -3,7 +3,6 @@ import { View, Pressable, StyleSheet, Alert, FlatList, TextInput } from 'react-n
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { SyncBadge } from '@/components/SyncBadge';
 import {
   AmountText,
   Avatar,
@@ -25,7 +24,6 @@ import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessReposi
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
 
 import { useAuth } from '@/context/AuthContext';
-import { useSync } from '@/context/SyncContext';
 import { BusinessConfig, Client, Member, MemberPaymentStatus, Transaction } from '@/types';
 import { formatCurrency, formatDateShort, formatDayMonth } from '@/lib/formatters';
 import { extractRaw8Digits } from '@/lib/phoneUtils';
@@ -57,7 +55,6 @@ export default function CollectScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ clientId?: string }>();
   const { activeCollector } = useAuth();
-  const { triggerSync } = useSync();
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -251,7 +248,6 @@ export default function CollectScreen() {
       if (updated) setSelectedClient(updated);
       loadData();
 
-      triggerSync().catch(() => {});
     } catch (err: any) {
       triggerErrorFeedback();
       Alert.alert(t('Erreur'), err?.message || t('Échec de l\'enregistrement de l\'encaissement.'));
@@ -350,7 +346,6 @@ export default function CollectScreen() {
               {toCollect > 0 ? t('{0} à encaisser aujourd\'hui', toCollect) : business ? t('{0} par main', formatCurrency(business.contributionAmount)) : ' '}
             </Text>
           </View>
-          <SyncBadge compact />
         </View>
 
         <View style={styles.searchBar}>

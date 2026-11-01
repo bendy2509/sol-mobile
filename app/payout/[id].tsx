@@ -9,7 +9,6 @@ import { payoutMemberHand } from '@/db/memberRepository';
 import { recordAuditLog } from '@/services/auditService';
 import { generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useAuth } from '@/context/AuthContext';
-import { useSync } from '@/context/SyncContext';
 import { Client, BusinessConfig } from '@/types';
 import { formatCurrency, formatDate, getInitials } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
@@ -27,7 +26,6 @@ export default function PayoutScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { activeCollector } = useAuth();
-  const { triggerSync } = useSync();
   const { isSmallScreen, contentMaxWidth, horizontalPadding } = useResponsive();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);

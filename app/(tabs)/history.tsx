@@ -2,7 +2,6 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { View, TextInput, FlatList, Pressable, StyleSheet, RefreshControl, Alert, Share, Linking } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
-import { SyncBadge } from '@/components/SyncBadge';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import { AmountText, BottomSheet, Button, Card, EmptyState, Icon, ListItem, Screen, SegmentedControl, Text, TextField, UiIconName } from '@/components/ui';
@@ -12,7 +11,6 @@ import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } 
 import { getClientById } from '@/db/clientRepository';
 import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useAuth } from '@/context/AuthContext';
-import { useSync } from '@/context/SyncContext';
 import { Transaction, TransactionType } from '@/types';
 import { formatCurrency, formatDate, formatDayMonth } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
@@ -40,7 +38,6 @@ export default function HistoryScreen() {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { activeCollector } = useAuth();
-  const { triggerSync } = useSync();
   const { width, isSmallScreen, isTablet, horizontalPadding } = useResponsive();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [filterType, setFilterType] = useState<TransactionType | 'ALL'>('ALL');
@@ -79,7 +76,6 @@ export default function HistoryScreen() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await triggerSync();
       await loadData();
     } finally {
       setRefreshing(false);
@@ -303,7 +299,6 @@ export default function HistoryScreen() {
                 <Text variant="title" accessibilityRole="header">{t('Historique')}</Text>
                 <Text variant="caption" tone="muted">{t('Versements, remises et annulations')}</Text>
               </View>
-              <SyncBadge onSyncComplete={handleRefresh} compact />
             </View>
             <View style={styles.searchBar}>
               <Icon name="search" size={18} color={theme.colors.textMuted} />

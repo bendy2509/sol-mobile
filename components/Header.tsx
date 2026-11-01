@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { SyncBadge } from './SyncBadge';
 import { Icon, Text } from '@/components/ui';
 import { useAuth } from '@/context/AuthContext';
 import { triggerLightImpact } from '@/lib/haptics';
@@ -78,7 +77,6 @@ export const Header: React.FC<HeaderProps> = ({
         </View>
 
         <View style={styles.rightSection}>
-          <SyncBadge onSyncComplete={onRefresh} compact={isSmallScreen} />
 
           {showScanner && !isScanScreen && (
             <Pressable

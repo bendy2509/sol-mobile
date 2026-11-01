@@ -9,8 +9,6 @@ const stubs = {
   'expo-sqlite': 'expo-sqlite.cjs',
   '@react-native-async-storage/async-storage': 'async-storage.cjs',
   'react-native-get-random-values': 'empty.cjs',
-  'react-native-url-polyfill/auto': 'empty.cjs',
-  '@/lib/supabase': 'supabase.cjs',
 };
 
 globalThis.__DEV__ = false;

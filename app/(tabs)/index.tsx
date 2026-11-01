@@ -2,7 +2,6 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { View, TextInput, FlatList, StyleSheet, RefreshControl, Alert } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 
-import { SyncBadge } from '@/components/SyncBadge';
 import { MemberCard } from '@/components/MemberCard';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { DashboardHero } from '@/components/dashboard/DashboardHero';
@@ -14,7 +13,6 @@ import { getDashboardMetrics } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { recordAuditLog } from '@/services/auditService';
 import { exportBusinessReport } from '@/services/reportExport';
-import { useSync } from '@/context/SyncContext';
 import { DashboardMetrics, FilterStatus, Member, SortOption } from '@/types';
 import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
@@ -27,7 +25,6 @@ export default function DashboardScreen() {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
   
-  const { triggerSync } = useSync();
   const { isTablet } = useResponsive();
 
   const [metrics, setMetrics] = useState<DashboardMetrics>({
@@ -99,7 +96,6 @@ export default function DashboardScreen() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await triggerSync();
       await loadData();
     } finally {
       setRefreshing(false);
@@ -204,7 +200,6 @@ export default function DashboardScreen() {
               {t('{0} la main · {1} adhérents{2}', formatCurrency(metrics.unitAmount), metrics.totalMembersCount, metrics.endDate ? t(' · du {0} au {1}', formatDateShort(metrics.startDate), formatDateShort(metrics.endDate)) : '')}
             </Text>
           </View>
-          <SyncBadge onSyncComplete={handleRefresh} compact />
           <ActionMenu
             title={metrics.businessName}
             items={[

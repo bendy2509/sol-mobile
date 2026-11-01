@@ -20,7 +20,6 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
 import { getDatabase } from '@/db/sqlite';
-import { isCloudSyncActive } from '@/lib/supabase';
 import { LANGUAGES, useI18n, t } from '@/i18n';
 import { formatCurrency } from '@/lib/formatters';
 import { triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
@@ -358,12 +357,8 @@ export default function SettingsScreen() {
           icon="printer"
           onPress={handleReport}
           value={busy && !sheet ? '…' : undefined}
-          divider={isCloudSyncActive}
+          divider={false}
         />
-        {/* Cloud sync is off while the app is autonomous (lib/supabase.ts) */}
-        {isCloudSyncActive ? (
-          <SettingsRow label={t('settings.data.sync')} icon="sync" onPress={() => router.push('/modal' as any)} divider={false} />
-        ) : null}
       </SettingsGroup>
 
       {/* 7. À propos */}

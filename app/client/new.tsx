@@ -7,7 +7,6 @@ import { EnrollmentLock, getActiveBusinessConfig, getEnrollmentLock } from '@/db
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
 import { createTransaction } from '@/db/transactionRepository';
 import { useAuth } from '@/context/AuthContext';
-import { useSync } from '@/context/SyncContext';
 import { BusinessConfig } from '@/types';
 import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
 import { localDateString } from '@/lib/dates';
@@ -28,7 +27,6 @@ import { t } from '@/i18n';
 export default function NewClientScreen() {
   const router = useRouter();
   const { activeCollector } = useAuth();
-  const { triggerSync } = useSync();
   const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -178,7 +176,6 @@ export default function NewClientScreen() {
       }
 
       triggerSuccessFeedback();
-      triggerSync().catch(() => {});
 
       Alert.alert(
         t('Adhérent Enregistré avec Succès !'),
