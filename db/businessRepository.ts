@@ -7,7 +7,7 @@ import { recordAuditLog } from '@/services/auditService';
 import { calculateMemberDuePerRound } from '@/services/financialService';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString, localDayOf, localDayStartIso } from '@/lib/dates';
-import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates } from '@/services/scheduleService';
+import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates, paidUntilFromHands } from '@/services/scheduleService';
 import { cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPaidHands, memberPayoutRanks, memberReceivedHands, nextBeneficiary, parsePayoutRanks, handUnitAmount } from '@/services/memberRules';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
@@ -1001,32 +1001,58 @@ export interface LedgerMemberTotals {
   paidAmount: number;
   receivedHands: number;
   paidOutAmount: number;
+  /** Local day of the last hand paid out (null = none). */
+  lastPayoutDay: string | null;
 }
 
-export const NO_LEDGER_TOTALS: LedgerMemberTotals = { paidHands: 0, paidAmount: 0, receivedHands: 0, paidOutAmount: 0 };
+export const NO_LEDGER_TOTALS: LedgerMemberTotals = { paidHands: 0, paidAmount: 0, receivedHands: 0, paidOutAmount: 0, lastPayoutDay: null };
 
 /**
- * The ledger is the source of truth: hands paid and hands received per member, summed from the
- * current cycle's operations (reversed ones and reversal entries excluded). Statuses, limits
- * and payouts read these; the counters stored on member rows are only a display shortcut.
+ * The current cycle's ledger, per member, with what is needed to date it: the cycle start,
+ * frequency and rounds (coverage is computed from the hands paid, not read from a stored date).
  */
-export async function getCycleLedgerTotals(collectorIdParam?: string, clientId?: string): Promise<Map<string, LedgerMemberTotals>> {
+export class CycleLedger extends Map<string, LedgerMemberTotals> {
+  constructor(
+    entries: [string, LedgerMemberTotals][],
+    readonly startDate: string | null,
+    readonly frequency: PaymentFrequency | null,
+    readonly totalCycleHands: number
+  ) {
+    super(entries);
+  }
+
+  of(clientId: string): LedgerMemberTotals {
+    return this.get(clientId) ?? NO_LEDGER_TOTALS;
+  }
+}
+
+/**
+ * The ledger is the source of truth: hands paid, amounts and hands received per member, summed
+ * from the current cycle's operations (reversed ones and reversal entries excluded). Statuses,
+ * coverage, limits and payouts read these; the values stored on member rows are a shortcut.
+ */
+export async function getCycleLedgerTotals(collectorIdParam?: string, clientId?: string): Promise<CycleLedger> {
   const db = await getDatabase();
   const collectorId = collectorIdParam || (await getActiveCollectorId());
-  const boundary = await getCurrentCycleBoundary(collectorId);
-  const rows = await db.getAllAsync<{ client_id: string; paid_hands: number; paid_amount: number; received_hands: number; paid_out: number }>(
+  const [boundary, business, totalCycleHands] = await Promise.all([
+    getCurrentCycleBoundary(collectorId),
+    getActiveBusinessConfig(collectorId),
+    getCycleHandsTotal(collectorId),
+  ]);
+  const rows = await db.getAllAsync<{ client_id: string; paid_hands: number; paid_amount: number; received_hands: number; paid_out: number; last_payout: string | null }>(
     `SELECT client_id,
        COALESCE(SUM(CASE WHEN type IN ('CONTRIBUTION', 'SOL_CONTRIBUTION', 'SABOTAY_DEPOSIT') THEN COALESCE(hands_covered, 1) ELSE 0 END), 0) AS paid_hands,
        COALESCE(SUM(CASE WHEN type IN ('CONTRIBUTION', 'SOL_CONTRIBUTION', 'SABOTAY_DEPOSIT') THEN amount ELSE 0 END), 0) AS paid_amount,
        COALESCE(SUM(CASE WHEN type IN ('HAND_PAYOUT', 'SOL_PAYOUT') THEN 1 ELSE 0 END), 0) AS received_hands,
-       COALESCE(SUM(CASE WHEN type IN ('HAND_PAYOUT', 'SOL_PAYOUT') THEN amount ELSE 0 END), 0) AS paid_out
+       COALESCE(SUM(CASE WHEN type IN ('HAND_PAYOUT', 'SOL_PAYOUT') THEN amount ELSE 0 END), 0) AS paid_out,
+       MAX(CASE WHEN type IN ('HAND_PAYOUT', 'SOL_PAYOUT') THEN created_at_local END) AS last_payout
      FROM transactions
      WHERE collector_id = ? AND is_reversed = 0 AND type != 'REVERSAL' AND created_at_local >= ?
        ${clientId ? 'AND client_id = ?' : ''}
      GROUP BY client_id`,
     clientId ? [collectorId, boundary || '', clientId] : [collectorId, boundary || '']
   );
-  return new Map(
+  return new CycleLedger(
     rows.map((r) => [
       r.client_id,
       {
@@ -1034,31 +1060,40 @@ export async function getCycleLedgerTotals(collectorIdParam?: string, clientId?:
         paidAmount: Number(r.paid_amount || 0),
         receivedHands: Number(r.received_hands || 0),
         paidOutAmount: Number(r.paid_out || 0),
+        lastPayoutDay: r.last_payout ? localDayOf(r.last_payout) : null,
       },
-    ])
+    ]),
+    business?.startDate ?? null,
+    business?.frequency ?? null,
+    totalCycleHands
   );
 }
 
 /** One member's ledger totals for the current cycle. */
 export async function getMemberLedgerTotals(clientId: string, collectorIdParam?: string): Promise<LedgerMemberTotals> {
-  return (await getCycleLedgerTotals(collectorIdParam, clientId)).get(clientId) ?? NO_LEDGER_TOTALS;
+  return (await getCycleLedgerTotals(collectorIdParam, clientId)).of(clientId);
 }
 
 /**
- * A member row with its counters replaced by the ledger's (paid hands, paid amount, hands
- * received). Every read of a member goes through it, so statuses never trust a stale counter.
+ * A member row whose counters and dates come from the ledger: hands paid, amount paid, hands
+ * received, day of the last hand received, and the paid-until day (cycle calendar applied to
+ * the hands paid). Every read of a member goes through it: no stored value decides a status.
  */
 export function applyLedgerTotals<
   T extends {
     id: string;
+    hands_count?: number | null;
+    payout_ranks?: string | null;
     paid_hands_count?: number | null;
     total_paid_amount?: number | null;
     received_hands_count?: number | null;
     has_received_hand?: number | null;
     has_received_payout?: number | null;
+    hand_received_date?: string | null;
+    paid_until_date?: string | null;
   },
->(row: T, totals: Map<string, LedgerMemberTotals>): T {
-  const l = totals.get(row.id) ?? NO_LEDGER_TOTALS;
+>(row: T, ledger: CycleLedger): T {
+  const l = ledger.of(row.id);
   return {
     ...row,
     paid_hands_count: l.paidHands,
@@ -1067,5 +1102,15 @@ export function applyLedgerTotals<
     // The count decides; the old yes/no flags no longer stand in for it
     has_received_hand: 0,
     has_received_payout: 0,
+    hand_received_date: l.lastPayoutDay,
+    paid_until_date: ledger.startDate
+      ? paidUntilFromHands({
+          cycleStartDate: ledger.startDate,
+          frequency: ledger.frequency || 'DAILY',
+          memberHands: memberHandsCount(row),
+          paidHands: l.paidHands,
+          totalRounds: ledger.totalCycleHands,
+        })
+      : row.paid_until_date ?? null,
   };
 }
