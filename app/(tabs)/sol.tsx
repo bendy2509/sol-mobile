@@ -28,7 +28,7 @@ import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
-import { currentRound, cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPayoutRanks, memberReceivedHands, nextBeneficiary } from '@/services/memberRules';
+import { currentRound, cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPayoutRanks, memberReceivedHands, nextBeneficiary, handUnitAmount } from '@/services/memberRules';
 
 /** Segmented track (one segment per hand) is readable up to this many hands. */
 const MAX_SEGMENTS = 12;
@@ -103,7 +103,7 @@ export default function SolMatrixScreen() {
   // Use SQL-based total (most reliable) falling back to JS calculation then business config
   const totalHandsCount = dbTotalHands || cycleTotalHands(members);
   const potValue = handPotAmount(
-    business?.contributionAmount || 250,
+    handUnitAmount(business),
     totalHandsCount
   );
 
@@ -176,7 +176,7 @@ export default function SolMatrixScreen() {
       <Card tone="hero" padding="lg" style={styles.heroCard}>
         <View style={styles.heroPot}>
           <AmountText amount={potValue} size="hero" tone="onHero" />
-          <Text variant="body" tone="onHeroMuted">{t('Cagnotte du tour · {0} mains × {1}', totalHandsCount, formatCurrency(business?.contributionAmount || 250))}
+          <Text variant="body" tone="onHeroMuted">{t('Cagnotte du tour · {0} mains × {1}', totalHandsCount, formatCurrency(handUnitAmount(business)))}
           </Text>
         </View>
 

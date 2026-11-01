@@ -36,7 +36,7 @@ import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDateString } from '@/lib/dates';
 import { buildCycleRounds } from '@/services/scheduleService';
-import { cycleTotalHands, memberPaidHands, memberHandsCount as handsOfMember } from '@/services/memberRules';
+import { cycleTotalHands, memberPaidHands, memberHandsCount as handsOfMember, handUnitAmount } from '@/services/memberRules';
 
 /** Members still to collect come first, completed cycles last. */
 const STATUS_ORDER: Record<MemberPaymentStatus, number> = {
@@ -75,7 +75,7 @@ export default function CollectScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [dbTotalHands, setDbTotalHands] = useState<number>(0);
 
-  const unitAmount = business?.contributionAmount || selectedClient?.dailyAmount || 250;
+  const unitAmount = handUnitAmount(business, selectedClient);
   const totalAmount = calculateContributionAmount(handsCount, unitAmount);
 
   const loadData = useCallback(async () => {
@@ -105,7 +105,7 @@ export default function CollectScreen() {
 
   const limitsFor = useCallback(
     (client: Client) => {
-      const unit = business?.contributionAmount || client.dailyAmount || 250;
+      const unit = handUnitAmount(business, client);
       const paidHands = memberPaidHands(client);
       const memberHands = handsOfMember(client);
       return {

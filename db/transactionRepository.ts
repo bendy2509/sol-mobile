@@ -13,7 +13,7 @@ import { isTransactionFromClosedCycle, calculateCycleContributionLimits, reconst
 import { recordAuditLog } from '@/services/auditService';
 import { buildCycleRounds, paidUntilFromHands, roundsCoveredBy } from '@/services/scheduleService';
 import { localDateString, localDayOf } from '@/lib/dates';
-import { cycleTotalHands, memberHandsCount, memberReceivedHands } from '@/services/memberRules';
+import { cycleTotalHands, memberHandsCount, memberReceivedHands, handUnitAmount } from '@/services/memberRules';
 
 // In-memory Mutex to prevent double-submit collisions even during lag or double-clicking
 const inFlightTransactions = new Set<string>();
@@ -49,7 +49,9 @@ export async function createTransaction(data: {
     const db = await getDatabase();
     const collectorId = data.collectorId || (await getActiveCollectorId());
     const activeBusiness = await getActiveBusinessConfig();
-    const businessId = data.businessId !== undefined ? data.businessId : activeBusiness?.id || null;
+    // Amounts, hands and coverage all come from the carnet: no carnet, no operation
+    if (!activeBusiness) throw new Error('Aucun carnet actif : configurez le carnet avant d’enregistrer une opération.');
+    const businessId = data.businessId !== undefined ? data.businessId : activeBusiness.id;
     const now = new Date().toISOString();
     const todayStr = localDateString();
     const paymentMethod = data.paymentMethod || 'CASH';
@@ -89,7 +91,7 @@ export async function createTransaction(data: {
       throw new Error(`Adhérent introuvable dans le système local.`);
     }
 
-    const unitAmount = activeBusiness?.contributionAmount || 250;
+    const unitAmount = handUnitAmount(activeBusiness);
     const isContribution =
       data.type === 'CONTRIBUTION' ||
       data.type === 'SABOTAY_DEPOSIT' ||
@@ -125,7 +127,7 @@ export async function createTransaction(data: {
         `SELECT hands_count, payout_ranks FROM clients WHERE collector_id = ? AND id NOT IN (SELECT id FROM deleted_clients)`,
         [collectorId]
       );
-      const totalCycleHands = cycleTotalHands(allClientsRows) || (activeBusiness?.totalSlots || 10);
+      const totalCycleHands = cycleTotalHands(allClientsRows);
 
       const limits = calculateCycleContributionLimits({
         currentPaidHands,
@@ -543,7 +545,7 @@ export async function reverseTransaction(params: {
   // Compute exact reconstructed timeline
   const reconstructed = reconstructClientFinancialTimeline({
     transactions: updatedTxsList,
-    unitAmount: activeBusiness?.contributionAmount || 250,
+    unitAmount: handUnitAmount(activeBusiness),
     frequency: activeBusiness?.frequency || 'DAILY',
     cycleStartDate: activeBusiness?.startDate || localDateString(),
     handsCount,

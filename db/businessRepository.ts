@@ -8,7 +8,7 @@ import { calculateMemberDuePerRound } from '@/services/financialService';
 import { supabase, isCloudSyncActive } from '@/lib/supabase';
 import { localDateString, localDayOf, localDayStartIso } from '@/lib/dates';
 import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates } from '@/services/scheduleService';
-import { cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPaidHands, memberPayoutRanks, memberReceivedHands, nextBeneficiary, parsePayoutRanks } from '@/services/memberRules';
+import { cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPaidHands, memberPayoutRanks, memberReceivedHands, nextBeneficiary, parsePayoutRanks, handUnitAmount } from '@/services/memberRules';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -571,7 +571,14 @@ export async function saveClosedCycleSnapshot(
   if (!business) return null;
 
   const businessId = businessIdParam || business.id;
-  const now = new Date().toISOString();
+  // The closing instant is the boundary between cycles: it must come after every operation of
+  // the closed cycle (an operation in the same millisecond would otherwise land in the new one)
+  const lastOp = await db.getFirstAsync<{ created_at_local: string }>(
+    `SELECT created_at_local FROM transactions WHERE collector_id = ? ORDER BY created_at_local DESC LIMIT 1`,
+    [collectorId]
+  );
+  const lastOpMs = lastOp ? Date.parse(lastOp.created_at_local) : NaN;
+  const now = new Date(Math.max(Date.now(), Number.isFinite(lastOpMs) ? lastOpMs + 1 : 0)).toISOString();
 
   // 1. Get collector details
   const collector = await db.getFirstAsync<{ full_name: string; phone_number: string; zone?: string }>(
@@ -602,7 +609,7 @@ export async function saveClosedCycleSnapshot(
     [collectorId, businessId]
   );
 
-  const unitAmount = business.contributionAmount || 250;
+  const unitAmount = handUnitAmount(business);
   const closeDay = localDateString();
   // Rounds of the cycle (one per hand) and its planned end: the same calendar as the screens
   const totalCycleHands = Math.max(1, cycleTotalHands(clientRows));
@@ -775,16 +782,14 @@ export async function saveClosedCycleSnapshot(
 export async function getCurrentCycleBoundary(collectorIdParam?: string): Promise<string | null> {
   const collectorId = collectorIdParam || (await getActiveCollectorId());
 
-  try {
-    const closed = await getClosedCycles(collectorId);
-    const lastClosedAt = closed.reduce<string | null>(
-      (latest, c) => (c.closedAt && (!latest || c.closedAt > latest) ? c.closedAt : latest),
-      null
-    );
-    if (lastClosedAt) return lastClosedAt;
-  } catch (err) {
-    console.warn('Notice: Could not read closed cycles for boundary:', err);
-  }
+  // A failed read must not fall back to the start date: closed-cycle operations would then count
+  // in the current cycle. The error goes up to the screen instead.
+  const closed = await getClosedCycles(collectorId);
+  const lastClosedAt = closed.reduce<string | null>(
+    (latest, c) => (c.closedAt && (!latest || c.closedAt > latest) ? c.closedAt : latest),
+    null
+  );
+  if (lastClosedAt) return lastClosedAt;
 
   const business = await getActiveBusinessConfig(collectorId);
   // Local midnight of the start day (new Date('YYYY-MM-DD') is UTC midnight: 20:00 the evening before in Haiti)

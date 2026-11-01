@@ -8,7 +8,7 @@ import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
 import { AmountText, BottomSheet, Button, Card, EmptyState, Icon, ListItem, Screen, SegmentedControl, Text, TextField, UiIconName } from '@/components/ui';
 import { getAllTransactions, getContributionCoverage, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveCollector } from '@/db/sqlite';
-import { getActiveBusinessConfig, getCurrentCycleBoundary } from '@/db/businessRepository';
+import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } from '@/db/businessRepository';
 import { getClientById } from '@/db/clientRepository';
 import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useAuth } from '@/context/AuthContext';
@@ -131,7 +131,7 @@ export default function HistoryScreen() {
           clientPhone: selectedTx.clientPhone || client?.phoneNumber || '',
           payoutRank: client?.payoutRank || undefined,
           totalPotAmount: selectedTx.amount,
-          registeredChildrenCount: business?.totalSlots || 10,
+          registeredChildrenCount: await getCycleHandsTotal(),
           unitAmount: business?.contributionAmount || selectedTx.amount,
           note: selectedTx.note,
           createdAt: selectedTx.createdAtLocal,

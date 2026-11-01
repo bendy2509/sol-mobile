@@ -21,7 +21,7 @@ import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 
 import { t } from '@/i18n';
-import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount as memberHands, memberReceivedHands } from '@/services/memberRules';
+import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount as memberHands, memberReceivedHands, handUnitAmount } from '@/services/memberRules';
 
 export default function PayoutScreen() {
   const router = useRouter();
@@ -66,7 +66,7 @@ export default function PayoutScreen() {
     loadData();
   }, [id]);
 
-  const unitAmount = business?.contributionAmount || client?.dailyAmount || 250;
+  const unitAmount = handUnitAmount(business, client);
   const memberHandsCount = client ? memberHands(client) : 1;
   const totalCycleHands = dbTotalHands || cycleTotalHands(allClients);
   const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);

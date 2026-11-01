@@ -5,6 +5,7 @@ import { recordAuditLog } from '@/services/auditService';
 import { isTransactionFromClosedCycle, reconstructClientFinancialTimeline } from '@/services/financialService';
 import { ClientTotals, diffClientTotals, TotalsDifference } from '@/services/ledgerConsistency';
 import { localDateString } from '@/lib/dates';
+import { handUnitAmount } from '@/services/memberRules';
 
 export interface LedgerDiscrepancy {
   clientId: string;
@@ -52,7 +53,7 @@ export async function findLedgerDiscrepancies(collectorIdParam?: string): Promis
     const own = cycleTxs.filter((t) => t.clientId === c.id);
     const rebuilt = reconstructClientFinancialTimeline({
       transactions: own,
-      unitAmount: business?.contributionAmount || 250,
+      unitAmount: handUnitAmount(business),
       frequency: business?.frequency || 'DAILY',
       cycleStartDate: business?.startDate || localDateString(),
       handsCount: Math.max(1, Number(c.hands_count || 1)),

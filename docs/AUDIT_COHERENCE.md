@@ -85,6 +85,17 @@ L'ancienne suite `test-financial-rules.ts` (19 tests) est retirée : ce qu'elle 
 
 `npm test` : 10 suites, 318 tests.
 
+## Deuxième audit (1er novembre 2026)
+
+| # | Constat | Correction |
+|---|---|---|
+| 1 | **Frontière entre deux cycles** : la clôture prenait l'heure courante. Une remise faite dans la même milliseconde restait comptée dans le nouveau cycle, qui démarrait alors verrouillé. Le test de la base échouait une fois sur cinq. | L'heure de clôture est toujours postérieure à la dernière opération. Le test a passé 8 fois de suite. |
+| 2 | **Connexion après inactivité** : l'app effaçait l'indicateur de session qu'elle venait de poser, parce qu'elle lisait l'activité de la session précédente. Au redémarrage suivant, il fallait se reconnecter. Valable aussi sur téléphone. | L'activité est enregistrée avant l'ouverture de la session (connexion et inscription). |
+| 3 | **Montant par main** : il était lu de 9 façons, avec un 250 HTG inventé quand le carnet manquait. | Une seule fonction, `handUnitAmount`. Sans carnet actif, l'encaissement est refusé avec un message clair. |
+| 4 | **Nombre de mains par défaut** : un plafond de cotisation et un reçu utilisaient 10 mains quand le compte réel manquait. | On utilise toujours le vrai nombre de mains du cycle. |
+| 5 | **Lecture des cycles clôturés** : si elle échouait, l'app prenait la date de début du carnet, et les opérations des anciens cycles comptaient dans le cycle en cours. | L'erreur remonte à l'écran au lieu de fausser les comptes. |
+| 6 | Le diagnostic affichait « mode WAL » sur le web, qui ne l'utilise pas. | Libellé neutre. |
+
 ## Ce qui reste hors de cet audit
 
 - **À vérifier sur téléphone avec le prochain APK** : le relevé adhérent PDF, le PV de clôture PDF et les reçus.
