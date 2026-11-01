@@ -14,6 +14,7 @@ import {
   nextBeneficiary,
   parsePayoutRanks,
 } from '../services/memberRules';
+import { buildMemberSheet, editableRanks, ledgerEntryKind, ranksToSave } from '../services/memberSheet';
 
 console.log('==================================================');
 console.log('TEST SUITE: MEMBER RULES (ONE FUNCTION PER COUNT)');
@@ -63,6 +64,24 @@ assert(next?.member.id === 's' && next.rank === 2, 'SERVILUS receives round 2');
 const afterOne = nextBeneficiary([bendy, { ...servilus, received_hands_count: 1 }, bs]);
 assert(afterOne?.member.id === 's' && afterOne.rank === 3, 'After his first hand, SERVILUS receives round 3');
 assert(nextBeneficiary([bendy]) === null, 'Everyone paid out: no next beneficiary');
+
+// 5. Member sheet: the screen's figures in one computation
+const asClient = (m: any) => ({ fullName: 'X', phoneNumber: '', qrCodeToken: '', type: 'SOL', ...m });
+const business: any = { id: 'biz', startDate: '2026-10-20', frequency: 'DAILY', contributionAmount: 500, endDate: '2026-10-23' };
+const clients: any[] = [
+  asClient({ ...bendy, fullName: 'Bendy' }),
+  asClient({ id: 's', fullName: 'SERVILUS', handsCount: 2, payoutRanks: '2,3', receivedHandsCount: 0, paidHandsCount: 5 }),
+  asClient(bs),
+];
+const sheetS = buildMemberSheet({ client: clients[1], allClients: clients, business, transactions: [], cycleBoundary: null, todayStr: '2026-10-22' });
+assert(sheetS.potAmount === 2000 && sheetS.totalToReceive === 4000, 'SERVILUS: pot 2 000 G, receives 2 hands = 4 000 G');
+assert(sheetS.maxHands === 8 && sheetS.remainingHands === 3 && sheetS.remainingAmount === 1500, 'SERVILUS owes 8 hands, 3 left (1 500 G)');
+assert(!sheetS.isOutOfOrder && sheetS.expectedNextRank === 2, 'Paying SERVILUS now follows the order (rank 2)');
+const sheetBs = buildMemberSheet({ client: clients[2], allClients: clients, business, transactions: [], cycleBoundary: null, todayStr: '2026-10-22' });
+assert(sheetBs.isOutOfOrder, 'Paying BS before SERVILUS is out of order');
+assert(sheetS.schedule.paidUntilDate === '2026-10-21' && sheetS.schedule.isPartialToday, 'SERVILUS: covered until the 21st, today partial');
+assert(editableRanks({ payoutRanks: '2,3', payoutRank: 2 }) === '2, 3' && ranksToSave('', 4, 3) === '4, 5, 6', 'Ranks shown and saved (one per hand when left empty)');
+assert(ledgerEntryKind({ type: 'SOL_PAYOUT', isReversed: true }) === 'REVERSAL' && ledgerEntryKind({ type: 'SOL_CONTRIBUTION' }) === 'CONTRIBUTION', 'Ledger entry kinds');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);
