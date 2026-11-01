@@ -156,6 +156,25 @@ const isoDay = (offset: number) => localDateString(new Date(Date.now() + offset 
   await deleteClient(bs.id);
   assert((await getMembersWithPaymentStatus()).length === 2, 'A member with no operation in the new cycle can be removed');
 
+  // 9. Reversing a collection: the hands go back, coverage follows the calendar again
+  const c1 = await createTransaction({ clientId: bendy.id, amount: 500, type: 'SOL_CONTRIBUTION', collectorId, businessId: biz.id });
+  b = (await getMembersWithPaymentStatus()).find((m) => m.id === bendy.id)!;
+  assert(b.paidHandsCount === 1 && b.paidUntilDate === localDateString(), 'New cycle: Bendy pays 1 hand, covered today');
+  await reverseTransaction({ transactionId: c1.id, reason: 'Erreur de montant' });
+  b = (await getMembersWithPaymentStatus()).find((m) => m.id === bendy.id)!;
+  assert(b.paidHandsCount === 0 && !b.paidUntilDate && b.paymentStatusToday === 'UNPAID_TODAY', 'Collection reversed: 0 hand, no coverage, « À encaisser »');
+  const reversal = (await getTransactions({ collectorId })).find((t) => t.type === 'REVERSAL' && t.note?.includes(c1.id.slice(0, 8)));
+  assert(Boolean(reversal) && reversal!.amount === 500, 'The reversal is a new entry of the same amount (nothing deleted)');
+  assert(await rejects(() => reverseTransaction({ transactionId: c1.id, reason: 'Encore' }), 'déjà été annulée'), 'An operation is reversed only once');
+
+  // 10. Cash closure: expected cash = today's collections minus today's payouts (reversed ones excluded)
+  const today = (await getTransactions({ collectorId })).filter((t) => !t.isReversed && t.type !== 'REVERSAL' && localDateString(new Date(t.createdAtLocal)) === localDateString());
+  const expected =
+    today.filter((t) => t.type === 'SOL_CONTRIBUTION').reduce((sum, t) => sum + t.amount, 0) -
+    today.filter((t) => t.type === 'SOL_PAYOUT').reduce((sum, t) => sum + t.amount, 0);
+  const closure = await createCashClosure({ totalCashDeclared: expected });
+  assert(closure.totalSystemCalculated === Math.max(0, expected), `Expected cash at closing = collections − payouts of the day (${expected} G)`);
+
   console.log('\n==================================================');
   console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log('==================================================');
