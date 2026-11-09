@@ -151,3 +151,17 @@ export function summarizeCycleDay(members: MemberDueShape[], unitAmount: number)
   summary.owedAmount = owedAmount(summary.owedHands, unitAmount);
   return summary;
 }
+
+/** The member still has something to collect today (late, or today's hands not all paid). */
+export function needsCollection(m: MemberDueShape): boolean {
+  return m.paymentStatusToday === 'OVERDUE' || m.paymentStatusToday === 'UNPAID_TODAY';
+}
+
+/**
+ * Order of the collect lists: late members first (most hands owed first), then today's,
+ * then those up to date. Stable for equal members, so the payout order is kept.
+ */
+export function sortForCollection<T extends MemberDueShape>(members: T[]): T[] {
+  const group = (m: MemberDueShape) => (m.paymentStatusToday === 'OVERDUE' ? 0 : m.paymentStatusToday === 'UNPAID_TODAY' ? 1 : 2);
+  return [...(members || [])].sort((a, b) => group(a) - group(b) || memberOwedHands(b) - memberOwedHands(a));
+}

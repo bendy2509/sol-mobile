@@ -891,4 +891,11 @@ export const htPhrases: Record<string, string> = {
   "Encaissé aujourd'hui": "Ankese jodi a",
   "{0} sur le cycle": "{0} sou sik la",
   "{0} dû": "{0} pou peye",
+  "{0} la main · {1} adhérents": "{0} pa men · {1} manm",
+  "À encaisser aujourd'hui": "Pou ankese jodi a",
+  "Voir tout": "Wè tout",
+  "Tout le monde est à jour": "Tout moun ajou",
+  "Aucune main à encaisser pour aujourd'hui.": "Pa gen men pou ankese jodi a.",
+  "Le cycle commence le {0}": "Sik la kòmanse {0}",
+  "{0} / {1} mains remises": "{0} / {1} men remèt",
 };
