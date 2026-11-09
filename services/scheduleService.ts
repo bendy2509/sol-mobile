@@ -141,6 +141,11 @@ export function roundOnDate(rounds: string[], todayStr: string): number {
   return Math.max(1, Math.min(rounds.length, reached));
 }
 
+/** Rounds whose day has come (today included): what a member joining today already owes. */
+export function roundsDueToDate(rounds: string[], todayStr: string): number {
+  return rounds.filter((day) => day <= todayStr).length;
+}
+
 /** The cycle has not started yet on that day (its first round is still ahead). */
 export function isBeforeCycle(rounds: string[], todayStr: string): boolean {
   return rounds.length > 0 && todayStr < rounds[0];

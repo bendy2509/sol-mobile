@@ -13,6 +13,7 @@ import {
   paidUntilFromHands,
   payoutsBehind,
   roundOnDate,
+  roundsDueToDate,
 } from '../services/scheduleService';
 import { reconstructClientFinancialTimeline } from '../services/financialService';
 import { Transaction } from '../types';
@@ -106,6 +107,7 @@ const wedSat = buildCycleRounds('2026-11-01', 'WED_SAT', 4); // Sun 1 → Wed 4,
 assert(roundOnDate(wedSat, '2026-11-08') === 2 && roundOnDate(wedSat, '2026-11-11') === 3, 'Wed/Sat: round 2 on Sunday the 8th, round 3 on Wednesday the 11th');
 assert(payoutsBehind(days14, 0, '2026-11-08') === 7, 'Seven past rounds without a payout: 7 payouts pending');
 assert(payoutsBehind(days14, 7, '2026-11-08') === 0 && payoutsBehind(days14, 9, '2026-11-08') === 0, 'Payouts up to date (or ahead): none pending');
+assert(roundsDueToDate(days14, '2026-11-08') === 8 && roundsDueToDate(days14, '2026-10-25') === 0, 'Joining on the 8th owes 8 rounds; before the start, none');
 assert(payoutsBehind(days14, 0, '2026-11-01') === 0, 'Start day: today\'s payout is not late yet');
 
 console.log('\n==================================================');
