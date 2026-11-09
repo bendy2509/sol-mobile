@@ -34,17 +34,17 @@ export function MetricTile({ label, value, children, hint, icon, tone = 'default
     <>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
         {icon ? <Icon name={icon} size={16} color={tone === 'default' ? colors.textMuted : colors[tone]} /> : null}
-        <Text variant="caption" tone={tone === 'default' || tone === 'success' ? 'muted' : p.fg} numberOfLines={2} style={{ flexShrink: 1 }}>
+        <Text variant="caption" tone={tone === 'default' || tone === 'success' ? 'muted' : p.fg} style={{ flexShrink: 1 }}>
           {label}
         </Text>
       </View>
       {children ?? (
-        <Text variant="amount" tone={p.fg} numberOfLines={1} adjustsFontSizeToFit selectable>
+        <Text variant="amount" tone={p.fg} selectable>
           {value}
         </Text>
       )}
       {hint ? (
-        <Text variant="caption" tone="muted" numberOfLines={1}>
+        <Text variant="caption" tone="muted">
           {hint}
         </Text>
       ) : null}

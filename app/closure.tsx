@@ -232,7 +232,7 @@ export default function CashClosureScreen() {
             {unpaid.map((u) => (
               <View key={u.clientId} style={[styles.summaryRow, styles.unpaidRow]}>
                 <View style={styles.flexShrink}>
-                  <Text variant="bodyStrong" numberOfLines={1}>{u.fullName}</Text>
+                  <Text variant="bodyStrong">{u.fullName}</Text>
                   <Text variant="caption" tone="muted">{t('{0} main(s) · {1}', u.missingHands, formatCurrency(u.amount))}</Text>
                 </View>
                 <StatusBadge status={u.state === 'LATE' ? 'OVERDUE' : 'UNPAID_TODAY'} label={unpaidStateLabel(u)} appearance="inline" />

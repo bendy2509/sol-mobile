@@ -123,7 +123,7 @@ export function Button({
               <Icon name={icon} size={size === 'lg' ? 20 : 18} color={fg} />
             ) : null}
             <View style={{ flexShrink: 1 }}>
-              <Text variant={size === 'lg' ? 'buttonLarge' : 'button'} style={{ color: fg }} numberOfLines={2} align="center">
+              <Text variant={size === 'lg' ? 'buttonLarge' : 'button'} style={{ color: fg }} align="center">
                 {text}
               </Text>
             </View>

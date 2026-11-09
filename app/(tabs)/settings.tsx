@@ -11,6 +11,7 @@ import {
   Card,
   Icon,
   Screen,
+  ScreenHeader,
   SegmentedControl,
   SettingsGroup,
   SettingsRow,
@@ -233,10 +234,7 @@ export default function SettingsScreen() {
   ) : null;
 
   return (
-    <Screen edges={['top', 'left', 'right']} contentStyle={styles.content}>
-      <Text variant="title" accessibilityRole="header">
-        {t('settings.title')}
-      </Text>
+    <Screen edges={['top', 'left', 'right']} contentStyle={styles.content} header={<ScreenHeader title={t('settings.title')} />}>
 
       {/* 1. Apparence */}
       <SettingsGroup title={t('settings.appearance')}>
@@ -262,16 +260,23 @@ export default function SettingsScreen() {
         <View style={styles.identity}>
           <Avatar name={activeCollector?.fullName || 'SOL'} />
           <View style={styles.flexShrink}>
-            <Text variant="bodyStrong" numberOfLines={1}>
+            <Text variant="bodyStrong">
               {activeCollector?.fullName || t('Responsable du sol')}
             </Text>
-            <Text variant="caption" tone="muted" numberOfLines={1}>
+            <Text variant="caption" tone="muted">
               {[activeCollector?.phoneNumber, activeCollector?.zone].filter(Boolean).join(' · ')}
             </Text>
           </View>
         </View>
         <SettingsRow label={t('settings.profile.edit')} icon="edit" onPress={() => openSheet('profile')} requiresPin divider={false} />
       </SettingsGroup>
+      {/* What the lock beside a chevron means, said once where it first appears */}
+      <View style={styles.legend}>
+        <Icon name="lock" size={14} color={theme.colors.textMuted} />
+        <Text variant="caption" tone="muted" style={styles.flexShrink}>
+          {t('Le cadenas signale une action qui demande votre code PIN.')}
+        </Text>
+      </View>
 
       {/* 3. Sécurité */}
       <SettingsGroup
@@ -311,17 +316,11 @@ export default function SettingsScreen() {
       </SettingsGroup>
 
       {/* 4. Carnet et reçus */}
-      <SettingsGroup title={t('settings.carnet')}>
-        <SettingsRow
-          label={t('settings.carnet.business')}
-          icon="settings"
-          value={business?.name}
-          onPress={() => router.push('/setup-business' as any)}
-        />
+      <SettingsGroup title={t('settings.carnet')} footer={t('Paramètres du sol, clôtures de caisse et cycles clôturés : onglet Sol, menu « … ».')}>
         <SettingsRow
           label={t('settings.carnet.currency')}
           icon="cash"
-          value={formatCurrency(1250)}
+          value={getReceiptPreferences().currencyLabel}
           onPress={() => openSheet('receipt')}
         />
         <SettingsRow
@@ -329,23 +328,20 @@ export default function SettingsScreen() {
           icon="file"
           value={getReceiptPreferences().receiptName || business?.name || '—'}
           onPress={() => openSheet('receipt')}
+          divider={false}
         />
-        <SettingsRow label={t('settings.carnet.closures')} icon="calendar" onPress={() => router.push('/closure' as any)} />
-        <SettingsRow label={t('settings.carnet.cycles')} icon="cycle" onPress={() => router.push('/cycle-management' as any)} divider={false} />
       </SettingsGroup>
 
       {/* 5. Langue */}
       <SettingsGroup title={t('settings.language')}>
-        {LANGUAGES.map((lang, i) => (
-          <SettingsRow
-            key={lang.code}
-            label={lang.label}
-            icon="globe"
-            selected={language === lang.code}
-            onPress={() => setLanguage(lang.code)}
-            divider={i < LANGUAGES.length - 1}
+        <View style={styles.block}>
+          <SegmentedControl
+            options={LANGUAGES.map((lang) => ({ value: lang.code, label: lang.code === 'ht' ? 'Kreyòl' : lang.label }))}
+            value={language}
+            onChange={setLanguage}
+            accessibilityLabel={t('settings.language')}
           />
-        ))}
+        </View>
       </SettingsGroup>
 
       {/* 6. Données */}
@@ -369,7 +365,7 @@ export default function SettingsScreen() {
       </SettingsGroup>
 
       <SettingsGroup>
-        <SettingsRow label={t('settings.logout')} icon="logout" tone="danger" onPress={handleLogout} divider={false} />
+        <SettingsRow label={t('settings.logout')} icon="lock" onPress={handleLogout} divider={false} />
       </SettingsGroup>
 
       {/* Sheets */}
@@ -505,7 +501,8 @@ export default function SettingsScreen() {
 
 const createStyles = ({ spacing, colors, radius }: Theme) =>
   StyleSheet.create({
-    content: { gap: spacing.xl, paddingTop: spacing.lg, paddingBottom: spacing.xxl },
+    content: { gap: spacing.xl, paddingTop: spacing.xs, paddingBottom: spacing.xxl },
+    legend: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: -spacing.md, paddingHorizontal: spacing.xs },
     flexShrink: { flex: 1, minWidth: 0 },
     row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     identity: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.divider },

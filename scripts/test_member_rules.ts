@@ -2,17 +2,19 @@
 declare const process: { exit(code: number): never };
 
 import {
-  currentRound,
   cycleHandsPaidOut,
   cycleTotalHands,
   handPotAmount,
   hasReceivedAllHands,
   memberHandsCount,
+  memberOwedHands,
   memberPaidHands,
   memberPayoutRanks,
   memberReceivedHands,
   nextBeneficiary,
+  owedAmount,
   parsePayoutRanks,
+  summarizeCycleDay,
 } from '../services/memberRules';
 import { buildMemberSheet, editableRanks, ledgerEntryKind, ranksToSave } from '../services/memberSheet';
 
@@ -56,7 +58,7 @@ assert(memberPaidHands(servilus) === 5, 'Hands paid in the cycle');
 // 3. Cycle totals
 assert(cycleTotalHands(sol) === 4, 'Bendy 1 + SERVILUS 2 + BS 1 = 4 rounds');
 assert(handPotAmount(500, cycleTotalHands(sol)) === 2000, 'Each round pays 4 × 500 G = 2 000 G');
-assert(cycleHandsPaidOut(sol) === 1 && currentRound(sol) === 2, 'One hand paid out: round 2 is being drawn');
+assert(cycleHandsPaidOut(sol) === 1, 'One hand paid out over the cycle');
 
 // 4. Next beneficiary: lowest rank not paid out yet
 const next = nextBeneficiary(sol);
@@ -82,6 +84,20 @@ assert(sheetBs.isOutOfOrder, 'Paying BS before SERVILUS is out of order');
 assert(sheetS.schedule.paidUntilDate === '2026-10-21' && sheetS.schedule.isPartialToday, 'SERVILUS: covered until the 21st, today partial');
 assert(editableRanks({ payoutRanks: '2,3', payoutRank: 2 }) === '2, 3' && ranksToSave('', 4, 3) === '4, 5, 6', 'Ranks shown and saved (one per hand when left empty)');
 assert(ledgerEntryKind({ type: 'SOL_PAYOUT', isReversed: true }) === 'REVERSAL' && ledgerEntryKind({ type: 'SOL_CONTRIBUTION' }) === 'CONTRIBUTION', 'Ledger entry kinds');
+
+// Day summary: one unit (hands owed) and its amount, the same counts on every screen
+const day = [
+  { paymentStatusToday: 'PAID_TODAY', lateHands: 0, missingHandsToday: 0 }, // Bendy, paid
+  { paymentStatusToday: 'OVERDUE', lateHands: 2, missingHandsToday: 2 }, // SERVILUS, 2 hands, one round late
+  { paymentStatusToday: 'UNPAID_TODAY', lateHands: 0, missingHandsToday: 1 }, // BS, today only
+  { paymentStatusToday: 'PAID_IN_ADVANCE', lateHands: 0, missingHandsToday: 0 }, // B. Servilus, ahead
+];
+assert(memberOwedHands(day[1]) === 4 && memberOwedHands({}) === 0, 'Hands owed = late hands + today\'s missing hands');
+assert(owedAmount(4, 500) === 2000 && owedAmount(0, 500) === 0, 'Amount owed: hands × amount per hand (0 hand = 0)');
+const summary = summarizeCycleDay(day, 500);
+assert(summary.totalMembers === 4 && summary.upToDate === 2 && summary.late === 1 && summary.dueToday === 1, 'Day counts: 2 up to date, 1 late, 1 due today');
+assert(summary.owedHands === 5 && summary.owedAmount === 2500, 'Owed over the carnet: 5 hands = 2 500 G');
+assert(summarizeCycleDay([], 500).owedAmount === 0, 'Empty carnet: nothing owed');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);

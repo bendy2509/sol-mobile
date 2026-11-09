@@ -37,7 +37,8 @@ export function AmountText({ amount, currency, size = 'medium', tone = 'default'
       align={align}
       selectable
       numberOfLines={1}
-      adjustsFontSizeToFit={size === 'hero' || size === 'large'}
+      // One line: the figure shrinks to fit on the phone, it is never cut
+      adjustsFontSizeToFit
       accessibilityLabel={`${sign === 'debit' && !isZero ? t('moins') + ' ' : ''}${formatCurrency(Math.abs(value), currency)}`}
       style={style}
     >

@@ -8,31 +8,27 @@ import { getMembersWithPaymentStatus } from '@/db/memberRepository';
 import { createTransaction } from '@/db/transactionRepository';
 import { useAuth } from '@/context/AuthContext';
 import { BusinessConfig } from '@/types';
-import { formatCurrency, formatDateShort, getInitials } from '@/lib/formatters';
+import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { localDateString } from '@/lib/dates';
-import { buildCycleRounds } from '@/services/scheduleService';
-import { calculateContributionAmount, calculateMemberTotalCyclePot } from '@/services/financialService';
-import { cycleTotalHands, handPotAmount, handUnitAmount } from '@/services/memberRules';
+import { buildCycleRounds, roundsDueToDate } from '@/services/scheduleService';
+import { calculateContributionAmount, calculateMemberDuePerRound, calculateMemberTotalCyclePot } from '@/services/financialService';
+import { cycleTotalHands, handUnitAmount, owedAmount } from '@/services/memberRules';
 import { normalizePhoneNumber } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
-import { Header } from '@/components/Header';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { AmountText, Button, Card, Chip, Icon, Screen, SectionHeader, Text, TextField } from '@/components/ui';
+import { Button, Card, Icon, Screen, ScreenHeader, SectionHeader, StatStrip, Text, TextField } from '@/components/ui';
 import { recordAuditLog } from '@/services/auditService';
 import { safeBack } from '@/lib/navigation';
-import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 
 export default function NewClientScreen() {
   const router = useRouter();
   const { activeCollector } = useAuth();
-  const { width, isSmallScreen, isVerySmallScreen, isTablet, horizontalPadding } = useResponsive();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [business, setBusiness] = useState<BusinessConfig | null>(null);
-  const [existingMembersCount, setExistingMembersCount] = useState<number>(0);
   const [existingTotalCycleHands, setExistingTotalCycleHands] = useState<number>(0);
   const [handsCount, setHandsCount] = useState<number>(1);
   const [assignedRank, setAssignedRank] = useState<number>(1);
@@ -47,12 +43,12 @@ export default function NewClientScreen() {
 
   const unitAmount = handUnitAmount(business);
   const totalCycleHands = existingTotalCycleHands + handsCount;
-  const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);
+  // Three key figures (services): per round, over the whole cycle, and already owed today
+  // (dues run from the cycle start, so a late member catches up the rounds already past)
+  const duePerRound = calculateMemberDuePerRound(handsCount, unitAmount);
   const memberTotalDue = calculateMemberTotalCyclePot(handsCount, totalCycleHands, unitAmount);
-  // Dues run from the cycle start: rounds already past or due today are owed at enrolment
-  const roundsDueNow = business
-    ? buildCycleRounds(business.startDate, business.frequency, totalCycleHands).filter((d) => d <= localDateString()).length
-    : 0;
+  const roundsDueNow = business ? roundsDueToDate(buildCycleRounds(business.startDate, business.frequency, totalCycleHands), localDateString()) : 0;
+  const alreadyOwed = owedAmount(roundsDueNow * handsCount, unitAmount);
 
   const generateRanksString = (startRank: number, count: number): string => {
     const ranks = [];
@@ -71,7 +67,6 @@ export default function NewClientScreen() {
       ]);
       setBusiness(activeBiz);
       setLock(enrollmentLock);
-      setExistingMembersCount(members.length);
       const totalHands = cycleTotalHands(members);
       setExistingTotalCycleHands(totalHands);
       const startRank = totalHands + 1;
@@ -195,14 +190,17 @@ export default function NewClientScreen() {
     }
   };
 
-  const renderStepper = (opts: {
-    title: string;
-    sub: string;
-    onMinus: () => void;
-    onPlus: () => void;
-    minusDisabled: boolean;
-    noun: string;
-  }) => (
+  const stepHands = (delta: number) => {
+    triggerLightImpact();
+    handleHandsCountChange(handsCount + delta);
+  };
+  const stepRank = (delta: number) => {
+    triggerLightImpact();
+    handleAssignedRankChange(assignedRank + delta);
+  };
+
+  /** − value + : the one control for a count (hands, rank). */
+  const renderStepper = (opts: { value: string; caption: string; noun: string; minusDisabled: boolean; onMinus: () => void; onPlus: () => void }) => (
     <View style={styles.stepper}>
       <Pressable
         onPress={opts.onMinus}
@@ -211,14 +209,14 @@ export default function NewClientScreen() {
         accessibilityLabel={t('Retirer {0}', opts.noun)}
         style={({ pressed }) => [styles.stepBtn, opts.minusDisabled && styles.stepBtnDisabled, pressed && styles.pressed]}
       >
-        <Icon name="minus" size={22} color={opts.minusDisabled ? theme.colors.borderStrong : theme.colors.text} />
+        <Icon name="minus" size={22} color={opts.minusDisabled ? theme.colors.textPlaceholder : theme.colors.text} />
       </Pressable>
-      <View style={styles.stepCenter} accessible accessibilityLabel={`${opts.title}, ${opts.sub}`}>
-        <Text variant="subheading" align="center">
-          {opts.title}
+      <View style={styles.stepCenter} accessible accessibilityLabel={`${opts.value}, ${opts.caption}`}>
+        <Text variant="amountLarge" align="center">
+          {opts.value}
         </Text>
         <Text variant="caption" tone="muted" align="center">
-          {opts.sub}
+          {opts.caption}
         </Text>
       </View>
       <Pressable
@@ -237,12 +235,10 @@ export default function NewClientScreen() {
       <Screen
         edges={['top', 'left', 'right', 'bottom']}
         header={
-          <Header
+          <ScreenHeader
             title={t('Nouvel adhérent')}
-            subtitle={t('{0} · {1} / main', business?.name || 'Carnet actif', formatCurrency(unitAmount))}
-            showBack={true}
-            showScanner={false}
-            fallbackBackRoute="/(tabs)"
+            subtitle={t('{0} · {1} / main', business?.name || t('Carnet actif'), formatCurrency(unitAmount))}
+            onBack={() => safeBack(router, '/(tabs)')}
           />
         }
         contentStyle={styles.content}
@@ -270,56 +266,6 @@ export default function NewClientScreen() {
           </Card>
         )}
 
-        {/* Live Preview Card */}
-        <Card tone="hero" style={styles.heroCard}>
-          <View style={styles.previewTop}>
-            <View style={styles.heroAvatar}>
-              <Text variant="subheading" tone="onHero">
-                {fullName.trim() ? getInitials(fullName) : t('SOL')}
-              </Text>
-            </View>
-            <View style={styles.flexShrink}>
-              <Text variant="heading" tone="onHero" numberOfLines={1}>
-                {fullName.trim() || t('Nom de l\'adhérent')}
-              </Text>
-              <Text variant="caption" tone="onHeroMuted">
-                {phoneDigits ? `+509 ${formatDisplayPhone(phoneDigits)}` : t('+509 XX XX XX XX')}
-              </Text>
-            </View>
-            <View style={styles.heroPill}>
-              <Text variant="label" tone="onHero" numberOfLines={1}>
-                {handsCount > 1 ? `#${multiRanks}` : t('Main #{0}', assignedRank)}
-              </Text>
-            </View>
-          </View>
-
-          {/* Financial Grid Info (Real-Time Feedback) */}
-          <View style={styles.heroStats}>
-            <View style={styles.heroStat}>
-              <Text variant="caption" tone="onHeroMuted">{t('Cotisation (1 main)')}</Text>
-              <AmountText amount={unitAmount} size="medium" tone="onHero" />
-            </View>
-            <View style={styles.heroStatDivider} />
-            <View style={styles.heroStat}>
-              <Text variant="caption" tone="onHeroMuted">{t('Tirages prévus')}</Text>
-              <Text variant="amount" tone="onHero" numberOfLines={1}>
-                {handsCount} × {formatCurrency(totalPotAmount)}
-              </Text>
-            </View>
-          </View>
-
-          {/* Projection Temps Réel */}
-          <Text variant="caption" tone="onHeroMuted">
-            <Text variant="label" tone="onHero">{t('Impact SOL :')}
-            </Text>{t('en prenant')}{' '}{handsCount}{' '}{t('main')}{handsCount > 1 ? 's' : ''}{t(', la cagnotte s\'ajuste pour tout le monde à')}{' '}
-            <Text variant="label" tone="onHero">
-              {formatCurrency(totalPotAmount)}
-            </Text>{' '}
-            ({totalCycleHands}{' '}{t('mains). Cet adhérent paiera')}{' '}
-            <Text variant="label" tone="onHero">
-              {t('{0} au total', formatCurrency(memberTotalDue))}</Text>{' '}{t('sur la durée du cycle.')}</Text>
-        </Card>
-
         {/* Identity */}
         <Card style={styles.formCard}>
           <TextField
@@ -333,7 +279,7 @@ export default function NewClientScreen() {
             autoCorrect={false}
           />
 
-          {/* Haitian Phone Number Input */}
+          {/* Haitian phone number: +509 and 8 digits */}
           <View style={styles.group}>
             <Text variant="label">{t('Numéro de téléphone *')}</Text>
             <View style={[styles.phoneBox, activeInput === 'PHONE' && styles.phoneBoxActive]}>
@@ -366,63 +312,36 @@ export default function NewClientScreen() {
           </View>
         </Card>
 
-        {/* Number of Subscribed Hands (Multi-Mains) */}
+        {/* Hands: one control */}
         <View style={styles.section}>
           <SectionHeader title={t('Mains souscrites')} />
           <Card style={styles.formCard}>
-            <View style={styles.chipRow}>
-              {[1, 2, 3, 4].map((num) => (
-                <Chip
-                  key={num}
-                  label={num === 1 ? t('1 main') : t('{0} mains', num)}
-                  selected={handsCount === num}
-                  onPress={() => {
-                    triggerLightImpact();
-                    handleHandsCountChange(num);
-                  }}
-                />
-              ))}
-            </View>
-
             {renderStepper({
-              title: handsCount > 1 ? t('{0} mains souscrites', handsCount) : t('{0} main souscrite', handsCount),
-              sub: handsCount > 1 ? t('+{0} enfants / places au cycle', handsCount) : t('+{0} enfant / place au cycle', handsCount),
+              value: String(handsCount),
+              caption: handsCount > 1 ? t('mains · {0} mains dans le cycle', totalCycleHands) : t('main · {0} mains dans le cycle', totalCycleHands),
               noun: t('une main'),
               minusDisabled: handsCount <= 1,
-              onMinus: () => {
-                triggerLightImpact();
-                if (handsCount > 1) handleHandsCountChange(handsCount - 1);
-              },
-              onPlus: () => {
-                triggerLightImpact();
-                handleHandsCountChange(handsCount + 1);
-              },
+              onMinus: () => handsCount > 1 && stepHands(-1),
+              onPlus: () => stepHands(1),
             })}
-
-            <Card tone="sunken" padding="sm">
-              <View style={styles.infoRow}>
-                <Icon name="info" size={18} color={theme.colors.textMuted} />
-                <Text variant="caption" tone="muted" style={styles.flexShrink}>
-                  {handsCount > 1
-                    ? t('Cet enfant prend {0} mains (l\'effectif du SOL passe de {1} à {2} mains effectives). La cagnotte de chaque main tirée passe à {3} ({4} × {5}). Cet enfant recevra {6} tirages de {7} (Total: {8}).', handsCount, existingTotalCycleHands, totalCycleHands, formatCurrency(totalPotAmount), totalCycleHands, formatCurrency(unitAmount), handsCount, formatCurrency(totalPotAmount), formatCurrency(memberTotalDue))
-                    : t('1 part standard. L\'effectif du SOL est de {0} enfants et {1} mains. Chaque main tirée est de {2} ({3} × {4}).', existingMembersCount + 1, totalCycleHands, formatCurrency(totalPotAmount), totalCycleHands, formatCurrency(unitAmount))}
-                </Text>
-              </View>
-            </Card>
-            {roundsDueNow > 0 && business && (
-              <Card tone="sunken" padding="sm">
-                <View style={styles.infoRow}>
-                  <Icon name="calendar" size={18} color={theme.colors.textMuted} />
-                  <Text variant="caption" tone="muted" style={styles.flexShrink}>
-                    {t('Le cycle a commencé le {0} : cet adhérent doit déjà {1} tour(s), soit {2} ({3} main(s)).', formatDateShort(business.startDate), roundsDueNow, formatCurrency(calculateContributionAmount(roundsDueNow * handsCount, unitAmount)), roundsDueNow * handsCount)}
-                  </Text>
-                </View>
-              </Card>
-            )}
           </Card>
         </View>
 
-        {/* Assigned Hand / Multi-Ranks */}
+        {/* Key figures instead of explanations */}
+        <StatStrip
+          cells={[
+            { label: t('Par tour'), value: formatCurrency(duePerRound) },
+            { label: t('Sur le cycle'), value: formatCurrency(memberTotalDue) },
+            {
+              label: t('Déjà dû'),
+              value: formatCurrency(alreadyOwed),
+              hint: roundsDueNow > 0 ? t('{0} tour(s) passé(s)', roundsDueNow) : t('Aucun'),
+              tone: alreadyOwed > 0 ? 'warning' : 'default',
+            },
+          ]}
+        />
+
+        {/* Payout rank(s) */}
         <View style={styles.section}>
           <SectionHeader title={handsCount > 1 ? t('Rangs de tirage de ses mains') : t('Rang dans le cycle')} />
           <Card style={styles.formCard}>
@@ -439,42 +358,46 @@ export default function NewClientScreen() {
               />
             ) : (
               renderStepper({
-                title: t('Main #{0}', assignedRank),
-                sub: t('Ordre de réception de la cagnotte'),
+                value: `#${assignedRank}`,
+                caption: t('Ordre de réception de la cagnotte'),
                 noun: t('un rang'),
                 minusDisabled: assignedRank <= 1,
-                onMinus: () => {
-                  triggerLightImpact();
-                  if (assignedRank > 1) handleAssignedRankChange(assignedRank - 1);
-                },
-                onPlus: () => {
-                  triggerLightImpact();
-                  handleAssignedRankChange(assignedRank + 1);
-                },
+                onMinus: () => assignedRank > 1 && stepRank(-1),
+                onPlus: () => stepRank(1),
               })
             )}
           </Card>
         </View>
 
-        {/* Quick First Payment Switch */}
-        <Card>
-          <View style={styles.switchRow}>
-            <View style={styles.flexShrink}>
-              <Text variant="bodyStrong">{t('Encaisser sa part ({0} main{1}) dès l\'inscription', handsCount, handsCount > 1 ? 's' : '')}</Text>
-              <Text variant="caption" tone="muted">{t('Crédite immédiatement {0} au solde de l\'adhérent.', formatCurrency(calculateContributionAmount(handsCount, unitAmount)))}</Text>
-            </View>
+        {/* First payment: the whole row toggles, and its state reads in words, on or off */}
+        <Pressable
+          onPress={() => {
+            triggerLightImpact();
+            setCollectFirstHand((v) => !v);
+          }}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: collectFirstHand }}
+          accessibilityLabel={t('Encaisser sa part dès l\'inscription')}
+          style={({ pressed }) => [styles.switchCard, collectFirstHand && styles.switchCardOn, pressed && styles.pressed]}
+        >
+          <View style={styles.flexShrink}>
+            <Text variant="bodyStrong">{t('Encaisser sa part dès l\'inscription')}</Text>
+            <Text variant="caption" tone={collectFirstHand ? 'primary' : 'muted'}>
+              {collectFirstHand
+                ? t('Oui : {0} encaissés à l\'enregistrement', formatCurrency(calculateContributionAmount(handsCount, unitAmount)))
+                : t('Non : rien n\'est encaissé maintenant')}
+            </Text>
+          </View>
+          {/* Shows the state only: the row takes the touch (a second handler would toggle back) */}
+          <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <Switch
               value={collectFirstHand}
-              onValueChange={(val) => {
-                triggerLightImpact();
-                setCollectFirstHand(val);
-              }}
-              trackColor={{ false: theme.colors.borderStrong, true: theme.colors.primary }}
-              thumbColor={theme.colors.surface}
-              accessibilityLabel={t('Encaisser sa part dès l\'inscription')}
+              trackColor={{ false: theme.colors.textPlaceholder, true: theme.colors.primary }}
+              ios_backgroundColor={theme.colors.textPlaceholder}
+              thumbColor={theme.colors.onPrimary}
             />
           </View>
-        </Card>
+        </Pressable>
 
         {/* 4-Digit PIN Security Modal */}
         <PinVerificationModal
@@ -504,32 +427,9 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     flexOne: { flex: 1 },
     flexShrink: { flex: 1, minWidth: 0 },
     pressed: { backgroundColor: colors.surfacePressed },
-    content: { gap: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.xl },
+    content: { gap: spacing.xl, paddingTop: spacing.sm, paddingBottom: spacing.xl },
     section: { gap: spacing.md },
     group: { gap: spacing.xs },
-
-    heroCard: { gap: spacing.md },
-    previewTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-    heroAvatar: {
-      width: layout.touchTarget,
-      height: layout.touchTarget,
-      borderRadius: radius.pill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: colors.onHeroMuted,
-    },
-    heroPill: {
-      maxWidth: '35%',
-      paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.xs,
-      borderRadius: radius.pill,
-      borderWidth: 1,
-      borderColor: colors.onHeroMuted,
-    },
-    heroStats: { flexDirection: 'row', alignItems: 'stretch', gap: spacing.md },
-    heroStat: { flex: 1, minWidth: 0, gap: spacing.xs },
-    heroStatDivider: { width: 1, backgroundColor: colors.onHeroMuted, opacity: 0.4 },
 
     formCard: { gap: spacing.lg },
     phoneBox: {
@@ -553,7 +453,6 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     phoneInput: { ...typography.amountSmall, flex: 1, minWidth: 0, color: colors.text, paddingVertical: spacing.sm },
     clearBtn: { width: layout.touchTarget, height: layout.touchTarget, alignItems: 'center', justifyContent: 'center' },
 
-    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
     stepper: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     stepBtn: {
       width: layout.actionHeight,
@@ -569,5 +468,15 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     stepCenter: { flex: 1, minWidth: 0, gap: spacing.xs },
     infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
 
-    switchRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    switchCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      padding: spacing.lg,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      backgroundColor: colors.surface,
+    },
+    switchCardOn: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   });

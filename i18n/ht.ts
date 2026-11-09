@@ -58,5 +58,5 @@ export const ht: Dictionary = {
   'settings.about.version': 'Vèsyon',
   'settings.about.help': 'Èd',
   'settings.about.support': 'Kontakte sipò a',
-  'settings.logout': 'Dekonekte',
+  'settings.logout': 'Fèmen app la ak PIN',
 };

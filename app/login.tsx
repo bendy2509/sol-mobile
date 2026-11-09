@@ -6,7 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useAuth } from '@/context/AuthContext';
 import { getActiveBusinessConfig } from '@/db/businessRepository';
-import { Button, Card, Icon, PinDots, PinPad, Text } from '@/components/ui';
+import { Button, Card, Icon, Logo, PinDots, PinPad, Text } from '@/components/ui';
 import { triggerLightImpact, triggerMediumImpact, triggerErrorFeedback, triggerSuccessFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
@@ -165,11 +165,7 @@ export default function LoginScreen() {
       >
         {/* Brand */}
         <View style={styles.brand}>
-          <View style={styles.logo} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <Text variant="amountLarge" style={styles.logoLetter}>
-              S
-            </Text>
-          </View>
+          <Logo size={56} />
           <View style={styles.flagRule} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <View style={styles.flagBlue} />
             <View style={styles.flagRed} />
@@ -198,7 +194,7 @@ export default function LoginScreen() {
               <View style={styles.countryChip}>
                 <Text variant="label">+509</Text>
               </View>
-              <Text variant="amountLarge" tone={phoneDigits ? 'default' : 'muted'} numberOfLines={1}>
+              <Text variant="amountLarge" tone={phoneDigits ? 'default' : 'muted'}>
                 {phoneDigits ? formatPhoneDisplay(phoneDigits) : '__ __ __ __'}
               </Text>
               {activeField === 'PHONE' && <View style={styles.cursor} />}
@@ -310,17 +306,7 @@ const createStyles = ({ colors, spacing, radius, layout, brand }: Theme) =>
     flexShrink: { flex: 1, minWidth: 0 },
 
     brand: { alignItems: 'center', gap: spacing.xs },
-    logo: {
-      width: spacing.xxxl,
-      height: spacing.xxxl,
-      borderRadius: radius.md,
-      borderCurve: 'continuous',
-      backgroundColor: brand.haitiBlue,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    logoLetter: { color: brand.white },
-    flagRule: { flexDirection: 'row', width: spacing.xxxl, height: spacing.xs, marginBottom: spacing.sm, marginTop: spacing.xs },
+    flagRule: { flexDirection: 'row', width: spacing.xxxl + spacing.sm, height: spacing.xs, marginBottom: spacing.sm, marginTop: spacing.xs },
     flagBlue: { flex: 1, backgroundColor: brand.haitiBlue },
     flagRed: { flex: 1, backgroundColor: brand.haitiRed },
 

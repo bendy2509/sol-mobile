@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CashClosure, UnpaidMember } from '@/types';
 import { localDateString } from '@/lib/dates';
 import { computeMemberSchedule } from '@/services/scheduleService';
+import { memberOwedHands } from '@/services/memberRules';
 import { getActiveBusinessId, getActiveCollectorId, getDatabase } from './sqlite';
 import { getActiveBusinessConfig, getCycleHandsTotal, getCycleLedgerTotals } from './businessRepository';
 import { getTodayStats } from './transactionRepository';
@@ -35,7 +36,7 @@ export async function getUnpaidForDate(day: string = localDateString(), collecto
       paidHands: ledger.of(r.id).paidHands,
       todayStr: day,
     });
-    const missingHands = s.lateHands + s.missingHandsToday;
+    const missingHands = memberOwedHands(s);
     if (missingHands <= 0) continue;
     unpaid.push({
       clientId: r.id,

@@ -9,7 +9,11 @@ import {
   buildMemberSchedule,
   computeMemberSchedule,
   getCycleDates,
+  isBeforeCycle,
   paidUntilFromHands,
+  payoutsBehind,
+  roundOnDate,
+  roundsDueToDate,
 } from '../services/scheduleService';
 import { reconstructClientFinancialTimeline } from '../services/financialService';
 import { Transaction } from '../types';
@@ -91,6 +95,20 @@ const a = tx(1500, '2026-10-20T14:00:00.000Z');
 const b = tx(500, '2026-10-22T01:30:00.000Z'); // evening of the 21st in Haiti
 assert(replay([a, b]).paidUntilDate === '2026-10-20' && replay([a, b]).paidHandsCount === 4, 'Replay: 4 hands for a 3-hand member = round of the 20th + 1 hand');
 assert(replay([{ ...a, isReversed: true }]).paidUntilDate === null, 'All contributions reversed: no coverage (not the cycle start)');
+
+// 8. The current round follows the calendar (not the payouts made)
+const days14 = buildCycleRounds('2026-11-01', 'DAILY', 14);
+assert(roundOnDate(days14, '2026-11-01') === 1, 'Round 1 on the start day');
+assert(roundOnDate(days14, '2026-11-08') === 8, 'A week later: round 8 of 14, even with no payout made');
+assert(roundOnDate(days14, '2026-10-25') === 1 && isBeforeCycle(days14, '2026-10-25'), 'Before the start: round 1, cycle not started');
+assert(roundOnDate(days14, '2026-12-31') === 14 && !isBeforeCycle(days14, '2026-12-31'), 'After the end: last round');
+assert(roundOnDate([], '2026-11-08') === 1, 'No round: round 1');
+const wedSat = buildCycleRounds('2026-11-01', 'WED_SAT', 4); // Sun 1 → Wed 4, Sat 7, Wed 11, Sat 14
+assert(roundOnDate(wedSat, '2026-11-08') === 2 && roundOnDate(wedSat, '2026-11-11') === 3, 'Wed/Sat: round 2 on Sunday the 8th, round 3 on Wednesday the 11th');
+assert(payoutsBehind(days14, 0, '2026-11-08') === 7, 'Seven past rounds without a payout: 7 payouts pending');
+assert(payoutsBehind(days14, 7, '2026-11-08') === 0 && payoutsBehind(days14, 9, '2026-11-08') === 0, 'Payouts up to date (or ahead): none pending');
+assert(roundsDueToDate(days14, '2026-11-08') === 8 && roundsDueToDate(days14, '2026-10-25') === 0, 'Joining on the 8th owes 8 rounds; before the start, none');
+assert(payoutsBehind(days14, 0, '2026-11-01') === 0, 'Start day: today\'s payout is not late yet');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);

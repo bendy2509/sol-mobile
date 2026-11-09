@@ -1,14 +1,17 @@
 /**
- * SOL Mobile — Semantic color palette (Direction A « Registre sobre »).
+ * SOL Mobile — Semantic color palette.
  * Screens never use raw hex values: they read these roles through useTheme().
  *
  * Rules:
- * - One action color: a calm institutional blue (#1F3FB8), lighter than the flag blue.
+ * - One action color, royal blue (#1D4ED8 light, #2F5FF5 dark, white text on both): Remettre,
+ *   Encaisser, Enregistrer. Nothing else is filled with it.
+ * - Statuses, used sparingly (a dot or a small badge, never a whole row):
+ *   green `success` = up to date, orange `warning` = late, teal `advance` = paid ahead;
+ *   « À encaisser » stays neutral (muted text, clock icon).
+ * - Red `danger` only for errors and destructive actions (reversal, discrepancy).
+ * - Two clearly distinct levels: `background` (the screen) and `surface` (cards), in both schemes.
  * - The flag blue (#00209F) and red (#D21034) are brand accents only: logo and receipts.
- *   The interface never depends on them, and the red is never a status.
- * - The hero is a number on a plain surface, not a colored block.
- * - Errors / overdue use `danger` (burnt orange), a distinct hue.
- * - Every financial status pairs its color with an icon and a label.
+ * - Every status pairs its color with an icon and a label.
  */
 
 export type ColorSchemeName = 'light' | 'dark';
@@ -78,32 +81,32 @@ export interface ThemeColors {
 }
 
 const light: ThemeColors = {
-  primary: '#1F3FB8',
-  primaryPressed: '#18329A',
+  primary: '#1D4ED8',
+  primaryPressed: '#1E40AF',
   onPrimary: '#FFFFFF',
-  primarySoft: '#EBEEFA',
-  onPrimarySoft: '#1F3FB8',
+  primarySoft: '#E8EEFD',
+  onPrimarySoft: '#1D4ED8',
 
   hero: '#FFFFFF',
   onHero: '#141B2D',
   onHeroMuted: '#4A5368',
   heroTrack: '#EEF0F4',
-  heroTrackActive: '#1F3FB8',
+  heroTrackActive: '#1D4ED8',
 
-  background: '#F4F5F8',
+  background: '#ECEEF3',
   surface: '#FFFFFF',
-  surfaceAlt: '#EEF0F4',
-  surfacePressed: '#E3E6EC',
-  border: '#E6E8EE',
+  surfaceAlt: '#F1F3F7',
+  surfacePressed: '#E4E7EE',
+  border: '#E2E5EC',
   borderStrong: '#C5CBD8',
-  divider: '#EEF0F4',
+  divider: '#EDEFF3',
   overlay: 'rgba(14, 19, 34, 0.55)',
 
   text: '#141B2D',
   textMuted: '#4A5368',
   textPlaceholder: '#6B7385',
   textInverse: '#FFFFFF',
-  link: '#1F3FB8',
+  link: '#1D4ED8',
 
   success: '#0B6E47',
   successSoft: '#E6F4EC',
@@ -111,15 +114,15 @@ const light: ThemeColors = {
   advance: '#0F6B66',
   advanceSoft: '#E3F2F1',
   advanceLine: '#A6D6D2',
-  warning: '#8A5300',
-  warningSoft: '#FBF1DF',
-  warningLine: '#EBCB91',
-  danger: '#B83A0B',
-  dangerSoft: '#FDEDE4',
-  dangerLine: '#F0B9A0',
-  info: '#1F3FB8',
-  infoSoft: '#EBEEFA',
-  infoLine: '#C3CCF2',
+  warning: '#B45309',
+  warningSoft: '#FDF0E3',
+  warningLine: '#F3C89B',
+  danger: '#C62828',
+  dangerSoft: '#FDECEC',
+  dangerLine: '#F4B4B4',
+  info: '#1D4ED8',
+  infoSoft: '#E8EEFD',
+  infoLine: '#BCCDF8',
 
   locked: '#4A5368',
   lockedSoft: '#EEF0F4',
@@ -127,22 +130,22 @@ const light: ThemeColors = {
 };
 
 const dark: ThemeColors = {
-  primary: '#93A6FF',
-  primaryPressed: '#AEBCFF',
-  onPrimary: '#0B1440',
-  primarySoft: '#1F2950',
-  onPrimarySoft: '#C9D2FF',
+  primary: '#2F5FF5',
+  primaryPressed: '#2550D6',
+  onPrimary: '#FFFFFF',
+  primarySoft: '#17224A',
+  onPrimarySoft: '#B9CBFF',
 
-  hero: '#171E31',
+  hero: '#161D30',
   onHero: '#EEF1F8',
   onHeroMuted: '#A8B0C4',
   heroTrack: '#26304D',
-  heroTrackActive: '#93A6FF',
+  heroTrackActive: '#4D7BFF',
 
-  background: '#0E1322',
-  surface: '#171E31',
-  surfaceAlt: '#1E2740',
-  surfacePressed: '#26304D',
+  background: '#090D17',
+  surface: '#161D30',
+  surfaceAlt: '#1F2840',
+  surfacePressed: '#28324D',
   border: '#2A3450',
   borderStrong: '#3A4566',
   divider: '#222B44',
@@ -152,7 +155,7 @@ const dark: ThemeColors = {
   textMuted: '#A8B0C4',
   textPlaceholder: '#8C95AB',
   textInverse: '#0E1322',
-  link: '#AEBCFF',
+  link: '#8FA8FF',
 
   success: '#4CC38A',
   successSoft: '#12301F',
@@ -160,15 +163,15 @@ const dark: ThemeColors = {
   advance: '#4FC1B8',
   advanceSoft: '#0F2C2A',
   advanceLine: '#1D5450',
-  warning: '#F0B45A',
-  warningSoft: '#33250C',
-  warningLine: '#5E4518',
-  danger: '#FF8A5C',
-  dangerSoft: '#3A1A10',
-  dangerLine: '#6B3220',
-  info: '#93A6FF',
-  infoSoft: '#1F2950',
-  infoLine: '#33438A',
+  warning: '#FB923C',
+  warningSoft: '#3A2210',
+  warningLine: '#6B3D1A',
+  danger: '#F87171',
+  dangerSoft: '#3B1414',
+  dangerLine: '#6E2525',
+  info: '#8FA8FF',
+  infoSoft: '#17224A',
+  infoLine: '#2E3F80',
 
   locked: '#A8B0C4',
   lockedSoft: '#1E2740',

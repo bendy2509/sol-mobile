@@ -166,7 +166,7 @@ export default function RegisterScreen() {
                         {s.n}.
                       </Text>
                     )}
-                    <Text variant="label" tone={isCurrent || isDone ? 'primary' : 'muted'} numberOfLines={1} style={styles.flexShrink}>
+                    <Text variant="label" tone={isCurrent || isDone ? 'primary' : 'muted'} style={styles.flexShrink}>
                       {s.label}
                     </Text>
                   </View>

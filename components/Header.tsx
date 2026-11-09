@@ -68,10 +68,10 @@ export const Header: React.FC<HeaderProps> = ({
         )}
 
         <View style={styles.leftSection}>
-          <Text variant={isSmallScreen ? 'subheading' : 'heading'} numberOfLines={1} accessibilityRole="header">
+          <Text variant={isSmallScreen ? 'subheading' : 'heading'} accessibilityRole="header">
             {title || t('SOL')}
           </Text>
-          <Text variant="caption" tone="muted" numberOfLines={1} ellipsizeMode="tail">
+          <Text variant="caption" tone="muted">
             {subtitle || `${getFirstName()} • ${activeCollector?.zone || t('Zone principale')}`}
           </Text>
         </View>

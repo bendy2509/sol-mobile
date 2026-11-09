@@ -22,16 +22,16 @@ interface StatusConfig {
 export const STATUS_CONFIG: Record<StatusKind, StatusConfig> = {
   PAID_TODAY: { label: "Payé aujourd'hui", icon: 'check', fg: 'success', bg: 'successSoft', line: 'successLine' },
   PAID_IN_ADVANCE: { label: 'En avance', icon: 'arrow-right', fg: 'advance', bg: 'advanceSoft', line: 'advanceLine' },
-  UNPAID_TODAY: { label: 'À encaisser', icon: 'clock', fg: 'warning', bg: 'warningSoft', line: 'warningLine' },
-  OVERDUE: { label: 'En retard', icon: 'alert', fg: 'danger', bg: 'dangerSoft', line: 'dangerLine' },
+  UNPAID_TODAY: { label: 'À encaisser', icon: 'clock', fg: 'textMuted', bg: 'surfaceAlt', line: 'border' },
+  OVERDUE: { label: 'En retard', icon: 'alert', fg: 'warning', bg: 'warningSoft', line: 'warningLine' },
   UPCOMING_PAYOUT: { label: 'Reçoit la main', icon: 'payout', fg: 'info', bg: 'infoSoft', line: 'infoLine' },
   HAND_RECEIVED: { label: 'Main reçue', icon: 'check', fg: 'success', bg: 'successSoft', line: 'successLine' },
   LOCKED: { label: 'Verrouillé', icon: 'lock', fg: 'locked', bg: 'lockedSoft', line: 'lockedLine' },
 };
 
 /**
- * Detail after a member's status. Several hands: it counts hands (1 hand paid out of 2 leaves
- * « À encaisser · partiel, 1 main »); one hand: late rounds; in advance: rounds ahead.
+ * Detail after a member's status, always in hands: late hands plus today's (« En retard · 3 mains »),
+ * today's missing hands (« À encaisser · partiel, 1 main »); in advance: rounds ahead.
  */
 export function memberStatusDetail(
   member: Pick<Member, 'paymentStatusToday' | 'handsCount' | 'handsCoveredAhead' | 'overdueRoundsCount' | 'missingHandsToday' | 'lateHands' | 'isPartialToday'>
@@ -44,8 +44,8 @@ export function memberStatusDetail(
     case 'PAID_IN_ADVANCE':
       return `+${member.handsCoveredAhead || 1}`;
     case 'OVERDUE':
-      if (isMultiHands && lateHands > 0) return hands(lateHands);
-      return member.overdueRoundsCount > 0 ? t('{0} tour{1}', member.overdueRoundsCount, member.overdueRoundsCount > 1 ? 's' : '') : undefined;
+      // One unit everywhere: the hands owed (late plus today's), never rounds
+      return lateHands + missingToday > 0 ? hands(lateHands + missingToday) : undefined;
     case 'UNPAID_TODAY':
       if (member.isPartialToday) return t('partiel, {0} main{1}', missingToday, missingToday > 1 ? 's' : '');
       return isMultiHands && missingToday > 0 ? hands(missingToday) : undefined;
@@ -56,12 +56,12 @@ export function memberStatusDetail(
 
 export interface StatusBadgeProps {
   status: StatusKind;
-  /** Extra detail appended after the label, e.g. "1 tour" → "En retard · 1 tour". */
+  /** Extra detail appended after the label, e.g. "2 mains" → "En retard · 2 mains". */
   detail?: string;
   /** Overrides the default label (keep the vocabulary consistent!). */
   label?: string;
-  /** 'chip' = tinted pill, 'inline' = icon + text only (dense lists). */
-  appearance?: 'chip' | 'inline';
+  /** 'chip' = tinted pill, 'inline' = icon + text, 'dot' = small colored dot + text (lists). */
+  appearance?: 'chip' | 'inline' | 'dot';
   style?: StyleProp<ViewStyle>;
 }
 
@@ -100,8 +100,13 @@ export function StatusBadge({ status, detail, label, appearance = 'chip', style 
         style,
       ]}
     >
-      <Icon name={cfg.icon} size={14} color={fg} strokeWidth={2.5} />
-      <Text variant="label" style={{ color: fg, flexShrink: 1 }} numberOfLines={1}>
+      {appearance === 'dot' ? (
+        <View style={{ width: spacing.sm, height: spacing.sm, borderRadius: spacing.xs, backgroundColor: fg }} />
+      ) : (
+        <Icon name={cfg.icon} size={14} color={fg} strokeWidth={2.5} />
+      )}
+      {/* Dot: the text stays quiet except when the member is late; it wraps, never cut */}
+      <Text variant="label" style={{ color: appearance === 'dot' && status !== 'OVERDUE' ? colors.textMuted : fg, flexShrink: 1 }}>
         {text}
       </Text>
     </View>

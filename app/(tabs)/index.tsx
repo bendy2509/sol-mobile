@@ -1,24 +1,26 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, TextInput, FlatList, StyleSheet, RefreshControl, Alert } from 'react-native';
+import { View, TextInput, StyleSheet, RefreshControl, Alert } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 
-import { MemberCard } from '@/components/MemberCard';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { DashboardHero } from '@/components/dashboard/DashboardHero';
 import { DashboardMetricsGrid } from '@/components/dashboard/DashboardMetricsGrid';
 import { BeneficiaryBanner } from '@/components/dashboard/BeneficiaryBanner';
-import { DashboardFilters } from '@/components/dashboard/DashboardFilters';
-import { ActionMenu, AmountText, Avatar, BottomSheet, Button, EmptyState, ListSkeleton, Screen, Text, UiIconName } from '@/components/ui';
+import { ActionMenu, AmountText, Avatar, BottomSheet, Button, Card, EmptyState, ListSkeleton, MemberRow, Screen, ScreenHeader, SectionHeader, Text, UiIconName, memberStatusDetail } from '@/components/ui';
 import { getDashboardMetrics } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { recordAuditLog } from '@/services/auditService';
 import { exportBusinessReport } from '@/services/reportExport';
-import { DashboardMetrics, FilterStatus, Member, SortOption } from '@/types';
-import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
+import { DashboardMetrics, Member } from '@/types';
+import { memberOwedHands, needsCollection, owedAmount, sortForCollection } from '@/services/memberRules';
+import { formatCurrency } from '@/lib/formatters';
+import { triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
+
+/** Rows of « À encaisser aujourd'hui » on the home screen; the full list is on Encaisser. */
+const HOME_PREVIEW_ROWS = 4;
 
 export default function DashboardScreen() {
   const theme = useTheme();
@@ -37,6 +39,9 @@ export default function DashboardScreen() {
     daysRemaining: 0,
     overdueMembersCount: 0,
     overdueHandsCount: 0,
+    overdueAmount: 0,
+    dueTodayCount: 0,
+    amountCollectedCycle: 0,
     paidTodayCount: 0,
     unpaidTodayCount: 0,
     totalMembersCount: 0,
@@ -52,12 +57,11 @@ export default function DashboardScreen() {
     contributionAmount: 250,
     currentRound: 1,
     totalRounds: 10,
+    cycleNotStarted: false,
+    payoutsBehind: 0,
   });
 
   const [members, setMembers] = useState<Member[]>([]);
-  const [filter, setFilter] = useState<FilterStatus>('ALL');
-  const [sort, setSort] = useState<SortOption>('PAYOUT_RANK');
-  const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -72,11 +76,7 @@ export default function DashboardScreen() {
     try {
       const [fetchedMetrics, memberList] = await Promise.all([
         getDashboardMetrics(),
-        getMembersWithPaymentStatus({
-          filter,
-          sort,
-          search: searchQuery,
-        }),
+        getMembersWithPaymentStatus({ filter: 'ALL', sort: 'PAYOUT_RANK' }),
       ]);
       setMetrics(fetchedMetrics);
       setMembers(memberList);
@@ -85,7 +85,7 @@ export default function DashboardScreen() {
     } finally {
       setLoaded(true);
     }
-  }, [filter, sort, searchQuery]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -100,16 +100,6 @@ export default function DashboardScreen() {
     } finally {
       setRefreshing(false);
     }
-  };
-
-  const handleFilterChange = (newFilter: FilterStatus) => {
-    triggerLightImpact();
-    setFilter(newFilter);
-  };
-
-  const handleSortChange = (newSort: SortOption) => {
-    triggerLightImpact();
-    setSort(newSort);
   };
 
   const handleInitiatePayout = (member: Member) => {
@@ -168,17 +158,9 @@ export default function DashboardScreen() {
       ? Math.min(100, Math.round((metrics.handsTouchedCount / metrics.totalHandsExpected) * 100))
       : 0;
 
-  const renderMemberItem = useCallback(
-    ({ item, index }: { item: Member; index: number }) => (
-      <MemberCard
-        member={item}
-        isPayoutTurn={metrics.currentPayoutBeneficiary?.id === item.id}
-        isFirst={index === 0}
-        isLast={index === members.length - 1}
-      />
-    ),
-    [metrics.currentPayoutBeneficiary?.id, members.length]
-  );
+  // Today's collection: late members first, then today's (memberRules, same order as Encaisser)
+  const toCollect = sortForCollection(members.filter(needsCollection));
+  const preview = toCollect.slice(0, HOME_PREVIEW_ROWS);
 
   const quickActions: { label: string; a11y: string; icon: UiIconName; onPress: () => void }[] = [
     { label: t('Clôturer'), a11y: t('Ouvrir la clôture de caisse du jour'), icon: 'calendar', onPress: () => router.push('/closure' as any) },
@@ -187,109 +169,96 @@ export default function DashboardScreen() {
 
   return (
     <Screen
-      scroll={false}
       padded={false}
       edges={['top', 'left', 'right']}
+      footerSafeArea={false}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[theme.colors.primary]} tintColor={theme.colors.primary} />
+      }
+      contentStyle={[styles.content, isTablet && styles.contentTablet]}
       header={
-        <View style={[styles.topBar, isTablet && styles.listContentTablet]}>
-          <View style={styles.flexShrink}>
-            <Text variant="title" numberOfLines={1} accessibilityRole="header">
-              {metrics.businessName || t('SOL')}
-            </Text>
-            <Text variant="caption" tone="muted" numberOfLines={1}>
-              {t('{0} la main · {1} adhérents{2}', formatCurrency(metrics.unitAmount), metrics.totalMembersCount, metrics.endDate ? t(' · du {0} au {1}', formatDateShort(metrics.startDate), formatDateShort(metrics.endDate)) : '')}
-            </Text>
-          </View>
-          <ActionMenu
-            title={metrics.businessName}
-            items={[
-              { label: t('Rapport PDF du carnet'), icon: 'printer', onPress: handleGenerateBusinessReport, disabled: isGeneratingReport },
-              { label: t('Scanner une carte'), icon: 'scan', onPress: () => router.push('/scan' as any) },
-              { label: t('Gestion du cycle'), icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
-            ]}
+        <View style={isTablet && styles.contentTablet}>
+          <ScreenHeader
+            title={metrics.businessName || t('SOL')}
+            subtitle={t('{0} la main · {1} adhérents', formatCurrency(metrics.unitAmount), metrics.totalMembersCount)}
+            right={
+              <ActionMenu
+                title={metrics.businessName}
+                items={[
+                  { label: t('Rapport PDF du carnet'), icon: 'printer', onPress: handleGenerateBusinessReport, disabled: isGeneratingReport },
+                  { label: t('Scanner une carte'), icon: 'scan', onPress: () => router.push('/scan' as any) },
+                  { label: t('Gestion du cycle'), icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
+                ]}
+              />
+            }
           />
         </View>
       }
-      footerSafeArea={false}
     >
-      <FlatList
-        data={members}
-        keyExtractor={(item) => item.id}
-        renderItem={renderMemberItem}
-        initialNumToRender={10}
-        maxToRenderPerBatch={10}
-        windowSize={5}
-        removeClippedSubviews={true}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            colors={[theme.colors.primary]}
-            tintColor={theme.colors.primary}
-          />
-        }
-        ListHeaderComponent={
-          <View style={styles.dashboardHeader}>
-            <DashboardHero metrics={metrics} cycleProgressPct={cycleProgressPct}>
-              {metrics.currentPayoutBeneficiary && (
-                <BeneficiaryBanner
-                  beneficiary={metrics.currentPayoutBeneficiary}
-                  potAmount={metrics.totalPotAmount}
-                  onPayout={handleInitiatePayout}
-                />
-              )}
-            </DashboardHero>
+      {!loaded ? (
+        <ListSkeleton rows={3} />
+      ) : metrics.totalMembersCount === 0 ? (
+        <EmptyState
+          icon="users"
+          title={t('Aucun adhérent')}
+          message={t('Ajoutez des enfants pour démarrer la collecte et le cycle.')}
+          action={{ label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }}
+        />
+      ) : (
+        <>
+          <DashboardHero metrics={metrics} cycleProgressPct={cycleProgressPct}>
+            {metrics.currentPayoutBeneficiary && (
+              <BeneficiaryBanner beneficiary={metrics.currentPayoutBeneficiary} potAmount={metrics.totalPotAmount} onPayout={handleInitiatePayout} />
+            )}
+          </DashboardHero>
 
-            <DashboardMetricsGrid metrics={metrics} membersCount={metrics.totalMembersCount} />
+          <DashboardMetricsGrid metrics={metrics} membersCount={metrics.totalMembersCount} />
 
-            <View style={styles.quickActionsRow}>
-              {quickActions.map((action) => (
-                <Button
-                  key={action.label}
-                  variant="secondary"
-                  icon={action.icon}
-                  label={action.label}
-                  accessibilityLabel={action.a11y}
-                  onPress={action.onPress}
-                  style={styles.flexOne}
-                />
-              ))}
-            </View>
-
-            <DashboardFilters
-              metrics={metrics}
-              membersCount={metrics.totalMembersCount}
-              filteredMembersCount={members.length}
-              filter={filter}
-              sort={sort}
-              searchQuery={searchQuery}
-              onFilterChange={handleFilterChange}
-              onSortChange={handleSortChange}
-              onSearchChange={setSearchQuery}
+          <View style={styles.section}>
+            <SectionHeader
+              title={t("À encaisser aujourd'hui")}
+              count={toCollect.length}
+              action={toCollect.length > 0 ? { label: t('Voir tout'), onPress: () => router.push('/collect' as any) } : undefined}
             />
+            {preview.length === 0 ? (
+              <Card style={styles.allPaid}>
+                <Text variant="bodyStrong" tone="success">{t('Tout le monde est à jour')}</Text>
+                <Text variant="caption" tone="muted">{t('Aucune main à encaisser pour aujourd\'hui.')}</Text>
+              </Card>
+            ) : (
+              <Card padding="none" style={styles.listCard}>
+                {preview.map((m, i) => (
+                  <MemberRow
+                    key={m.id}
+                    name={m.fullName}
+                    rank={m.rankOrder ?? m.payoutRank ?? undefined}
+                    status={m.paymentStatusToday}
+                    statusDetail={memberStatusDetail(m)}
+                    value={formatCurrency(owedAmount(memberOwedHands(m), metrics.unitAmount))}
+                    valueTone={m.paymentStatusToday === 'OVERDUE' ? 'warning' : 'default'}
+                    divider={i < preview.length - 1}
+                    onPress={() => router.push(`/client/${m.id}` as any)}
+                  />
+                ))}
+              </Card>
+            )}
           </View>
-        }
-        ListEmptyComponent={
-          !loaded ? (
-            <ListSkeleton hero={false} rows={4} />
-          ) : (
-          <EmptyState
-            icon={searchQuery ? 'search' : 'users'}
-            title={t('Aucun adhérent trouvé')}
-            message={
-              searchQuery ? t('Aucun résultat ne correspond à votre recherche.') : t('Ajoutez des enfants pour démarrer la collecte et le cycle.')
-            }
-            action={
-              searchQuery
-                ? undefined
-                : { label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }
-            }
-          />
-          )
-        }
-      />
+
+          <View style={styles.quickActionsRow}>
+            {quickActions.map((action) => (
+              <Button
+                key={action.label}
+                variant="secondary"
+                icon={action.icon}
+                label={action.label}
+                accessibilityLabel={action.a11y}
+                onPress={action.onPress}
+                style={styles.flexOne}
+              />
+            ))}
+          </View>
+        </>
+      )}
 
       {/* Payout hand ("Bay Men") */}
       <BottomSheet
@@ -352,31 +321,22 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     flexShrink: { flex: 1, minWidth: 0 },
     flexOne: { flexGrow: 1, flexBasis: 0 },
 
-    listContent: {
+    content: {
       paddingHorizontal: layout.gutter,
-      paddingBottom: spacing.xl,
+      paddingTop: spacing.xs,
+      paddingBottom: spacing.xxl,
+      gap: spacing.xl,
     },
-    listContentTablet: {
+    contentTablet: {
       width: '100%',
       maxWidth: layout.maxContentWidth,
       alignSelf: 'center',
     },
-    dashboardHeader: {
-      paddingTop: spacing.lg,
-      paddingBottom: spacing.md,
-      gap: spacing.lg,
-    },
+    section: { gap: spacing.md },
+    listCard: { overflow: 'hidden' },
+    allPaid: { gap: spacing.xs },
 
     quickActionsRow: { flexDirection: 'row', gap: spacing.sm },
-    topBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      paddingLeft: layout.gutter,
-      paddingRight: spacing.sm,
-      paddingTop: spacing.lg,
-      paddingBottom: spacing.xs,
-    },
     targetBox: {
       flexDirection: 'row',
       alignItems: 'center',
