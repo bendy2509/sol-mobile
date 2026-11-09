@@ -6,6 +6,7 @@ import {
   cycleTotalHands,
   handPotAmount,
   hasReceivedAllHands,
+  matchesCollectFilter,
   memberHandsCount,
   memberOwedHands,
   memberPaidHands,
@@ -98,6 +99,9 @@ const summary = summarizeCycleDay(day, 500);
 assert(summary.totalMembers === 4 && summary.upToDate === 2 && summary.late === 1 && summary.dueToday === 1, 'Day counts: 2 up to date, 1 late, 1 due today');
 assert(summary.owedHands === 5 && summary.owedAmount === 2500, 'Owed over the carnet: 5 hands = 2 500 G');
 assert(summarizeCycleDay([], 500).owedAmount === 0, 'Empty carnet: nothing owed');
+const inFilter = (f: Parameters<typeof matchesCollectFilter>[1]) => day.filter((m, i) => matchesCollectFilter({ ...m, received_hands_count: i === 0 ? 1 : 0 }, f)).length;
+assert(inFilter('ALL') === 4 && inFilter('TO_COLLECT') === 2 && inFilter('LATE') === 1, 'Filters: all 4, to collect 2 (late + today), late 1');
+assert(inFilter('UP_TO_DATE') === 2 && inFilter('HAND_RECEIVED') === 1, 'Filters: up to date 2, hand received 1');
 
 console.log('\n==================================================');
 console.log(`RESULTS: ${passed} PASSED, ${failed} FAILED`);

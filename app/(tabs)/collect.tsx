@@ -10,6 +10,7 @@ import {
   Button,
   EmptyState,
   Card,
+  Chip,
   Icon,
   ListSkeleton,
   MemberRow,
@@ -36,7 +37,10 @@ import { t } from '@/i18n';
 import { localDateString } from '@/lib/dates';
 import { buildCycleRounds } from '@/services/scheduleService';
 import {
+  COLLECT_FILTERS,
+  CollectFilter,
   cycleTotalHands,
+  matchesCollectFilter,
   memberPaidHands,
   memberHandsCount as handsOfMember,
   handUnitAmount,
@@ -76,6 +80,7 @@ export default function CollectScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [dbTotalHands, setDbTotalHands] = useState<number>(0);
   const [showUpToDate, setShowUpToDate] = useState(false);
+  const [filter, setFilter] = useState<CollectFilter>('ALL');
   const [isUndoPinOpen, setIsUndoPinOpen] = useState(false);
 
   const unitAmount = handUnitAmount(business, selectedClient);
@@ -347,6 +352,18 @@ export default function CollectScreen() {
 
   const dueRows = rows.filter((r) => !r.l.isCycleCompleted && needsCollection(r));
   const upToDateRows = rows.filter((r) => r.l.isCycleCompleted || !needsCollection(r));
+
+  // Filters (memberRules.matchesCollectFilter): a member whose cycle is fully paid has nothing to collect
+  const inFilter = (r: (typeof rows)[number], f: CollectFilter) =>
+    matchesCollectFilter({ ...r.client, paymentStatusToday: r.l.isCycleCompleted ? 'PAID_TODAY' : r.paymentStatusToday, lateHands: r.lateHands, missingHandsToday: r.missingHandsToday }, f);
+  const filterLabels: Record<CollectFilter, string> = {
+    ALL: t('Tous'),
+    TO_COLLECT: t('À encaisser'),
+    LATE: t('En retard'),
+    UP_TO_DATE: t('À jour'),
+    HAND_RECEIVED: t('Main reçue'),
+  };
+  const filteredRows = filter === 'ALL' ? rows : rows.filter((r) => inFilter(r, filter));
   const day = summarizeCycleDay(Object.values(statusById), business?.contributionAmount ?? 0);
   const handsLabel = t('{0} main{1}', handsCount, handsCount > 1 ? 's' : '');
 
@@ -424,6 +441,17 @@ export default function CollectScreen() {
         </View>
       </View>
 
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsBar} contentContainerStyle={styles.chips}>
+        {COLLECT_FILTERS.map((f) => (
+          <Chip
+            key={f}
+            label={`${filterLabels[f]} (${rows.filter((r) => inFilter(r, f)).length})`}
+            selected={filter === f}
+            onPress={() => setFilter(f)}
+          />
+        ))}
+      </ScrollView>
+
       {!loaded ? (
         <View style={styles.listPad}>
           <ListSkeleton hero={false} rows={6} />
@@ -443,6 +471,17 @@ export default function CollectScreen() {
         </View>
       ) : (
         <ScrollView style={styles.list} contentContainerStyle={styles.listContent} keyboardShouldPersistTaps="handled">
+          {filter !== 'ALL' ? (
+            // One filter: one list, in the collection order
+            filteredRows.length > 0 ? (
+              <Card padding="none" style={styles.listCard}>
+                {filteredRows.map((r, i) => renderRow(r, i, filteredRows.length))}
+              </Card>
+            ) : (
+              <EmptyState icon="users" title={t('Aucun adhérent')} message={t('Aucun adhérent ne correspond à ce filtre.')} />
+            )
+          ) : (
+          <>
           {dueRows.length > 0 ? (
             <Card padding="none" style={styles.listCard}>
               {dueRows.map((r, i) => renderRow(r, i, dueRows.length))}
@@ -476,6 +515,8 @@ export default function CollectScreen() {
               ) : null}
             </View>
           ) : null}
+          </>
+          )}
         </ScrollView>
       )}
 
@@ -654,6 +695,8 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     scanBtn: { width: layout.touchTarget - spacing.sm, height: layout.touchTarget - spacing.sm, alignItems: 'center', justifyContent: 'center' },
 
     list: { flex: 1 },
+    chipsBar: { flexGrow: 0 },
+    chips: { gap: spacing.sm, paddingHorizontal: layout.gutter, paddingTop: spacing.md, paddingBottom: spacing.xs },
     listPad: { paddingHorizontal: layout.gutter },
     listContent: {
       width: '100%',
