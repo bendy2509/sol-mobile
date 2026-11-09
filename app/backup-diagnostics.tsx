@@ -1,17 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'expo-router';
-import { View, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
-import { Header } from '@/components/Header';
-import { Button, Card, Icon, MetricTile, Screen, SectionHeader, Text } from '@/components/ui';
+import { View, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { Button, Card, Icon, Screen, ScreenHeader, Text } from '@/components/ui';
 
 import { getDatabase, getActiveCollectorId } from '@/db/sqlite';
 import { getLastMigrationReport, getSchemaVersion, LATEST_SCHEMA_VERSION } from '@/db/migrations';
 import { findLedgerDiscrepancies, LedgerDiscrepancy, repairLedgerDiscrepancies } from '@/db/ledgerRepository';
 import { PinVerificationModal } from '@/components/PinVerificationModal';
-import { TotalsField } from '@/services/ledgerConsistency';
-import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
-import { useResponsive } from '@/hooks/useResponsive';
+import { triggerLightImpact, triggerSuccessFeedback, triggerErrorFeedback } from '@/lib/haptics';
+import { safeBack } from '@/lib/navigation';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 
@@ -19,25 +16,24 @@ interface DiagnosticState {
   isHealthy: boolean;
   totalClients: number;
   totalTransactions: number;
-  pendingSyncCount: number;
-  dbSizeBytes: number;
-  lastCheckTime: string;
-  /** null while not read yet. */
   schemaVersion: number | null;
-  schemaWarnings: string[];
-  migrationError: string | null;
+  /** Failed migration and migration warnings, in words. */
+  problems: string[];
 }
 
+/**
+ * Troubleshooting tool, opened by a long press on « Version » in Settings: is the local database
+ * sound and up to date, and do the stored totals match the operations (repair with the PIN).
+ */
 export default function BackupDiagnosticsScreen() {
-  const { contentMaxWidth, horizontalPadding } = useResponsive();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [diagnostics, setDiagnostics] = useState<DiagnosticState | null>(null);
   const [discrepancies, setDiscrepancies] = useState<LedgerDiscrepancy[] | null>(null);
   const [isRepairPinOpen, setIsRepairPinOpen] = useState(false);
   const [repairing, setRepairing] = useState(false);
-  const router = useRouter();
 
   const runDiagnostics = useCallback(async () => {
     setLoading(true);
@@ -46,50 +42,26 @@ export default function BackupDiagnosticsScreen() {
       const db = await getDatabase();
       const collectorId = await getActiveCollectorId();
 
-      // 1. Vérification d'intégrité SQLite
-      const integrityResult = await db.getFirstAsync<{ integrity_check: string }>(
-        'PRAGMA integrity_check'
-      );
-      const isHealthy = integrityResult?.integrity_check === 'ok';
-
-      // 2. Comptage des données locales
-      const clientsRow = await db.getFirstAsync<{ count: number }>(
-        'SELECT count(*) as count FROM clients WHERE collector_id = ?',
-        [collectorId]
-      );
-      const txRow = await db.getFirstAsync<{ count: number }>(
-        'SELECT count(*) as count FROM transactions WHERE collector_id = ?',
-        [collectorId]
-      );
-      const pendingRow = await db.getFirstAsync<{ count: number }>(
-        "SELECT count(*) as count FROM transactions WHERE collector_id = ? AND sync_status = 'PENDING'",
-        [collectorId]
-      );
-
-      // 3. Schéma versionné (migrations)
-      let schemaVersion: number | null = null;
-      let schemaWarnings: string[] = [];
-      // Same SQLite and migrations on every platform (the web too)
-      schemaVersion = await getSchemaVersion(db);
-      const rows = await db.getAllAsync<{ version: number; warning: string | null }>(
+      const integrity = await db.getFirstAsync<{ integrity_check: string }>('PRAGMA integrity_check');
+      const clients = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM clients WHERE collector_id = ?', [collectorId]);
+      const txs = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM transactions WHERE collector_id = ?', [collectorId]);
+      const schemaVersion = await getSchemaVersion(db);
+      const warnings = await db.getAllAsync<{ version: number; warning: string | null }>(
         'SELECT version, warning FROM schema_migrations WHERE warning IS NOT NULL ORDER BY version'
       );
-      schemaWarnings = rows.map((r) => t('Version {0} : {1}', r.version, t(r.warning ?? '')));
       const lastError = getLastMigrationReport()?.error;
 
-      // 4. Cohérence : totaux des adhérents = rejeu de leurs opérations du cycle
+      // Stored totals of every member against the replay of their operations
       setDiscrepancies(await findLedgerDiscrepancies(collectorId).catch(() => null));
-
       setDiagnostics({
+        isHealthy: integrity?.integrity_check === 'ok',
+        totalClients: clients?.count || 0,
+        totalTransactions: txs?.count || 0,
         schemaVersion,
-        schemaWarnings,
-        migrationError: lastError ? t('Migration {0} ({1}) en échec : {2}', lastError.version, lastError.name, lastError.message) : null,
-        isHealthy,
-        totalClients: clientsRow?.count || 0,
-        totalTransactions: txRow?.count || 0,
-        pendingSyncCount: pendingRow?.count || 0,
-        dbSizeBytes: 0,
-        lastCheckTime: new Date().toLocaleTimeString(),
+        problems: [
+          ...(lastError ? [t('Migration {0} ({1}) en échec : {2}', lastError.version, lastError.name, lastError.message)] : []),
+          ...warnings.map((r) => t('Version {0} : {1}', r.version, t(r.warning ?? ''))),
+        ],
       });
       triggerSuccessFeedback();
     } catch (err: any) {
@@ -103,30 +75,6 @@ export default function BackupDiagnosticsScreen() {
   useEffect(() => {
     runDiagnostics();
   }, [runDiagnostics]);
-
-
-  const pending = diagnostics?.pendingSyncCount || 0;
-
-  const fieldLabel: Record<TotalsField, string> = {
-    currentBalance: t('Solde'),
-    totalPaidAmount: t('Total cotisé'),
-    paidHandsCount: t('Mains payées'),
-    receivedHandsCount: t('Mains reçues'),
-    hasReceivedHand: t('Main reçue'),
-    paidUntilDate: t('Couvert jusqu\'au'),
-  };
-  const showValue = (field: TotalsField, value: unknown) =>
-    field === 'currentBalance' || field === 'totalPaidAmount'
-      ? formatCurrency(Number(value || 0))
-      : field === 'paidUntilDate'
-        ? value
-          ? formatDateShort(String(value))
-          : '—'
-        : field === 'hasReceivedHand'
-          ? value
-            ? t('Oui')
-            : t('Non')
-          : String(value ?? 0);
 
   const handleRepair = async () => {
     setIsRepairPinOpen(false);
@@ -144,150 +92,83 @@ export default function BackupDiagnosticsScreen() {
       setRepairing(false);
     }
   };
-  const statusTone = !diagnostics ? 'sunken' : diagnostics.isHealthy ? 'success' : 'danger';
+
+  const dbOk = !!diagnostics && diagnostics.isHealthy && diagnostics.problems.length === 0;
+  const upToDate = diagnostics?.schemaVersion !== null && (diagnostics?.schemaVersion ?? 0) >= LATEST_SCHEMA_VERSION;
 
   return (
     <Screen
       edges={['top', 'left', 'right', 'bottom']}
-      header={
-        <Header
-          title={t('Diagnostic & sauvegarde')}
-          subtitle={t('Intégrité locale et sécurité des écritures')}
-          showBack
-          showScanner={false}
-          fallbackBackRoute="/(tabs)"
-        />
-      }
+      header={<ScreenHeader title={t('Diagnostic')} subtitle={t('Outil de dépannage')} onBack={() => safeBack(router, '/(tabs)/settings')} />}
       contentStyle={styles.content}
       footer={
-        <View style={styles.footer}>
-          <Button size="lg" fullWidth icon="download" label={t('Sauvegarde chiffrée')} onPress={() => router.push('/(tabs)/settings' as any)} />
-          <Button variant="secondary" fullWidth icon="cycle" loading={loading} disabled={loading} label={t('Relancer le test d\'intégrité')} onPress={runDiagnostics} />
-        </View>
+        <Button variant="secondary" fullWidth icon="cycle" loading={loading} disabled={loading} label={t('Relancer la vérification')} onPress={runDiagnostics} />
       }
     >
-      {/* Statut de Santé Global */}
-      <Card tone={statusTone}>
-        <View style={styles.statusRow}>
-          <View style={styles.statusDisc}>
-            {!diagnostics ? (
-              <ActivityIndicator color={theme.colors.primary} />
-            ) : (
-              <Icon
-                name={diagnostics.isHealthy ? 'shield' : 'alert'}
-                size={24}
-                color={diagnostics.isHealthy ? theme.colors.success : theme.colors.danger}
-              />
-            )}
-          </View>
+      {/* 1. The database file */}
+      <Card style={styles.card}>
+        <View style={styles.row}>
+          {!diagnostics ? (
+            <ActivityIndicator color={theme.colors.primary} />
+          ) : (
+            <Icon name={dbOk ? 'check' : 'alert'} size={22} color={dbOk ? theme.colors.success : theme.colors.danger} />
+          )}
           <View style={styles.flexShrink}>
-            <Text variant="subheading" tone={!diagnostics ? 'default' : diagnostics.isHealthy ? 'success' : 'danger'}>
-              {!diagnostics ? t('Vérification en cours…') : diagnostics.isHealthy ? t('Base SQLite intègre') : t('Anomalie détectée')}
+            <Text variant="bodyStrong">
+              {!diagnostics ? t('Vérification en cours…') : dbOk ? t('Base de données en bon état') : t('Base de données à vérifier')}
             </Text>
-            <Text variant="caption" tone="muted">
-              {!diagnostics
-                ? t('Contrôle de la base locale.')
-                : diagnostics.isHealthy
-                  ? t('Vérification réussie à {0}. Aucune corruption de bloc.', diagnostics.lastCheckTime)
-                  : t('La structure locale présente des incohérences.')}
-            </Text>
+            {diagnostics ? (
+              <Text variant="caption" tone="muted">
+                {t('Version {0} / {1}', diagnostics.schemaVersion ?? '—', LATEST_SCHEMA_VERSION)}
+                {upToDate ? '' : ` · ${t('Mise à jour au prochain démarrage')}`}
+              </Text>
+            ) : null}
           </View>
         </View>
+        {diagnostics && !diagnostics.isHealthy ? (
+          <Text variant="caption" tone="danger">{t('La structure locale présente des incohérences.')}</Text>
+        ) : null}
+        {diagnostics?.problems.map((line) => (
+          <Text key={line} variant="caption" tone="danger">
+            {line}
+          </Text>
+        ))}
       </Card>
 
-      {diagnostics && (diagnostics.migrationError || diagnostics.schemaWarnings.length > 0) ? (
-        <Card tone="warning">
-          <View style={styles.statusRow}>
-            <Icon name="alert" size={20} color={theme.colors.warning} />
-            <View style={styles.flexShrink}>
-              <Text variant="bodyStrong" tone="warning">
-                {t('Base de données à vérifier')}
-              </Text>
-              {[diagnostics.migrationError, ...diagnostics.schemaWarnings].filter(Boolean).map((line) => (
-                <Text key={line as string} variant="caption" tone="warning">
-                  {line}
-                </Text>
-              ))}
-            </View>
-          </View>
-        </Card>
-      ) : null}
-
-      {/* Cohérence : le journal des opérations fait foi */}
-      <View style={styles.section}>
-        <SectionHeader title={t('Cohérence du carnet')} />
-        {discrepancies === null ? (
-          <Card tone="sunken">
-            <Text variant="caption" tone="muted">
-              {loading ? t('Vérification en cours…') : t('Contrôle indisponible.')}
-            </Text>
-          </Card>
-        ) : discrepancies.length === 0 ? (
-          <Card tone="success">
-            <View style={styles.statusRow}>
-              <Icon name="check" size={20} color={theme.colors.success} />
-              <Text variant="body" tone="success" style={styles.flexShrink}>
-                {t('Les totaux de chaque adhérent correspondent à ses opérations.')}
-              </Text>
-            </View>
-          </Card>
-        ) : (
-          <Card tone="warning" style={styles.ledgerCard}>
-            <Text variant="bodyStrong" tone="warning">
-              {t('{0} adhérent(s) dont les totaux diffèrent de leurs opérations', discrepancies.length)}
-            </Text>
-            {discrepancies.map((d) => (
-              <View key={d.clientId} style={styles.ledgerRow}>
-                <Text variant="label">{d.fullName}</Text>
-                {d.differences.map((x) => (
-                  <Text key={x.field} variant="caption" tone="muted">
-                    {t('{0} : enregistré {1}, selon les opérations {2}', fieldLabel[x.field], showValue(x.field, x.stored), showValue(x.field, x.ledger))}
-                  </Text>
-                ))}
-              </View>
-            ))}
+      {/* 2. Stored totals against the operations (the ledger decides) */}
+      <Card style={styles.card}>
+        <View style={styles.row}>
+          <Icon
+            name={discrepancies?.length ? 'alert' : 'check'}
+            size={22}
+            color={discrepancies === null ? theme.colors.textMuted : discrepancies.length ? theme.colors.warning : theme.colors.success}
+          />
+          <Text variant="bodyStrong" style={styles.flexShrink}>
+            {discrepancies === null
+              ? loading
+                ? t('Vérification en cours…')
+                : t('Contrôle indisponible.')
+              : discrepancies.length === 0
+              ? t('Tout est cohérent')
+              : t('{0} adhérent(s) à réparer', discrepancies.length)}
+          </Text>
+        </View>
+        {discrepancies?.length ? (
+          <>
             <Text variant="caption" tone="muted">
               {t('Le recalcul remplace les totaux enregistrés par ceux des opérations. Les opérations ne changent pas.')}
             </Text>
-            <Button
-              icon="lock"
-              label={t('Recalculer depuis les opérations')}
-              loading={repairing}
-              onPress={() => setIsRepairPinOpen(true)}
-            />
-          </Card>
-        )}
-      </View>
+            <Button icon="lock" label={t('Réparer')} loading={repairing} onPress={() => setIsRepairPinOpen(true)} />
+          </>
+        ) : null}
+      </Card>
 
-      {/* Métriques Locales Inspectées */}
-      <View style={styles.section}>
-        <SectionHeader title={t('Persistance locale')} />
-        <View style={styles.grid}>
-          <MetricTile label={t('Adhérents enrôlés')} icon="users" value={String(diagnostics?.totalClients ?? '–')} hint={t('Stockés sur l\'appareil')} style={styles.tile} />
-          <MetricTile label={t('Transactions')} icon="history" value={String(diagnostics?.totalTransactions ?? '–')} hint={t('Entrées immuables')} style={styles.tile} />
-          <MetricTile
-            label={t('Version du schéma')}
-            icon="settings"
-            value={
-              !diagnostics
-                ? '–'
-                : diagnostics.schemaVersion === null
-                  ? t('Démo web')
-                  : `${diagnostics.schemaVersion} / ${LATEST_SCHEMA_VERSION}`
-            }
-            hint={
-              diagnostics?.schemaVersion === null
-                ? t('Pas de migrations sur le web')
-                : diagnostics && diagnostics.schemaVersion !== null && diagnostics.schemaVersion >= LATEST_SCHEMA_VERSION
-                  ? t('À jour')
-                  : t('Mise à jour au prochain démarrage')
-            }
-            tone={diagnostics?.migrationError || diagnostics?.schemaWarnings.length ? 'warning' : 'default'}
-            style={styles.tile}
-          />
-          <MetricTile label={t('Sécurité atomique')} icon="lock" value={t('Active')} hint="withTransactionAsync" tone="success" style={styles.tile} />
-        </View>
-      </View>
+      {diagnostics ? (
+        <Text variant="caption" tone="muted" align="center">
+          {t('{0} adhérents · {1} opérations sur cet appareil', diagnostics.totalClients, diagnostics.totalTransactions)}
+        </Text>
+      ) : null}
+
       <PinVerificationModal
         visible={isRepairPinOpen}
         title={t('Confirmer le recalcul')}
@@ -299,25 +180,10 @@ export default function BackupDiagnosticsScreen() {
   );
 }
 
-const createStyles = ({ colors, spacing, radius, layout }: Theme) =>
+const createStyles = ({ spacing }: Theme) =>
   StyleSheet.create({
     flexShrink: { flex: 1, minWidth: 0 },
-    content: { gap: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.xl },
-    footer: { gap: spacing.sm },
-    section: { gap: spacing.md },
-
-    statusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-    statusDisc: {
-      width: layout.touchTarget,
-      height: layout.touchTarget,
-      borderRadius: radius.pill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surface,
-    },
-
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-    ledgerCard: { gap: spacing.md },
-    ledgerRow: { gap: spacing.xs },
-    tile: { flexBasis: '47%', flexGrow: 1 },
+    content: { gap: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xl },
+    card: { gap: spacing.md },
+    row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   });
