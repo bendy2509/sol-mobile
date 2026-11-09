@@ -56,7 +56,7 @@ export const fr = {
   'settings.about.version': 'Version',
   'settings.about.help': 'Aide',
   'settings.about.support': 'Contacter le support',
-  'settings.logout': 'Se déconnecter',
+  'settings.logout': "Verrouiller l'app",
 } as const;
 
 export type TranslationKey = keyof typeof fr;
