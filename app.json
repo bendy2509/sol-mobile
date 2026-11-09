@@ -73,6 +73,7 @@
           "faceIDPermission": "SOL Mobile utilise Face ID pour déverrouiller l'application à la place du code PIN."
         }
       ],
+      "./plugins/withResourceConfigs",
       [
         "expo-build-properties",
         {
