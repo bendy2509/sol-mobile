@@ -44,39 +44,52 @@ export function MemberRow({
 }: MemberRowProps) {
   const { colors, spacing, layout } = useTheme();
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={!onPress}
-      accessibilityRole={onPress ? 'button' : undefined}
-      accessibilityLabel={accessibilityLabel}
-      style={({ pressed }) => ({
+    // The action sits beside the pressable area, never inside it (no button in a button)
+    <View
+      style={{
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing.md,
-        minHeight: layout.rowHeight + spacing.sm,
-        paddingVertical: spacing.md,
-        paddingHorizontal: spacing.lg,
-        backgroundColor: pressed ? colors.surfacePressed : highlighted ? colors.primarySoft : 'transparent',
+        paddingRight: action ? spacing.lg : 0,
+        backgroundColor: highlighted ? colors.primarySoft : 'transparent',
         borderBottomWidth: divider ? 1 : 0,
         borderBottomColor: colors.divider,
-      })}
+      }}
     >
-      <Avatar rank={rank} name={rank === undefined ? name : undefined} highlighted={highlighted} />
-      <View style={{ flex: 1, minWidth: 0, gap: spacing.xs / 2 }}>
-        <Text variant="bodyStrong">{name}</Text>
-        {status ? <StatusBadge status={status} detail={statusDetail} appearance="dot" /> : null}
-        {meta ? (
-          <Text variant="caption" tone="muted">
-            {meta}
+      <Pressable
+        onPress={onPress}
+        disabled={!onPress}
+        accessibilityRole={onPress ? 'button' : undefined}
+        accessibilityLabel={accessibilityLabel}
+        style={({ pressed }) => ({
+          flex: 1,
+          minWidth: 0,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: spacing.md,
+          minHeight: layout.rowHeight + spacing.sm,
+          paddingVertical: spacing.md,
+          paddingLeft: spacing.lg,
+          paddingRight: action ? spacing.md : spacing.lg,
+          backgroundColor: pressed ? colors.surfacePressed : 'transparent',
+        })}
+      >
+        <Avatar rank={rank} name={rank === undefined ? name : undefined} highlighted={highlighted} />
+        <View style={{ flex: 1, minWidth: 0, gap: spacing.xs / 2 }}>
+          <Text variant="bodyStrong">{name}</Text>
+          {status ? <StatusBadge status={status} detail={statusDetail} appearance="dot" /> : null}
+          {meta ? (
+            <Text variant="caption" tone="muted">
+              {meta}
+            </Text>
+          ) : null}
+        </View>
+        {value ? (
+          <Text variant="amount" tone={valueTone} style={{ flexShrink: 0 }}>
+            {value}
           </Text>
         ) : null}
-      </View>
-      {value ? (
-        <Text variant="amount" tone={valueTone} style={{ flexShrink: 0 }}>
-          {value}
-        </Text>
-      ) : null}
+      </Pressable>
       {action}
-    </Pressable>
+    </View>
   );
 }

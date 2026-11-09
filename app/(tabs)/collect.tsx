@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, Pressable, StyleSheet, Alert, FlatList, TextInput } from 'react-native';
+import { View, Pressable, ScrollView, StyleSheet, Alert, TextInput } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 
 import { PinVerificationModal } from '@/components/PinVerificationModal';
@@ -9,23 +9,24 @@ import {
   BottomSheet,
   Button,
   EmptyState,
+  Card,
   Icon,
-  ListItem,
   ListSkeleton,
+  MemberRow,
   ProgressBar,
   Screen,
-  StatusBadge,
+  ScreenHeader,
   memberStatusDetail,
   Text,
 } from '@/components/ui';
 import { getClientById, getAllClients } from '@/db/clientRepository';
-import { createTransaction } from '@/db/transactionRepository';
+import { createTransaction, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus } from '@/db/memberRepository';
 
 import { useAuth } from '@/context/AuthContext';
-import { BusinessConfig, Client, Member, MemberPaymentStatus, Transaction } from '@/types';
-import { formatCurrency, formatDateShort, formatDayMonth } from '@/lib/formatters';
+import { BusinessConfig, Client, Member, Transaction } from '@/types';
+import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { extractRaw8Digits } from '@/lib/phoneUtils';
 import { triggerSuccessFeedback, triggerErrorFeedback, triggerLightImpact, triggerMediumImpact } from '@/lib/haptics';
 import { calculateContributionAmount, calculateCycleContributionLimits, calculateHandsCovered } from '@/services/financialService';
@@ -34,20 +35,23 @@ import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDateString } from '@/lib/dates';
 import { buildCycleRounds } from '@/services/scheduleService';
-import { cycleTotalHands, memberPaidHands, memberHandsCount as handsOfMember, handUnitAmount, memberOwedHands } from '@/services/memberRules';
-
-/** Members still to collect come first, completed cycles last. */
-const STATUS_ORDER: Record<MemberPaymentStatus, number> = {
-  OVERDUE: 0,
-  UNPAID_TODAY: 1,
-  UPCOMING_PAYOUT: 2,
-  PAID_TODAY: 3,
-  PAID_IN_ADVANCE: 4,
-};
+import {
+  cycleTotalHands,
+  memberPaidHands,
+  memberHandsCount as handsOfMember,
+  handUnitAmount,
+  memberOwedHands,
+  needsCollection,
+  owedAmount,
+  sortForCollection,
+  summarizeCycleDay,
+} from '@/services/memberRules';
 
 /**
- * Encaisser: search + list of members (to collect first). Tap a member → bottom sheet
- * (hands −/+, amount, Encaisser → PIN) → success state with the receipt. 3 taps from the tab.
+ * Encaisser, the most used screen. Each member to collect shows what they owe on a button:
+ * one touch → PIN → collected, with the receipt and an « Annuler » that reverses it at once.
+ * Tapping the row opens the sheet to choose another number of hands. Members up to date are
+ * grouped at the bottom, folded.
  */
 export default function CollectScreen() {
   const theme = useTheme();
@@ -71,6 +75,8 @@ export default function CollectScreen() {
   const [lastReceipt, setLastReceipt] = useState<{ handsCount: number; unitAmount: number; totalAmount: number; start: string; end: string; coverageText: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [dbTotalHands, setDbTotalHands] = useState<number>(0);
+  const [showUpToDate, setShowUpToDate] = useState(false);
+  const [isUndoPinOpen, setIsUndoPinOpen] = useState(false);
 
   const unitAmount = handUnitAmount(business, selectedClient);
   const totalAmount = calculateContributionAmount(handsCount, unitAmount);
@@ -130,6 +136,23 @@ export default function CollectScreen() {
       setIsSheetOpen(true);
     },
     [limitsFor, statusById]
+  );
+
+  /** One touch: the hands owed today, straight to the PIN (the row opens the full sheet). */
+  const handleQuickCollect = useCallback(
+    (client: Client) => {
+      triggerMediumImpact();
+      const l = limitsFor(client);
+      const member = statusById[client.id];
+      const owed = member ? memberOwedHands(member) : 0;
+      const hands = Math.min(l.remainingHands, owed > 0 ? owed : l.memberHands);
+      if (hands <= 0) return handleSelectClient(client);
+      setSelectedClient(client);
+      setLastTx(null);
+      setHandsCount(hands);
+      setIsPinModalOpen(true);
+    },
+    [limitsFor, statusById, handleSelectClient]
   );
 
   useFocusEffect(
@@ -289,10 +312,26 @@ export default function CollectScreen() {
     setLastTx(null);
   };
 
+  const handleUndoConfirmed = async () => {
+    setIsUndoPinOpen(false);
+    if (!lastTx) return;
+    try {
+      await reverseTransaction({ transactionId: lastTx.id, reason: t('Annulé juste après l\'encaissement') });
+      triggerSuccessFeedback();
+      closeSheet();
+      Alert.alert(t('Encaissement annulé'), t('Une écriture d\'annulation a été ajoutée au registre.'));
+      loadData();
+    } catch (err: any) {
+      triggerErrorFeedback();
+      Alert.alert(t('Erreur'), err?.message || t('Échec de l\'annulation.'));
+      setIsSheetOpen(true);
+    }
+  };
+
   const rows = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     const rawQ = extractRaw8Digits(q);
-    return allClients
+    const matching = allClients
       .filter(
         (c) =>
           !q ||
@@ -301,36 +340,42 @@ export default function CollectScreen() {
           (rawQ.length >= 4 && extractRaw8Digits(c.phoneNumber).includes(rawQ)) ||
           (c.payoutRank && c.payoutRank.toString() === q)
       )
-      .map((client) => ({ client, l: limitsFor(client), member: statusById[client.id], status: statusById[client.id]?.paymentStatusToday }))
-      .sort((a, b) => {
-        if (a.l.isCycleCompleted !== b.l.isCycleCompleted) return a.l.isCycleCompleted ? 1 : -1;
-        return (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9);
-      });
+      .map((client) => ({ client, l: limitsFor(client), member: statusById[client.id], paymentStatusToday: statusById[client.id]?.paymentStatusToday }));
+    // Same order as the home screen (memberRules): late first, then today's, then up to date
+    return sortForCollection(matching.map((r) => ({ ...r, lateHands: r.member?.lateHands, missingHandsToday: r.member?.missingHandsToday })));
   }, [allClients, searchQuery, limitsFor, statusById]);
 
-  const toCollect = rows.filter((r) => !r.l.isCycleCompleted && (r.status === 'OVERDUE' || r.status === 'UNPAID_TODAY')).length;
+  const dueRows = rows.filter((r) => !r.l.isCycleCompleted && needsCollection(r));
+  const upToDateRows = rows.filter((r) => r.l.isCycleCompleted || !needsCollection(r));
+  const day = summarizeCycleDay(Object.values(statusById), business?.contributionAmount ?? 0);
   const handsLabel = t('{0} main{1}', handsCount, handsCount > 1 ? 's' : '');
 
-  const renderRow = ({ item, index }: { item: (typeof rows)[number]; index: number }) => {
-    const { client, l, status, member } = item;
+  const renderRow = (item: (typeof rows)[number], index: number, count: number) => {
+    const { client, l, member } = item;
+    const owed = member ? memberOwedHands(member) : 0;
+    const due = !l.isCycleCompleted && owed > 0;
+    const amount = owedAmount(Math.min(owed, l.remainingHands), handUnitAmount(business, client));
     return (
-      <View style={[styles.rowBg, index === 0 && styles.rowFirst, index === rows.length - 1 && styles.rowLast]}>
-      <ListItem
-        divider={index < rows.length - 1}
+      <MemberRow
+        key={client.id}
+        name={client.fullName}
+        rank={client.payoutRank || 1}
+        status={l.isCycleCompleted ? 'HAND_RECEIVED' : member?.paymentStatusToday}
+        statusDetail={l.isCycleCompleted ? undefined : member ? memberStatusDetail(member) : undefined}
+        meta={t('{0}/{1} mains payées', l.paidHands, l.maxAllowedHands)}
+        divider={index < count - 1}
         onPress={() => handleSelectClient(client)}
-        accessibilityLabel={t('Encaisser {0}', client.fullName)}
-        leading={<Avatar rank={client.payoutRank || 1} />}
-        title={client.fullName}
-        subtitle={t('{0}/{1} mains{2}', l.paidHands, l.maxAllowedHands, client.paidUntilDate ? ` · au ${formatDayMonth(client.paidUntilDate)}` : '')}
-        trailing={
-          l.isCycleCompleted ? (
-            <StatusBadge status="HAND_RECEIVED" label={t('Complet')} appearance="inline" />
-          ) : status ? (
-            <StatusBadge status={status} detail={member ? memberStatusDetail(member) : undefined} appearance="inline" />
-          ) : null
+        accessibilityLabel={t('Choisir le nombre de mains pour {0}', client.fullName)}
+        action={
+          due ? (
+            <Button
+              label={formatCurrency(amount)}
+              onPress={() => handleQuickCollect(client)}
+              accessibilityLabel={t('Encaisser {0} pour {1}', formatCurrency(amount), client.fullName)}
+            />
+          ) : undefined
         }
       />
-      </View>
     );
   };
 
@@ -339,14 +384,16 @@ export default function CollectScreen() {
   return (
     <Screen scroll={false} padded={false} edges={['top', 'left', 'right']}>
       <View style={styles.top}>
-        <View style={styles.titleRow}>
-          <View style={styles.flexShrink}>
-            <Text variant="title" accessibilityRole="header">{t('Encaisser')}</Text>
-            <Text variant="caption" tone="muted" numberOfLines={1}>
-              {toCollect > 0 ? t('{0} à encaisser aujourd\'hui', toCollect) : business ? t('{0} par main', formatCurrency(business.contributionAmount)) : ' '}
-            </Text>
-          </View>
-        </View>
+        <ScreenHeader
+          title={t('Encaisser')}
+          subtitle={
+            dueRows.length > 0
+              ? t('{0} à encaisser · {1} dû', dueRows.length, formatCurrency(day.owedAmount))
+              : business
+              ? t('{0} par main', formatCurrency(business.contributionAmount))
+              : undefined
+          }
+        />
 
         <View style={styles.searchBar}>
           <Icon name="search" size={18} color={theme.colors.textMuted} />
@@ -381,31 +428,55 @@ export default function CollectScreen() {
         <View style={styles.listPad}>
           <ListSkeleton hero={false} rows={6} />
         </View>
+      ) : rows.length === 0 ? (
+        <View style={styles.listPad}>
+          {allClients.length === 0 ? (
+            <EmptyState
+              icon="users"
+              title={t('Aucun adhérent')}
+              message={t('Inscrivez les membres du sol pour commencer à encaisser.')}
+              action={{ label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }}
+            />
+          ) : (
+            <EmptyState icon="search" title={t('Aucun résultat')} message={t('Vérifiez le nom, le numéro ou le rang saisi.')} />
+          )}
+        </View>
       ) : (
-        <FlatList
-          data={rows}
-          keyExtractor={(item) => item.client.id}
-          renderItem={renderRow}
-          initialNumToRender={12}
-          maxToRenderPerBatch={10}
-          windowSize={7}
-          removeClippedSubviews
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.listContent}
-          style={styles.list}
-          ListEmptyComponent={
-            allClients.length === 0 ? (
-              <EmptyState
-                icon="users"
-                title={t('Aucun adhérent')}
-                message={t('Inscrivez les membres du sol pour commencer à encaisser.')}
-                action={{ label: t('Nouvel adhérent'), icon: 'plus', onPress: () => router.push('/client/new' as any) }}
-              />
-            ) : (
-              <EmptyState icon="search" title={t('Aucun résultat')} message={t('Vérifiez le nom, le numéro ou le rang saisi.')} />
-            )
-          }
-        />
+        <ScrollView style={styles.list} contentContainerStyle={styles.listContent} keyboardShouldPersistTaps="handled">
+          {dueRows.length > 0 ? (
+            <Card padding="none" style={styles.listCard}>
+              {dueRows.map((r, i) => renderRow(r, i, dueRows.length))}
+            </Card>
+          ) : (
+            <Card style={styles.allPaid}>
+              <Text variant="bodyStrong" tone="success">{t('Tout le monde est à jour')}</Text>
+              <Text variant="caption" tone="muted">{t('Aucune main à encaisser pour aujourd\'hui.')}</Text>
+            </Card>
+          )}
+
+          {upToDateRows.length > 0 ? (
+            <View style={styles.section}>
+              <Pressable
+                onPress={() => setShowUpToDate((v) => !v)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: showUpToDate }}
+                style={styles.groupToggle}
+              >
+                <Text variant="subheading" style={styles.flexShrink}>
+                  {t('À jour ({0})', upToDateRows.length)}
+                </Text>
+                <Text variant="label" tone="primary">
+                  {showUpToDate ? t('Masquer') : t('Afficher')}
+                </Text>
+              </Pressable>
+              {showUpToDate ? (
+                <Card padding="none" style={styles.listCard}>
+                  {upToDateRows.map((r, i) => renderRow(r, i, upToDateRows.length))}
+                </Card>
+              ) : null}
+            </View>
+          ) : null}
+        </ScrollView>
       )}
 
       {/* Collect sheet */}
@@ -420,9 +491,12 @@ export default function CollectScreen() {
         }
         footer={
           success ? (
-            <View style={styles.footerRow}>
-              <Button label={t('Partager le reçu')} icon="share" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
-              <Button label={t('Terminé')} onPress={closeSheet} style={styles.flexGrow} />
+            <View style={styles.footerColumn}>
+              <View style={styles.footerRow}>
+                <Button label={t('Partager le reçu')} icon="share" variant="secondary" onPress={handleShareReceipt} style={styles.flexGrow} />
+                <Button label={t('Terminé')} onPress={closeSheet} style={styles.flexGrow} />
+              </View>
+              <Button label={t('Annuler cet encaissement')} variant="ghost" fullWidth onPress={() => { setIsSheetOpen(false); setIsUndoPinOpen(true); }} />
             </View>
           ) : limits.isCycleCompleted ? (
             <Button size="lg" fullWidth variant="secondary" label={t('Fermer')} onPress={closeSheet} />
@@ -529,13 +603,23 @@ export default function CollectScreen() {
       </BottomSheet>
 
       <PinVerificationModal
+        visible={isUndoPinOpen}
+        title={t('Annuler cet encaissement')}
+        subtitle={lastTx ? t('{0} pour {1}', formatCurrency(lastTx.amount), selectedClient?.fullName ?? '') : undefined}
+        onSuccess={handleUndoConfirmed}
+        onCancel={() => {
+          setIsUndoPinOpen(false);
+          setIsSheetOpen(true);
+        }}
+      />
+
+      <PinVerificationModal
         visible={isPinModalOpen}
         title={t('Confirmer l\'encaissement')}
         subtitle={t('{0} · {1} pour {2}', formatCurrency(totalAmount), handsLabel, selectedClient?.fullName ?? '')}
         onSuccess={handlePinSuccessSubmit}
         onCancel={() => {
           setIsPinModalOpen(false);
-          setIsSheetOpen(true);
         }}
       />
     </Screen>
@@ -554,10 +638,8 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
       maxWidth: layout.maxContentWidth,
       alignSelf: 'center',
       paddingHorizontal: layout.gutter,
-      paddingTop: spacing.lg,
-      gap: spacing.md,
+      gap: spacing.sm,
     },
-    titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     searchBar: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -578,13 +660,16 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
       maxWidth: layout.maxContentWidth,
       alignSelf: 'center',
       paddingHorizontal: layout.gutter,
-      paddingTop: spacing.lg,
+      paddingTop: spacing.md,
       paddingBottom: spacing.xxl,
+      gap: spacing.xl,
     },
 
-    rowBg: { backgroundColor: colors.surface, overflow: 'hidden' },
-    rowFirst: { borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md },
-    rowLast: { borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md },
+    listCard: { overflow: 'hidden' },
+    allPaid: { gap: spacing.xs },
+    section: { gap: spacing.md },
+    groupToggle: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: layout.touchTarget },
+    footerColumn: { gap: spacing.sm },
 
     amountBlock: { gap: spacing.xs, alignItems: 'center' },
     stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xl },
