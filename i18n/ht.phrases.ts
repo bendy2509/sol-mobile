@@ -887,4 +887,8 @@ export const htPhrases: Record<string, string> = {
   'Opération annulée': 'Operasyon anile',
   'Code QR (ex : SOL-BS01)': 'Kòd QR (egz : SOL-BS01)',
   'Aucun carnet actif : configurez le carnet avant d’enregistrer une opération.': 'Pa gen kanè aktif : konfigire kanè a anvan w anrejistre yon operasyon.',
+  "{0} remise(s) en attente sur les tours passés": "{0} remèt ki an reta sou tou ki pase yo",
+  "Encaissé aujourd'hui": "Ankese jodi a",
+  "{0} sur le cycle": "{0} sou sik la",
+  "{0} dû": "{0} pou peye",
 };

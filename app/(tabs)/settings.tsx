@@ -321,7 +321,7 @@ export default function SettingsScreen() {
         <SettingsRow
           label={t('settings.carnet.currency')}
           icon="cash"
-          value={formatCurrency(1250)}
+          value={getReceiptPreferences().currencyLabel}
           onPress={() => openSheet('receipt')}
         />
         <SettingsRow

@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { buildCycleRounds } from '@/services/scheduleService';
+import { buildCycleRounds, payoutsBehind, roundOnDate } from '@/services/scheduleService';
+import { localDateString } from '@/lib/dates';
 import { View, TextInput, Pressable, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
@@ -27,7 +28,7 @@ import { formatCurrency, formatDateShort } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
-import { currentRound, cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPayoutRanks, memberReceivedHands, nextBeneficiary, handUnitAmount } from '@/services/memberRules';
+import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPayoutRanks, memberReceivedHands, nextBeneficiary, handUnitAmount } from '@/services/memberRules';
 
 /** Segmented track (one segment per hand) is readable up to this many hands. */
 const MAX_SEGMENTS = 12;
@@ -134,9 +135,12 @@ export default function SolMatrixScreen() {
   const totalHandsTouched = cycleHandsPaidOut(members);
   // The next hand to pay out: lowest pending rank (same rule as the dashboard)
   const nextTurn = nextBeneficiary(members);
-  const roundNow = currentRound(members);
   // Round days of the cycle: rank r receives on the day of round r
   const cycleRounds = business ? buildCycleRounds(business.startDate, business.frequency, totalHandsCount) : [];
+  // The round follows the calendar, not the payouts already made
+  const todayStr = localDateString();
+  const roundNow = roundOnDate(cycleRounds, todayStr);
+  const pendingPayouts = payoutsBehind(cycleRounds, totalHandsTouched, todayStr);
 
   const progressRatio = totalHandsTouched / (totalHandsCount || 1);
   const isCycleDone = totalHandsTouched >= totalHandsCount && totalHandsCount > 0;
@@ -199,6 +203,11 @@ export default function SolMatrixScreen() {
             <Text variant="caption" tone="onHeroMuted">{t('Tour {0} sur {1}', roundNow, totalHandsCount)}
             </Text>
           </View>
+          {pendingPayouts > 0 && (
+            <Text variant="caption" tone="onHeroMuted">
+              {t('{0} remise(s) en attente sur les tours passés', pendingPayouts)}
+            </Text>
+          )}
           {cycleRounds.length > 0 && (
             <Text variant="caption" tone="onHeroMuted">
               {t('Du {0} au {1}', formatDateShort(cycleRounds[0]), formatDateShort(cycleRounds[cycleRounds.length - 1]))}

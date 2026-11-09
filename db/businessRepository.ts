@@ -6,8 +6,8 @@ import { calculateDaysRemaining } from '@/lib/dateCalculations';
 import { recordAuditLog } from '@/services/auditService';
 import { calculateMemberDuePerRound } from '@/services/financialService';
 import { localDateString, localDayOf, localDayStartIso } from '@/lib/dates';
-import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates, paidUntilFromHands } from '@/services/scheduleService';
-import { cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPaidHands, memberPayoutRanks, memberReceivedHands, nextBeneficiary, parsePayoutRanks, handUnitAmount } from '@/services/memberRules';
+import { buildCycleRounds, buildPayoutCalendar, computeMemberSchedule, getCycleDates, isBeforeCycle, paidUntilFromHands, payoutsBehind, roundOnDate } from '@/services/scheduleService';
+import { cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, MemberDueShape, memberPaidHands, memberPayoutRanks, memberReceivedHands, nextBeneficiary, parsePayoutRanks, handUnitAmount, summarizeCycleDay } from '@/services/memberRules';
 
 export async function getActiveBusinessConfig(collectorIdParam?: string): Promise<BusinessConfig | null> {
   const db = await getDatabase();
@@ -327,6 +327,9 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       daysRemaining: 0,
       overdueMembersCount: 0,
       overdueHandsCount: 0,
+      overdueAmount: 0,
+      dueTodayCount: 0,
+      amountCollectedCycle: 0,
       paidTodayCount: 0,
       unpaidTodayCount: 0,
       totalMembersCount: 0,
@@ -343,6 +346,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       contributionAmount: 0,
       currentRound: 1,
       totalRounds: 1,
+      cycleNotStarted: false,
+      payoutsBehind: 0,
     };
   }
 
@@ -406,11 +411,10 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     return rows.map((row) => applyLedgerTotals(row, ledger));
   });
 
-  let paidTodayCount = 0;
-  let overdueMembersCount = 0;
-  let overdueHandsCount = 0;
+  const dayStatuses: MemberDueShape[] = [];
   let handsTouchedCount = 0;
   let handsCollectedTotal = 0;
+  let amountCollectedCycle = 0;
   let currentPayoutBeneficiary: Member | null = null;
   const nextTurn = nextBeneficiary(members);
 
@@ -420,6 +424,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     handsTouchedCount += receivedCount;
 
     handsCollectedTotal += Number(m.paid_hands_count || 0);
+    amountCollectedCycle += Number(m.total_paid_amount || 0);
   }
 
   // Count total non-reversed payout transactions for the current cycle to guarantee 100% reconciliation
@@ -451,14 +456,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
       todayStr,
     }).status;
     const status = calc.status;
-    const isCovered = status === 'PAID_TODAY' || status === 'PAID_IN_ADVANCE';
-
-    if (isCovered) {
-      paidTodayCount++;
-    } else if (status === 'OVERDUE') {
-      overdueMembersCount++;
-      overdueHandsCount += calc.installmentsOverdue;
-    }
+    dayStatuses.push({ paymentStatusToday: status, lateHands: calc.lateHands, missingHandsToday: calc.missingHandsToday });
 
     // Next beneficiary: the lowest payout rank not paid out yet (memberRules.nextBeneficiary)
     if (m.id === nextTurn?.member.id) {
@@ -509,11 +507,14 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     : (totalSlots > 0 ? totalSlots : 0);
 
   const effectiveChildrenCount = totalCycleHands;
-  const unpaidTodayCount = Math.max(0, totalMembersCount - paidTodayCount);
+  // The day's counts, the same function as the collect list and the cash closure
+  const day = summarizeCycleDay(dayStatuses, unitAmount);
+  const unpaidTodayCount = day.late + day.dueToday;
   const handsRemaining = Math.max(0, effectiveChildrenCount - handsCollectedTotal);
   const totalPotAmount = handPotAmount(unitAmount, totalCycleHands);
 
   // Dynamic End Date based on: startDate + (effectiveChildrenCount * frequencyInterval)
+  const rounds = buildCycleRounds(business.startDate, business.frequency, effectiveChildrenCount);
   const dynamicEndDate = getCycleDates(business.startDate, business.frequency, effectiveChildrenCount).endDate;
   const daysRemaining = calculateDaysRemaining(dynamicEndDate);
 
@@ -525,10 +526,13 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     handsCollectedTotal,
     totalHandsExpected: effectiveChildrenCount,
     daysRemaining,
-    overdueMembersCount,
-    overdueHandsCount,
-    paidTodayCount,
+    overdueMembersCount: day.late,
+    overdueHandsCount: day.owedHands,
+    overdueAmount: day.owedAmount,
+    dueTodayCount: day.dueToday,
+    paidTodayCount: day.upToDate,
     unpaidTodayCount,
+    amountCollectedCycle,
     totalMembersCount,
     handsTouchedCount: effectiveHandsTouched,
     currentPayoutBeneficiary,
@@ -542,8 +546,11 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     handsRemaining,
     totalCashToday,
     contributionAmount: unitAmount,
-    currentRound: Math.min(effectiveChildrenCount, effectiveHandsTouched + 1),
+    // The round follows the calendar; payouts not made on a past round are flagged apart
+    currentRound: roundOnDate(rounds, todayStr),
     totalRounds: effectiveChildrenCount,
+    cycleNotStarted: isBeforeCycle(rounds, todayStr),
+    payoutsBehind: payoutsBehind(rounds, effectiveHandsTouched, todayStr),
   };
 }
 

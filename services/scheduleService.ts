@@ -131,6 +131,27 @@ export function buildCycleRounds(startDate: string, frequency: Freq, count: numb
   return days;
 }
 
+/**
+ * Round of the cycle on a day: the last round whose day has come (round 1 before the start,
+ * the last round after the end). The round moves with the calendar, not with the payouts.
+ */
+export function roundOnDate(rounds: string[], todayStr: string): number {
+  if (!rounds.length) return 1;
+  const reached = rounds.filter((day) => day <= todayStr).length;
+  return Math.max(1, Math.min(rounds.length, reached));
+}
+
+/** The cycle has not started yet on that day (its first round is still ahead). */
+export function isBeforeCycle(rounds: string[], todayStr: string): boolean {
+  return rounds.length > 0 && todayStr < rounds[0];
+}
+
+/** Payouts late on the calendar: past rounds (before today) whose pot was not handed out yet. */
+export function payoutsBehind(rounds: string[], handsPaidOut: number, todayStr: string): number {
+  const pastRounds = rounds.filter((day) => day < todayStr).length;
+  return Math.max(0, pastRounds - Math.max(0, Number(handsPaidOut) || 0));
+}
+
 /** Start and end of a cycle: end = day of the last round (one round per hand). */
 export function getCycleDates(startDate: string, frequency: Freq, totalHands: number): { startDate: string; endDate: string } {
   const rounds = buildCycleRounds(startDate, frequency, Math.max(1, Number(totalHands) || 1));

@@ -30,8 +30,8 @@ export const STATUS_CONFIG: Record<StatusKind, StatusConfig> = {
 };
 
 /**
- * Detail after a member's status. Several hands: it counts hands (1 hand paid out of 2 leaves
- * « À encaisser · partiel, 1 main »); one hand: late rounds; in advance: rounds ahead.
+ * Detail after a member's status, always in hands: late hands plus today's (« En retard · 3 mains »),
+ * today's missing hands (« À encaisser · partiel, 1 main »); in advance: rounds ahead.
  */
 export function memberStatusDetail(
   member: Pick<Member, 'paymentStatusToday' | 'handsCount' | 'handsCoveredAhead' | 'overdueRoundsCount' | 'missingHandsToday' | 'lateHands' | 'isPartialToday'>
@@ -44,8 +44,8 @@ export function memberStatusDetail(
     case 'PAID_IN_ADVANCE':
       return `+${member.handsCoveredAhead || 1}`;
     case 'OVERDUE':
-      if (isMultiHands && lateHands > 0) return hands(lateHands);
-      return member.overdueRoundsCount > 0 ? t('{0} tour{1}', member.overdueRoundsCount, member.overdueRoundsCount > 1 ? 's' : '') : undefined;
+      // One unit everywhere: the hands owed (late plus today's), never rounds
+      return lateHands + missingToday > 0 ? hands(lateHands + missingToday) : undefined;
     case 'UNPAID_TODAY':
       if (member.isPartialToday) return t('partiel, {0} main{1}', missingToday, missingToday > 1 ? 's' : '');
       return isMultiHands && missingToday > 0 ? hands(missingToday) : undefined;
@@ -56,7 +56,7 @@ export function memberStatusDetail(
 
 export interface StatusBadgeProps {
   status: StatusKind;
-  /** Extra detail appended after the label, e.g. "1 tour" → "En retard · 1 tour". */
+  /** Extra detail appended after the label, e.g. "2 mains" → "En retard · 2 mains". */
   detail?: string;
   /** Overrides the default label (keep the vocabulary consistent!). */
   label?: string;

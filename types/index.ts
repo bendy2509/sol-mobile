@@ -276,7 +276,10 @@ export interface DashboardMetrics {
   totalHandsExpected: number; // Total attendu sur le cycle (totalSlots)
   daysRemaining: number; // Nombre de jours restants avant la clôture
   overdueMembersCount: number; // Compteur global des enfants en retard
-  overdueHandsCount: number; // Nombre total de cotisations en retard
+  overdueHandsCount: number; // Mains dues : en retard + celles du jour non payées
+  overdueAmount: number; // Montant dû (HTG) pour ces mains
+  dueTodayCount: number; // Adhérents à encaisser aujourd'hui, sans retard
+  amountCollectedCycle: number; // Encaissé depuis le début du cycle
   paidTodayCount: number; // Nombre d'enfants ayant payé aujourd'hui / couverts
   unpaidTodayCount: number; // Nombre d'enfants non payés aujourd'hui
   totalMembersCount: number; // Nombre total d'adhérents inscrits
@@ -293,8 +296,10 @@ export interface DashboardMetrics {
   handsRemaining: number;
   totalCashToday: number;
   contributionAmount: number;
-  currentRound: number;
+  currentRound: number; // Tour du calendrier (date du jour)
   totalRounds: number;
+  cycleNotStarted: boolean; // Le premier tour n'est pas encore arrivé
+  payoutsBehind: number; // Remises des tours passés pas encore faites
 }
 
 export type DashboardStats = {

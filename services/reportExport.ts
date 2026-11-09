@@ -6,7 +6,7 @@ import { generateManagerBusinessReportPdf, sharePdfFile } from '@/services/pdfSe
 import { isTransactionFromClosedCycle } from '@/services/financialService';
 import { buildCycleRounds, buildPayoutCalendar } from '@/services/scheduleService';
 import { localDayOf } from '@/lib/dates';
-import { parsePayoutRanks } from '@/services/memberRules';
+import { memberOwedHands, parsePayoutRanks } from '@/services/memberRules';
 
 /**
  * Builds and shares the carnet's report (PDF) for the current cycle. Shared by the Accueil
@@ -35,8 +35,8 @@ export async function exportBusinessReport(): Promise<void> {
 
   const totalCashCollected = currentMembers.reduce((sum, m) => sum + (m.totalPaidInCycle || 0), 0);
   const totalDistributed = payouts.reduce((sum, t) => sum + t.amount, 0);
-  const handsDueToDate = currentMembers.reduce((sum, m) => sum + (m.paidHandsCount || 0) + (m.lateHands || 0) + (m.missingHandsToday || 0), 0);
-  const remainingHands = currentMembers.reduce((sum, m) => sum + (m.lateHands || 0) + (m.missingHandsToday || 0), 0);
+  const handsDueToDate = currentMembers.reduce((sum, m) => sum + (m.paidHandsCount || 0) + memberOwedHands(m), 0);
+  const remainingHands = currentMembers.reduce((sum, m) => sum + memberOwedHands(m), 0);
   // Recovery up to today: hands paid over hands due so far (advance payments count up to 100 %)
   const completionRate = handsDueToDate > 0 ? Math.min(100, (currentMembers.reduce((s, m) => s + (m.paidHandsCount || 0), 0) / handsDueToDate) * 100) : 100;
 

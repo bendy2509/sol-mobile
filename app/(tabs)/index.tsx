@@ -37,6 +37,9 @@ export default function DashboardScreen() {
     daysRemaining: 0,
     overdueMembersCount: 0,
     overdueHandsCount: 0,
+    overdueAmount: 0,
+    dueTodayCount: 0,
+    amountCollectedCycle: 0,
     paidTodayCount: 0,
     unpaidTodayCount: 0,
     totalMembersCount: 0,
@@ -52,6 +55,8 @@ export default function DashboardScreen() {
     contributionAmount: 250,
     currentRound: 1,
     totalRounds: 10,
+    cycleNotStarted: false,
+    payoutsBehind: 0,
   });
 
   const [members, setMembers] = useState<Member[]>([]);

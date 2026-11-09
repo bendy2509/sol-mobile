@@ -34,7 +34,7 @@ import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { localDateString } from '@/lib/dates';
 import { buildCycleRounds } from '@/services/scheduleService';
-import { cycleTotalHands, memberPaidHands, memberHandsCount as handsOfMember, handUnitAmount } from '@/services/memberRules';
+import { cycleTotalHands, memberPaidHands, memberHandsCount as handsOfMember, handUnitAmount, memberOwedHands } from '@/services/memberRules';
 
 /** Members still to collect come first, completed cycles last. */
 const STATUS_ORDER: Record<MemberPaymentStatus, number> = {
@@ -124,7 +124,7 @@ export default function CollectScreen() {
       // Preselect what is owed up to today (late hands + today's missing hands, e.g. the second
       // hand of a partial round); a member up to date gets one full round
       const member = statusById[client.id];
-      const owed = (member?.lateHands || 0) + (member?.missingHandsToday || 0);
+      const owed = member ? memberOwedHands(member) : 0;
       const preset = owed > 0 ? owed : l.memberHands;
       setHandsCount(l.remainingHands > 0 ? Math.min(l.remainingHands, preset) : 0);
       setIsSheetOpen(true);

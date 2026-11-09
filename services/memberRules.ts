@@ -79,11 +79,6 @@ export function cycleHandsPaidOut(members: MemberHandsShape[]): number {
   return (members || []).reduce((sum, m) => sum + memberReceivedHands(m), 0);
 }
 
-/** The round being drawn: the first not paid out yet (capped at the last round). */
-export function currentRound(members: MemberHandsShape[]): number {
-  const total = cycleTotalHands(members);
-  return Math.max(1, Math.min(total, cycleHandsPaidOut(members) + 1));
-}
 
 /**
  * Next beneficiary: the member holding the lowest payout rank among the hands not paid out
@@ -108,4 +103,51 @@ export function handUnitAmount(
   member?: { dailyAmount?: number | null; daily_amount?: number | null } | null
 ): number {
   return Math.max(0, Number(business?.contributionAmount || member?.dailyAmount || member?.daily_amount || 0) || 0);
+}
+
+/** What a member's status of the day carries about the hands owed. */
+export interface MemberDueShape {
+  paymentStatusToday?: string;
+  lateHands?: number | null;
+  missingHandsToday?: number | null;
+}
+
+/** Hands a member owes right now: late hands of past rounds plus today's missing hands. */
+export function memberOwedHands(m: MemberDueShape): number {
+  return Math.max(0, Number(m.lateHands || 0)) + Math.max(0, Number(m.missingHandsToday || 0));
+}
+
+/** Amount owed for a number of hands (0 hands = 0, unlike a collection that is at least 1 hand). */
+export function owedAmount(hands: number, unitAmount: number): number {
+  return Math.max(0, Number(hands) || 0) * Math.max(0, Number(unitAmount) || 0);
+}
+
+/** The day's summary of a cycle: one count per status, and the hands and amount owed. */
+export interface CycleDaySummary {
+  totalMembers: number;
+  /** Paid for today (or ahead). */
+  upToDate: number;
+  /** Today's hands not all paid, nothing late. */
+  dueToday: number;
+  /** Hands owed on a past round. */
+  late: number;
+  owedHands: number;
+  owedAmount: number;
+}
+
+/**
+ * Counts of the day for every screen (home, collect, cash closure): a member is late, due
+ * today or up to date according to its status, and owes its late plus today's missing hands.
+ */
+export function summarizeCycleDay(members: MemberDueShape[], unitAmount: number): CycleDaySummary {
+  const summary: CycleDaySummary = { totalMembers: 0, upToDate: 0, dueToday: 0, late: 0, owedHands: 0, owedAmount: 0 };
+  for (const m of members || []) {
+    summary.totalMembers++;
+    if (m.paymentStatusToday === 'OVERDUE') summary.late++;
+    else if (m.paymentStatusToday === 'UNPAID_TODAY') summary.dueToday++;
+    else summary.upToDate++;
+    summary.owedHands += memberOwedHands(m);
+  }
+  summary.owedAmount = owedAmount(summary.owedHands, unitAmount);
+  return summary;
 }

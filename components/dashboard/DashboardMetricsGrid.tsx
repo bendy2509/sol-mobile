@@ -17,15 +17,16 @@ export const DashboardMetricsGrid: React.FC<DashboardMetricsGridProps> = ({ metr
     <StatStrip
       cells={[
         {
-          label: t('Encaissé'),
+          label: t("Encaissé aujourd'hui"),
           value: formatCurrency(metrics.amountCollectedToday),
-          hint: t('{0} main{1}', metrics.handsCollectedToday, metrics.handsCollectedToday > 1 ? 's' : ''),
+          hint: t('{0} sur le cycle', formatCurrency(metrics.amountCollectedCycle)),
         },
-        { label: t('À jour'), value: `${metrics.paidTodayCount} / ${membersCount}`, hint: t('aujourd\'hui') },
+        { label: t('À jour'), value: `${metrics.paidTodayCount} / ${membersCount}`, hint: t("aujourd'hui") },
         {
           label: t('En retard'),
           value: String(metrics.overdueMembersCount),
-          hint: isLate ? t('{0} main(s)', metrics.overdueHandsCount) : t('Aucun'),
+          // Owed: late hands plus today's missing ones, in HTG (the same count as the collect list)
+          hint: metrics.overdueAmount > 0 ? t('{0} dû', formatCurrency(metrics.overdueAmount)) : t('Aucun'),
           tone: isLate ? 'danger' : 'default',
         },
       ]}
