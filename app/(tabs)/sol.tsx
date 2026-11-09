@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { buildCycleRounds, payoutsBehind, roundOnDate } from '@/services/scheduleService';
 import { localDateString } from '@/lib/dates';
-import { View, TextInput, Pressable, StyleSheet, Alert, RefreshControl } from 'react-native';
+import { View, TextInput, StyleSheet, Alert, RefreshControl } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { PinVerificationModal } from '@/components/PinVerificationModal';
@@ -14,18 +14,18 @@ import {
   Card,
   EmptyState,
   Icon,
-  ListItem,
+  MemberRow,
   ProgressBar,
   Screen,
+  ScreenHeader,
   SectionHeader,
-  StatusBadge,
   Text,
 } from '@/components/ui';
 import { getActiveBusinessConfig, getCycleHandsTotal } from '@/db/businessRepository';
 import { getMembersWithPaymentStatus, payoutMemberHand } from '@/db/memberRepository';
 import { BusinessConfig, Member } from '@/types';
-import { formatCurrency, formatDateShort } from '@/lib/formatters';
-import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
+import { formatCurrency, formatDateShort, formatDaysCompact } from '@/lib/formatters';
+import { triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
 import { cycleHandsPaidOut, cycleTotalHands, handPotAmount, hasReceivedAllHands, memberHandsCount, memberPayoutRanks, memberReceivedHands, nextBeneficiary, handUnitAmount } from '@/services/memberRules';
@@ -149,21 +149,20 @@ export default function SolMatrixScreen() {
     <Screen
       edges={['top', 'left', 'right']}
       header={
-        <View style={styles.topBar}>
-          <View style={styles.flexShrink}>
-            <Text variant="title" accessibilityRole="header">{t('Sol')}</Text>
-            <Text variant="caption" tone="muted" numberOfLines={1}>
-              {business?.name ? t('{0} · ordre de passage', business.name) : t('Ordre de passage')}
-            </Text>
-          </View>
-          <ActionMenu
-            title={t('Cycle')}
-            items={[
-              { label: t('Gestion du cycle'), description: t('Clôturer, renouveler, bilans PDF'), icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
-              { label: t('Clôtures de caisse'), icon: 'calendar', onPress: () => router.push('/closure' as any) },
-            ]}
-          />
-        </View>
+        <ScreenHeader
+          title={t('Sol')}
+          subtitle={business?.name ? t('{0} · ordre de passage', business.name) : t('Ordre de passage')}
+          right={
+            <ActionMenu
+              title={t('Cycle')}
+              items={[
+                { label: t('Paramètres du sol'), icon: 'settings', onPress: () => router.push('/setup-business' as any) },
+                { label: t('Clôtures de caisse'), icon: 'calendar', onPress: () => router.push('/closure' as any) },
+                { label: t('Cycles clôturés'), description: t('Clôturer, renouveler, bilans PDF'), icon: 'cycle', onPress: () => router.push('/cycle-management' as any) },
+              ]}
+            />
+          }
+        />
       }
       refreshControl={
         <RefreshControl
@@ -177,6 +176,10 @@ export default function SolMatrixScreen() {
       {/* Cycle hero */}
       <Card tone="hero" padding="lg" style={styles.heroCard}>
         <View style={styles.heroPot}>
+          <Text variant="label" tone="onHero">
+            {t('Tour {0} sur {1}', roundNow, totalHandsCount)}
+            {nextTurn ? ` · ${t('{0} reçoit', nextTurn.member.fullName)}` : ''}
+          </Text>
           <AmountText amount={potValue} size="hero" tone="onHero" />
           <Text variant="body" tone="onHeroMuted">{t('Cagnotte du tour · {0} mains × {1}', totalHandsCount, formatCurrency(handUnitAmount(business)))}
           </Text>
@@ -199,12 +202,11 @@ export default function SolMatrixScreen() {
           )}
           <View style={styles.heroProgressRow}>
             <Text variant="label" tone="onHero">
-              {totalHandsTouched} / {totalHandsCount}{' '}{t('mains remises')}</Text>
-            <Text variant="caption" tone="onHeroMuted">{t('Tour {0} sur {1}', roundNow, totalHandsCount)}
+              {t('{0} / {1} mains remises', totalHandsTouched, totalHandsCount)}
             </Text>
           </View>
           {pendingPayouts > 0 && (
-            <Text variant="caption" tone="onHeroMuted">
+            <Text variant="label" tone="warning">
               {t('{0} remise(s) en attente sur les tours passés', pendingPayouts)}
             </Text>
           )}
@@ -240,68 +242,36 @@ export default function SolMatrixScreen() {
             const handsOfMember = memberHandsCount(member);
             const receivedCount = memberReceivedHands(member);
             const hasReceived = hasReceivedAllHands(member);
-            const ranksList = memberPayoutRanks(member);
             const isNextTurn = nextTurn?.member.id === member.id;
-            const payoutDays = ranksList.map((r) => cycleRounds[r - 1]).filter(Boolean);
-            const payoutDaysText = payoutDays.length ? t('Reçoit le {0}', payoutDays.map((d) => formatDateShort(d)).join(', ')) : null;
             const isMulti = handsOfMember > 1;
-            const isLast = index === members.length - 1;
+            // Payout days of the member's ranks, written compactly (« 07, 08 nov. »)
+            const payoutDays = memberPayoutRanks(member).map((r) => cycleRounds[r - 1]).filter(Boolean);
             const payoutLabel = isMulti ? t('Remettre la main {0}/{1}', receivedCount + 1, handsOfMember) : t('Remettre la main');
+            const meta = [
+              isMulti ? t('{0}/{1} mains reçues', receivedCount, handsOfMember) : '',
+              !hasReceived && payoutDays.length ? t('Reçoit le {0}', formatDaysCompact(payoutDays)) : '',
+            ]
+              .filter(Boolean)
+              .join(' · ');
 
             return (
-              <View key={`${member.id}-${index}`} style={isNextTurn && styles.rowCurrent}>
-                <ListItem
-                  divider={false}
-                  leading={<Avatar rank={member.rankOrder || member.payoutRank || index + 1} highlighted={isNextTurn} />}
-                  title={member.fullName}
-                  meta={
-                    <View style={styles.meta}>
-                      {isNextTurn && <StatusBadge status="UPCOMING_PAYOUT" appearance="inline" />}
-                      {hasReceived && (
-                        <StatusBadge
-                          status="HAND_RECEIVED"
-                          appearance="inline"
-                          label={isMulti ? t('{0}/{1} mains reçues', memberHandsCount, handsOfMember) : t('Main reçue')}
-                          detail={!isMulti && member.handReceivedDate ? formatDateShort(member.handReceivedDate) : undefined}
-                        />
-                      )}
-                      {isMulti && !hasReceived && (
-                        <>
-                          <Text variant="caption" tone="muted">
-                            {receivedCount}/{handsOfMember}{' '}{t('mains reçues · rangs')}{' '}{member.payoutRanks || member.payoutRank}
-                          </Text>
-                        </>
-                      )}
-                      {!isNextTurn && !hasReceived && !isMulti && (
-                        <Text variant="caption" tone="muted">{t('En attente de son tour')}</Text>
-                      )}
-                      {!hasReceived && payoutDaysText && (
-                        <Text variant="caption" tone="muted">{payoutDaysText}</Text>
-                      )}
-                    </View>
-                  }
-                  trailing={
-                    isNextTurn ? (
-                      <Button
-                        label={t('Remettre')}
-                        onPress={() => handleInitiatePayout(member)}
-                        accessibilityLabel={`${payoutLabel} à ${member.fullName}`}
-                      />
-                    ) : !hasReceived ? (
-                      <Pressable
-                        onPress={() => handleInitiatePayout(member)}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('{0} à {1} (hors tour)', payoutLabel, member.fullName)}
-                        hitSlop={4}
-                        style={({ pressed }) => [styles.roundAction, pressed && styles.pressed]}
-                      >
-                        <Icon name="payout" size={20} color={theme.colors.textMuted} />
-                      </Pressable>
-                    ) : undefined
-                  }
-                />
-                {!isLast && <View style={styles.rule} />}
-              </View>
+              <MemberRow
+                key={`${member.id}-${index}`}
+                name={member.fullName}
+                rank={member.rankOrder || member.payoutRank || index + 1}
+                highlighted={isNextTurn}
+                status={isNextTurn ? 'UPCOMING_PAYOUT' : hasReceived ? 'HAND_RECEIVED' : undefined}
+                statusDetail={hasReceived && !isMulti && member.handReceivedDate ? formatDateShort(member.handReceivedDate) : undefined}
+                meta={meta || (hasReceived ? undefined : t('En attente de son tour'))}
+                divider={index < members.length - 1}
+                onPress={() => router.push(`/client/${member.id}` as any)}
+                accessibilityLabel={t('Ouvrir la fiche de {0}', member.fullName)}
+                action={
+                  isNextTurn ? (
+                    <Button label={t('Remettre')} onPress={() => handleInitiatePayout(member)} accessibilityLabel={`${payoutLabel} à ${member.fullName}`} />
+                  ) : undefined
+                }
+              />
             );
           })}
         </Card>
@@ -351,16 +321,6 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
   StyleSheet.create({
     flexShrink: { flex: 1, minWidth: 0 },
     pressed: { backgroundColor: colors.surfacePressed },
-    topBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      paddingLeft: layout.gutter,
-      paddingRight: spacing.sm,
-      paddingTop: spacing.lg,
-      paddingBottom: spacing.xs,
-    },
-
     heroCard: { gap: spacing.lg },
     heroPot: { gap: spacing.xs },
     heroProgress: { gap: spacing.sm },
@@ -372,17 +332,6 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
 
     ledger: { overflow: 'hidden' },
-    rowCurrent: { backgroundColor: colors.primarySoft },
-    rule: { height: 1, marginLeft: spacing.md + spacing.xxxl - spacing.sm + spacing.md, backgroundColor: colors.divider },
-    meta: { gap: spacing.xs },
-    roundAction: {
-      width: layout.touchTarget,
-      height: layout.touchTarget,
-      borderRadius: radius.pill,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceAlt,
-    },
 
     inputGroup: { gap: spacing.sm },
     textArea: {

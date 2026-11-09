@@ -909,4 +909,6 @@ export const htPhrases: Record<string, string> = {
   "Masquer": "Kache",
   "Afficher": "Montre",
   "Annuler cet encaissement": "Anile ankèsman sa a",
+  "Paramètres du sol": "Paramèt sòl la",
+  "{0} reçoit": "{0} resevwa",
 };

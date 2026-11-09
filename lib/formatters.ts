@@ -86,6 +86,26 @@ export function formatDayMonth(isoString: string): string {
   }
 }
 
+/**
+ * Several days in a short line, the month written once per month: « 07, 08 nov. » or
+ * « 30 nov. · 02 déc. » (the payout days of a member holding several hands).
+ */
+export function formatDaysCompact(days: string[]): string {
+  const groups: string[][] = [];
+  for (const day of [...days].filter(Boolean).sort()) {
+    const last = groups[groups.length - 1];
+    if (last && last[0].slice(0, 7) === day.slice(0, 7)) last.push(day);
+    else groups.push([day]);
+  }
+  return groups
+    .map((group) => {
+      const full = formatDayMonth(group[group.length - 1]);
+      const month = full.replace(/^\s*\d+\s*/, '');
+      return `${group.map((d) => d.slice(8, 10)).join(', ')} ${month}`.trim();
+    })
+    .join(' · ');
+}
+
 export function formatPhoneNumber(phone: string): string {
   if (!phone) return '';
   return phone.trim();
