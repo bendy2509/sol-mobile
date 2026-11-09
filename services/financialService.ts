@@ -211,3 +211,41 @@ export function reconstructClientFinancialTimeline(params: {
     }),
   };
 }
+
+/** Totals of a list of operations, as the history shows them for its active filter. */
+export interface OperationsSummary {
+  /** Contributions still standing (reversed ones excluded). */
+  inAmount: number;
+  inCount: number;
+  /** Payouts still standing. */
+  outAmount: number;
+  outCount: number;
+  /** Operations cancelled (reversed originals). */
+  reversedCount: number;
+}
+
+/**
+ * Sums a list of operations: standing contributions in, standing payouts out, and how many were
+ * cancelled. Reversal entries only mark a cancellation; their amount is never added.
+ */
+export function summarizeOperations(
+  transactions: Pick<Transaction, 'type' | 'amount' | 'isReversed'>[]
+): OperationsSummary {
+  const s: OperationsSummary = { inAmount: 0, inCount: 0, outAmount: 0, outCount: 0, reversedCount: 0 };
+  for (const tx of transactions || []) {
+    if (tx.type === 'REVERSAL') continue;
+    if (tx.isReversed) {
+      s.reversedCount++;
+      continue;
+    }
+    const amount = Math.max(0, Number(tx.amount) || 0);
+    if (tx.type === 'SOL_CONTRIBUTION' || tx.type === 'CONTRIBUTION' || tx.type === 'SABOTAY_DEPOSIT') {
+      s.inAmount += amount;
+      s.inCount++;
+    } else if (tx.type === 'SOL_PAYOUT' || tx.type === 'HAND_PAYOUT' || tx.type === 'WITHDRAWAL') {
+      s.outAmount += amount;
+      s.outCount++;
+    }
+  }
+  return s;
+}

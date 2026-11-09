@@ -87,6 +87,18 @@ export function formatDayMonth(isoString: string): string {
 }
 
 /**
+ * Heading of a day in a list: « Aujourd'hui », « Hier », else the full date. `day` and `today`
+ * are local days (YYYY-MM-DD).
+ */
+export function formatRelativeDay(day: string, today: string, labels: { today: string; yesterday: string }): string {
+  if (day === today) return labels.today;
+  const [y, m, d] = today.split('-').map(Number);
+  const yesterday = new Date(y, m - 1, d - 1, 12);
+  const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+  return day === yesterdayStr ? labels.yesterday : formatDateShort(day);
+}
+
+/**
  * Several days in a short line, the month written once per month: « 07, 08 nov. » or
  * « 30 nov. · 02 déc. » (the payout days of a member holding several hands).
  */

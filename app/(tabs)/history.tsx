@@ -1,10 +1,11 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, TextInput, FlatList, Pressable, StyleSheet, RefreshControl, Alert, Share, Linking } from 'react-native';
+import { View, TextInput, SectionList, Pressable, StyleSheet, RefreshControl, Alert, Linking } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { PinVerificationModal } from '@/components/PinVerificationModal';
 import { ClosedCycleNotice } from '@/components/ClosedCycleLockNotice';
-import { AmountText, BottomSheet, Button, Card, EmptyState, Icon, ListItem, Screen, SegmentedControl, Text, TextField, UiIconName } from '@/components/ui';
+import { AmountText, BottomSheet, Button, Card, EmptyState, Icon, ListItem, Screen, ScreenHeader, SegmentedControl, StatStrip, Text, TextField, UiIconName } from '@/components/ui';
+import type { StatCell } from '@/components/ui';
 import { getAllTransactions, getContributionCoverage, reverseTransaction } from '@/db/transactionRepository';
 import { getActiveCollector } from '@/db/sqlite';
 import { getActiveBusinessConfig, getCurrentCycleBoundary, getCycleHandsTotal } from '@/db/businessRepository';
@@ -12,13 +13,13 @@ import { getClientById } from '@/db/clientRepository';
 import { generateContributionReceiptPdf, generatePayoutReceiptPdf, sharePdfFile } from '@/services/pdfService';
 import { useAuth } from '@/context/AuthContext';
 import { Transaction, TransactionType } from '@/types';
-import { formatCurrency, formatDate, formatDayMonth } from '@/lib/formatters';
+import { formatCurrency, formatDate, formatRelativeDay } from '@/lib/formatters';
 import { triggerLightImpact, triggerMediumImpact, triggerSuccessFeedback } from '@/lib/haptics';
-import { isTransactionFromClosedCycle } from '@/services/financialService';
+import { isTransactionFromClosedCycle, summarizeOperations } from '@/services/financialService';
 import { useResponsive } from '@/hooks/useResponsive';
 import { Theme, useTheme } from '@/theme';
 import { t } from '@/i18n';
-import { localDayOf } from '@/lib/dates';
+import { localDateString, localDayOf } from '@/lib/dates';
 
 /** Each filter covers its whole family, legacy names included. */
 const FILTER_TYPES: Partial<Record<TransactionType | 'ALL', TransactionType[]>> = {
@@ -98,6 +99,37 @@ export default function HistoryScreen() {
         t.note?.toLowerCase().includes(q)
     );
   }, [transactions, searchQuery]);
+
+  // One section per local day, newest first: « Aujourd'hui », « Hier », then the date
+  const sections = useMemo(() => {
+    const today = localDateString();
+    const byDay = new Map<string, Transaction[]>();
+    for (const tx of filteredTransactions) {
+      const day = localDayOf(tx.createdAtLocal);
+      byDay.set(day, [...(byDay.get(day) || []), tx]);
+    }
+    return [...byDay.entries()].map(([day, data]) => ({
+      day,
+      title: formatRelativeDay(day, today, { today: t('Aujourd\'hui'), yesterday: t('Hier') }),
+      data,
+    }));
+  }, [filteredTransactions]);
+
+  // Totals of what the filter shows (financialService.summarizeOperations)
+  const totals = useMemo(() => summarizeOperations(filteredTransactions), [filteredTransactions]);
+  const totalCells: StatCell[] = [
+    ...(filterType === 'ALL' || filterType === 'SOL_CONTRIBUTION'
+      ? [{ label: t('Entrées'), value: `+${formatCurrency(totals.inAmount)}`, hint: t('{0} opération{1}', totals.inCount, totals.inCount > 1 ? 's' : ''), tone: 'success' as const }]
+      : []),
+    ...(filterType === 'ALL' || filterType === 'SOL_PAYOUT'
+      ? [{ label: t('Remises'), value: `−${formatCurrency(totals.outAmount)}`, hint: t('{0} opération{1}', totals.outCount, totals.outCount > 1 ? 's' : '') }]
+      : []),
+    ...(filterType === 'ALL'
+      ? [{ label: t('Annulées'), value: String(totals.reversedCount) }]
+      : filterType === 'REVERSAL'
+      ? [{ label: t('Annulations'), value: String(filteredTransactions.length) }]
+      : []),
+  ];
 
   const handleOpenDetail = (tx: Transaction) => {
     triggerLightImpact();
@@ -241,49 +273,51 @@ export default function HistoryScreen() {
   };
 
   const renderTransactionItem = useCallback(
-    ({ item, index }: { item: Transaction; index: number }) => {
+    ({ item, index, section }: { item: Transaction; index: number; section: { data: Transaction[] } }) => {
       const isReversal = item.type === 'REVERSAL';
-      const isPayout = item.type === 'SOL_PAYOUT' || item.type === 'WITHDRAWAL';
-      const icon: UiIconName = isReversal ? 'alert' : isPayout ? 'payout' : 'cash';
-      const fg = isReversal ? theme.colors.danger : isPayout ? theme.colors.primary : theme.colors.success;
-      const bg = isReversal ? theme.colors.dangerSoft : isPayout ? theme.colors.primarySoft : theme.colors.successSoft;
-
+      const isPayout = item.type === 'SOL_PAYOUT' || item.type === 'HAND_PAYOUT' || item.type === 'WITHDRAWAL';
+      // Entries green, payouts in the action color, cancellations quiet (never red: not an error)
+      const isCancelled = isReversal || !!item.isReversed;
+      const icon: UiIconName = isReversal ? 'close' : isPayout ? 'payout' : 'cash';
+      const fg = isCancelled ? theme.colors.textMuted : isPayout ? theme.colors.primary : theme.colors.success;
+      const bg = isCancelled ? theme.colors.surfaceAlt : isPayout ? theme.colors.primarySoft : theme.colors.successSoft;
       const isFirst = index === 0;
-      const isLast = index === filteredTransactions.length - 1;
+      const isLast = index === section.data.length - 1;
 
       return (
         <View style={[styles.ledgerRow, isFirst && styles.ledgerFirst, isLast && styles.ledgerLast]}>
           <ListItem
             onPress={() => handleOpenDetail(item)}
-            divider={index < filteredTransactions.length - 1}
-            accessibilityLabel={[item.clientName || 'Adhérent SOL', getTransactionTypeLabel(item.type) || 'Opération', formatCurrency(item.amount), formatDate(item.createdAtLocal)].filter(Boolean).join(', ')}
+            divider={!isLast}
+            accessibilityLabel={[item.clientName || t('Adhérent SOL'), getTransactionTypeLabel(item.type), formatCurrency(item.amount), item.isReversed ? t('Annulée') : '', formatDate(item.createdAtLocal)].filter(Boolean).join(', ')}
             leading={
               <View style={[styles.txIcon, { backgroundColor: bg }]}>
                 <Icon name={icon} size={18} color={fg} />
               </View>
             }
             title={item.clientName || t('Adhérent SOL')}
-            subtitle={[getTransactionTypeLabel(item.type) || 'Opération', formatDayMonth(item.createdAtLocal)].filter(Boolean).join(' · ')}
+            subtitle={getTransactionTypeLabel(item.type)}
             meta={
               item.isReversed ? (
-                <Text variant="caption" tone="danger">{t('Annulée')}</Text>
+                <Text variant="caption" tone="muted">{t('Annulée')}</Text>
               ) : item.syncStatus === 'FAILED' ? (
                 <Text variant="caption" tone="danger">{t('Échec de synchronisation')}</Text>
               ) : undefined
             }
             trailing={
-              <AmountText
-                amount={item.amount}
-                size="small"
-                sign={isReversal || isPayout ? 'debit' : 'credit'}
-                tone={isReversal ? 'danger' : isPayout ? 'default' : 'success'}
-              />
+              isCancelled ? (
+                <Text variant="amountSmall" tone="muted" style={styles.struck}>
+                  {formatCurrency(item.amount)}
+                </Text>
+              ) : (
+                <AmountText amount={item.amount} size="small" sign={isPayout ? 'debit' : 'credit'} tone={isPayout ? 'default' : 'success'} />
+              )
             }
           />
         </View>
       );
     },
-    [theme, styles, filteredTransactions.length]
+    [theme, styles]
   );
 
   return (
@@ -292,14 +326,9 @@ export default function HistoryScreen() {
       padded={false}
       edges={['top', 'left', 'right']}
       header={
-        <>
-          <View style={styles.toolbar}>
-            <View style={styles.titleRow}>
-              <View style={styles.flexShrink}>
-                <Text variant="title" accessibilityRole="header">{t('Historique')}</Text>
-                <Text variant="caption" tone="muted">{t('Versements, remises et annulations')}</Text>
-              </View>
-            </View>
+        <View style={styles.toolbar}>
+          <ScreenHeader title={t('Historique')} subtitle={t('Versements, remises et annulations')} />
+          <View style={styles.toolbarBody}>
             <View style={styles.searchBar}>
               <Icon name="search" size={18} color={theme.colors.textMuted} />
               <TextInput
@@ -318,26 +347,26 @@ export default function HistoryScreen() {
             </View>
             <SegmentedControl options={FILTERS.map((f) => ({ ...f, label: t(f.label) }))} value={filterType} onChange={handleFilter} accessibilityLabel={t('Type d\'opération')} />
           </View>
-        </>
+        </View>
       }
     >
-      <FlatList
-        data={filteredTransactions}
+      <SectionList
+        sections={sections}
         keyExtractor={(item) => item.id}
         renderItem={renderTransactionItem}
+        renderSectionHeader={({ section }) => (
+          <View style={styles.dayHeader}>
+            <Text variant="subheading" style={styles.flexShrink}>{section.title}</Text>
+            <Text variant="caption" tone="muted">{t('{0} opération{1}', section.data.length, section.data.length > 1 ? 's' : '')}</Text>
+          </View>
+        )}
+        stickySectionHeadersEnabled={false}
         initialNumToRender={15}
         maxToRenderPerBatch={15}
         windowSize={7}
-        removeClippedSubviews={true}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[styles.listContent, isTablet && styles.listContentTablet]}
-        ListHeaderComponent={
-          filteredTransactions.length > 0 ? (
-            <Text variant="label" tone="muted" style={styles.countLabel}>
-              {t('{0} opération{1}', filteredTransactions.length, filteredTransactions.length > 1 ? 's' : '')}
-            </Text>
-          ) : null
-        }
+        ListHeaderComponent={filteredTransactions.length > 0 ? <StatStrip cells={totalCells} /> : null}
         style={styles.list}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[theme.colors.primary]} tintColor={theme.colors.primary} />
@@ -433,15 +462,10 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     flexShrink: { flex: 1, minWidth: 0 },
     flexGrow: { flexGrow: 1, flexBasis: 0 },
 
-    titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     toolbar: {
       width: '100%',
       maxWidth: layout.maxContentWidth + layout.gutter * 2,
       alignSelf: 'center',
-      paddingHorizontal: layout.gutter,
-      paddingTop: spacing.lg,
-      paddingBottom: spacing.xs,
-      gap: spacing.md,
     },
     searchBar: {
       flexDirection: 'row',
@@ -455,9 +479,11 @@ const createStyles = ({ colors, spacing, radius, layout, typography }: Theme) =>
     searchInput: { flex: 1, ...typography.body, color: colors.text, paddingVertical: spacing.sm },
 
     list: { flex: 1 },
-    listContent: { paddingHorizontal: layout.gutter, paddingTop: spacing.md, paddingBottom: spacing.xxl },
+    listContent: { paddingHorizontal: layout.gutter, paddingTop: spacing.sm, paddingBottom: spacing.xxl },
     listContentTablet: { width: '100%', maxWidth: layout.maxContentWidth + layout.gutter * 2, alignSelf: 'center' },
-    countLabel: { paddingBottom: spacing.sm },
+    dayHeader: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm, paddingTop: spacing.xl, paddingBottom: spacing.sm },
+    struck: { textDecorationLine: 'line-through' },
+    toolbarBody: { paddingHorizontal: layout.gutter, gap: spacing.md, paddingBottom: spacing.sm },
     ledgerRow: {
       backgroundColor: colors.surface,
       borderLeftWidth: 1,
