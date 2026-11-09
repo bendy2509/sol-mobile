@@ -17,6 +17,8 @@ export interface SettingsRowProps {
   /** Renders a switch instead of a chevron. */
   toggle?: { value: boolean; onChange: (value: boolean) => void; disabled?: boolean };
   onPress?: () => void;
+  /** Hidden action on a long press (no chevron), e.g. the diagnostic behind « Version ». */
+  onLongPress?: () => void;
   /** Danger rows (déconnexion) use the danger color, never the brand red. */
   tone?: 'default' | 'danger';
   divider?: boolean;
@@ -27,7 +29,7 @@ export interface SettingsRowProps {
 }
 
 /** One line of the Réglages screen: icon · label / description · value or switch · chevron. */
-export function SettingsRow({ label, description, icon, value, toggle, onPress, tone = 'default', divider = true, requiresPin, selected }: SettingsRowProps) {
+export function SettingsRow({ label, description, icon, value, toggle, onPress, onLongPress, tone = 'default', divider = true, requiresPin, selected }: SettingsRowProps) {
   const { colors, spacing, layout } = useTheme();
   const fg = tone === 'danger' ? colors.danger : colors.text;
 
@@ -81,11 +83,13 @@ export function SettingsRow({ label, description, icon, value, toggle, onPress, 
     borderBottomColor: colors.divider,
   };
 
-  if (!onPress || toggle) return <View style={[style, toggle?.disabled && { opacity: 0.6 }]}>{content}</View>;
+  if ((!onPress && !onLongPress) || toggle) return <View style={[style, toggle?.disabled && { opacity: 0.6 }]}>{content}</View>;
 
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={800}
       accessibilityRole="button"
       accessibilityLabel={value ? `${label}, ${value}` : label}
       accessibilityState={selected !== undefined ? { selected } : undefined}

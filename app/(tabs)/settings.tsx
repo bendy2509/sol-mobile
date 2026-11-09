@@ -359,9 +359,9 @@ export default function SettingsScreen() {
 
       {/* 7. À propos */}
       <SettingsGroup title={t('settings.about')}>
-        <SettingsRow label={t('settings.about.version')} value={version} />
-        <SettingsRow label={t('settings.about.help')} icon="help" onPress={() => openSheet('help')} />
-        <SettingsRow label={t('Diagnostic des données')} icon="info" onPress={() => router.push('/backup-diagnostics' as any)} divider={false} />
+        {/* The troubleshooting screen stays out of sight: a long press on the version opens it */}
+        <SettingsRow label={t('settings.about.version')} value={version} onLongPress={() => router.push('/backup-diagnostics' as any)} />
+        <SettingsRow label={t('settings.about.help')} icon="help" onPress={() => openSheet('help')} divider={false} />
       </SettingsGroup>
 
       <SettingsGroup>
@@ -465,11 +465,12 @@ export default function SettingsScreen() {
 
       <BottomSheet visible={sheet === 'help'} onClose={() => setSheet(null)} title={t('settings.about.help')}>
         {[
-          ['Encaisser', "Onglet Encaisser, touchez l'adhérent, choisissez le nombre de mains puis confirmez avec votre PIN."],
+          ['Encaisser', "Onglet Encaisser, touchez le montant dû de l'adhérent puis confirmez avec votre PIN. Touchez la ligne pour choisir un autre nombre de mains."],
           ['Remettre la main', "Sur l'Accueil ou l'onglet Sol, touchez Remettre au bénéficiaire du tour, puis confirmez avec votre PIN."],
           ['Annuler une opération', 'Historique, touchez l’opération, menu ⋯, Annuler. Un motif et votre PIN sont obligatoires.'],
           ['Code PIN oublié', "Sur l'écran de connexion, « Code PIN oublié ? », puis votre code de récupération."],
           ['Changer de téléphone', 'Créez une sauvegarde chiffrée ici, puis « Restaurer une sauvegarde » sur le nouveau téléphone.'],
+          ['Diagnostic', 'En cas de problème, un appui long sur « Version » ouvre l’outil de vérification des données.'],
         ].map(([title, body]) => (
           <View key={title} style={styles.gapXs}>
             <Text variant="bodyStrong">{t(title)}</Text>
