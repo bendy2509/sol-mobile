@@ -61,7 +61,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange, a
               selected && shadows.card,
             ]}
           >
-            <Text variant="label" tone={selected ? 'default' : 'muted'} numberOfLines={1}>
+            <Text variant="label" tone={selected ? 'default' : 'muted'}>
               {option.label}
             </Text>
           </Pressable>

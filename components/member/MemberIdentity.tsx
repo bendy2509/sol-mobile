@@ -16,7 +16,7 @@ export function MemberIdentity({ client, sheet }: { client: Client; sheet: Membe
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
         <Avatar name={client.fullName} size="lg" />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text variant="title" numberOfLines={2} selectable>
+          <Text variant="title" selectable>
             {client.fullName}
           </Text>
           <Text variant="body" tone="muted" selectable>

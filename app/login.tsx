@@ -194,7 +194,7 @@ export default function LoginScreen() {
               <View style={styles.countryChip}>
                 <Text variant="label">+509</Text>
               </View>
-              <Text variant="amountLarge" tone={phoneDigits ? 'default' : 'muted'} numberOfLines={1}>
+              <Text variant="amountLarge" tone={phoneDigits ? 'default' : 'muted'}>
                 {phoneDigits ? formatPhoneDisplay(phoneDigits) : '__ __ __ __'}
               </Text>
               {activeField === 'PHONE' && <View style={styles.cursor} />}

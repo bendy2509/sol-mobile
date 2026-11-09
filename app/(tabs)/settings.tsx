@@ -262,10 +262,10 @@ export default function SettingsScreen() {
         <View style={styles.identity}>
           <Avatar name={activeCollector?.fullName || 'SOL'} />
           <View style={styles.flexShrink}>
-            <Text variant="bodyStrong" numberOfLines={1}>
+            <Text variant="bodyStrong">
               {activeCollector?.fullName || t('Responsable du sol')}
             </Text>
-            <Text variant="caption" tone="muted" numberOfLines={1}>
+            <Text variant="caption" tone="muted">
               {[activeCollector?.phoneNumber, activeCollector?.zone].filter(Boolean).join(' · ')}
             </Text>
           </View>

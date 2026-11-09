@@ -56,7 +56,7 @@ export function StatStrip({ cells }: StatStripProps) {
               {cell.label}
             </Text>
             {cell.children ?? (
-              <Text variant="amount" tone={tone} numberOfLines={1} adjustsFontSizeToFit>
+              <Text variant="amount" tone={tone}>
                 {cell.value}
               </Text>
             )}

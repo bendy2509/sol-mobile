@@ -42,11 +42,11 @@ export const ListItem = React.memo(function ListItem({
     <>
       {leading}
       <View style={{ flex: 1, minWidth: 0, gap: spacing.xs }}>
-        <Text variant="bodyStrong" numberOfLines={2}>
+        <Text variant="bodyStrong">
           {title}
         </Text>
         {subtitle ? (
-          <Text variant="caption" tone="muted" numberOfLines={1}>
+          <Text variant="caption" tone="muted">
             {subtitle}
           </Text>
         ) : null}

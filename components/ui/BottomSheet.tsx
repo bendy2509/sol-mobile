@@ -69,7 +69,7 @@ export function BottomSheet({ visible, onClose, title, subtitle, children, foote
             {title ? (
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, paddingHorizontal: layout.gutter, paddingTop: spacing.md }}>
                 <View style={{ flex: 1, minWidth: 0, gap: spacing.xs }}>
-                  <Text variant="heading" accessibilityRole="header" numberOfLines={2}>
+                  <Text variant="heading" accessibilityRole="header">
                     {title}
                   </Text>
                   {subtitle ? (

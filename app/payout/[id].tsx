@@ -218,7 +218,7 @@ export default function PayoutScreen() {
         <View style={styles.profileRow}>
           <Avatar name={client.fullName} size="lg" highlighted={!isFullyReceived} />
           <View style={styles.flexShrink}>
-            <Text variant="heading" numberOfLines={2}>
+            <Text variant="heading">
               {client.fullName}
             </Text>
             <Text variant="body" tone="muted">
