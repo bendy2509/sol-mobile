@@ -165,3 +165,27 @@ export function sortForCollection<T extends MemberDueShape>(members: T[]): T[] {
   const group = (m: MemberDueShape) => (m.paymentStatusToday === 'OVERDUE' ? 0 : m.paymentStatusToday === 'UNPAID_TODAY' ? 1 : 2);
   return [...(members || [])].sort((a, b) => group(a) - group(b) || memberOwedHands(b) - memberOwedHands(a));
 }
+
+/** Filters of the collect list. */
+export type CollectFilter = 'ALL' | 'TO_COLLECT' | 'LATE' | 'UP_TO_DATE' | 'HAND_RECEIVED';
+
+export const COLLECT_FILTERS: readonly CollectFilter[] = ['ALL', 'TO_COLLECT', 'LATE', 'UP_TO_DATE', 'HAND_RECEIVED'];
+
+/**
+ * A member in a collect filter: « À encaisser » = late or today's hands missing, « En retard » =
+ * late only, « À jour » = nothing to collect, « Main reçue » = at least one hand paid out.
+ */
+export function matchesCollectFilter(m: MemberDueShape & MemberHandsShape, filter: CollectFilter): boolean {
+  switch (filter) {
+    case 'TO_COLLECT':
+      return needsCollection(m);
+    case 'LATE':
+      return m.paymentStatusToday === 'OVERDUE';
+    case 'UP_TO_DATE':
+      return !needsCollection(m);
+    case 'HAND_RECEIVED':
+      return memberReceivedHands(m) > 0;
+    default:
+      return true;
+  }
+}

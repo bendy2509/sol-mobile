@@ -936,4 +936,5 @@ export const htPhrases: Record<string, string> = {
   "{0} adhérents · {1} opérations sur cet appareil": "{0} manm · {1} operasyon sou aparèy sa a",
   "Onglet Encaisser, touchez le montant dû de l'adhérent puis confirmez avec votre PIN. Touchez la ligne pour choisir un autre nombre de mains.": "Onglè Ankese, touche kantite lajan manm nan dwe a epi konfime ak PIN ou. Touche liy lan pou chwazi yon lòt kantite men.",
   "En cas de problème, un appui long sur « Version » ouvre l’outil de vérification des données.": "Si gen pwoblèm, peze lontan sou « Vèsyon » pou louvri zouti verifikasyon done yo.",
+  "Aucun adhérent ne correspond à ce filtre.": "Pa gen manm ki koresponn ak filt sa a.",
 };
