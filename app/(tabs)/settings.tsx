@@ -369,7 +369,7 @@ export default function SettingsScreen() {
       </SettingsGroup>
 
       <SettingsGroup>
-        <SettingsRow label={t('settings.logout')} icon="logout" tone="danger" onPress={handleLogout} divider={false} />
+        <SettingsRow label={t('settings.logout')} icon="logout" onPress={handleLogout} divider={false} />
       </SettingsGroup>
 
       {/* Sheets */}

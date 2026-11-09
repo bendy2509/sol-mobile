@@ -19,8 +19,8 @@ export interface StatStripProps {
 }
 
 /**
- * Key figures on one ruled strip, like the totals line of a ledger:
- * one surface, cells divided by hairlines, no icons, no tinted boxes.
+ * Key figures on one ruled strip, like the totals line of a ledger: one surface, cells divided
+ * by hairlines. Labels and hints wrap (never cut); only the figure shrinks to fit its cell.
  */
 export function StatStrip({ cells }: StatStripProps) {
   const { colors, spacing, radius, shadows } = useTheme();
@@ -52,7 +52,7 @@ export function StatStrip({ cells }: StatStripProps) {
               borderLeftColor: colors.divider,
             }}
           >
-            <Text variant="caption" tone={tone === 'default' || tone === 'success' ? 'muted' : tone} numberOfLines={1}>
+            <Text variant="caption" tone={tone === 'default' || tone === 'success' ? 'muted' : tone}>
               {cell.label}
             </Text>
             {cell.children ?? (
@@ -61,7 +61,7 @@ export function StatStrip({ cells }: StatStripProps) {
               </Text>
             )}
             {cell.hint ? (
-              <Text variant="caption" tone="muted" numberOfLines={1}>
+              <Text variant="caption" tone="muted">
                 {cell.hint}
               </Text>
             ) : null}

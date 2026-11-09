@@ -22,8 +22,8 @@ interface StatusConfig {
 export const STATUS_CONFIG: Record<StatusKind, StatusConfig> = {
   PAID_TODAY: { label: "Payé aujourd'hui", icon: 'check', fg: 'success', bg: 'successSoft', line: 'successLine' },
   PAID_IN_ADVANCE: { label: 'En avance', icon: 'arrow-right', fg: 'advance', bg: 'advanceSoft', line: 'advanceLine' },
-  UNPAID_TODAY: { label: 'À encaisser', icon: 'clock', fg: 'warning', bg: 'warningSoft', line: 'warningLine' },
-  OVERDUE: { label: 'En retard', icon: 'alert', fg: 'danger', bg: 'dangerSoft', line: 'dangerLine' },
+  UNPAID_TODAY: { label: 'À encaisser', icon: 'clock', fg: 'textMuted', bg: 'surfaceAlt', line: 'border' },
+  OVERDUE: { label: 'En retard', icon: 'alert', fg: 'warning', bg: 'warningSoft', line: 'warningLine' },
   UPCOMING_PAYOUT: { label: 'Reçoit la main', icon: 'payout', fg: 'info', bg: 'infoSoft', line: 'infoLine' },
   HAND_RECEIVED: { label: 'Main reçue', icon: 'check', fg: 'success', bg: 'successSoft', line: 'successLine' },
   LOCKED: { label: 'Verrouillé', icon: 'lock', fg: 'locked', bg: 'lockedSoft', line: 'lockedLine' },
@@ -60,8 +60,8 @@ export interface StatusBadgeProps {
   detail?: string;
   /** Overrides the default label (keep the vocabulary consistent!). */
   label?: string;
-  /** 'chip' = tinted pill, 'inline' = icon + text only (dense lists). */
-  appearance?: 'chip' | 'inline';
+  /** 'chip' = tinted pill, 'inline' = icon + text, 'dot' = small colored dot + text (lists). */
+  appearance?: 'chip' | 'inline' | 'dot';
   style?: StyleProp<ViewStyle>;
 }
 
@@ -100,8 +100,13 @@ export function StatusBadge({ status, detail, label, appearance = 'chip', style 
         style,
       ]}
     >
-      <Icon name={cfg.icon} size={14} color={fg} strokeWidth={2.5} />
-      <Text variant="label" style={{ color: fg, flexShrink: 1 }} numberOfLines={1}>
+      {appearance === 'dot' ? (
+        <View style={{ width: spacing.sm, height: spacing.sm, borderRadius: spacing.xs, backgroundColor: fg }} />
+      ) : (
+        <Icon name={cfg.icon} size={14} color={fg} strokeWidth={2.5} />
+      )}
+      {/* Dot: the text stays quiet except when the member is late; it wraps, never cut */}
+      <Text variant="label" style={{ color: appearance === 'dot' && status !== 'OVERDUE' ? colors.textMuted : fg, flexShrink: 1 }}>
         {text}
       </Text>
     </View>

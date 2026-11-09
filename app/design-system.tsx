@@ -65,7 +65,7 @@ export default function DesignSystemScreen() {
         <View style={{ flexDirection: 'row', gap: spacing.sm }}>
           <MetricTile label="Encaissé" value="750 HTG" icon="cash" />
           <MetricTile label="À jour" value="3 / 4" tone="success" />
-          <MetricTile label="En retard" value="1" tone="danger" icon="alert" />
+          <MetricTile label="En retard" value="1" tone="warning" icon="alert" />
         </View>
 
         <SectionHeader title="Statuts" />

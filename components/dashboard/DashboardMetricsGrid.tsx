@@ -27,7 +27,7 @@ export const DashboardMetricsGrid: React.FC<DashboardMetricsGridProps> = ({ metr
           value: String(metrics.overdueMembersCount),
           // Owed: late hands plus today's missing ones, in HTG (the same count as the collect list)
           hint: metrics.overdueAmount > 0 ? t('{0} dû', formatCurrency(metrics.overdueAmount)) : t('Aucun'),
-          tone: isLate ? 'danger' : 'default',
+          tone: isLate ? 'warning' : 'default',
         },
       ]}
     />
